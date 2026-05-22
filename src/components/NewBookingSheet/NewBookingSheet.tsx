@@ -952,7 +952,7 @@ export function NewBookingSheet({
               ariaLabel="Service"
               value={serviceType}
               onChange={(v) => setServiceType(v)}
-              options={BOOKING_SERVICE_TYPES}
+              options={BOOKING_SERVICE_TYPES.filter((s) => s.value !== 'other')}
               placeholder="Choose a service"
             />
             {configError ? (
