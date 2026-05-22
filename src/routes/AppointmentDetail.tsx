@@ -663,21 +663,27 @@ function Loaded({
         ) : null}
         {appt.intake && appt.intake.length > 0 ? <IntakeCard intake={appt.intake} /> : null}
         {appt.deposit_pence != null && appt.deposit_pence > 0 ? <DepositCard appt={appt} /> : null}
-        {/* Same-day upgrade only. The "credits against the bill at
-            checkout" semantics rely on a same-day appliance / click-in
-            veneers booking having an in-clinic bill — a virtual or
-            in-person impression appointment has no checkout for the
-            credit to apply to, so even when a Shopify order is
-            attached for audit, surfacing it as a credit here would
-            mislead the receptionist into thinking money's been
-            pre-paid against the till. */}
-        {appt.shopify_order_name &&
-        (appt.shopify_order_total_pence ?? 0) > 0 &&
-        (appt.service_type === 'same_day_appliance' ||
-          appt.service_type === 'click_in_veneers') ? (
+        {/* Shopify-paid online order linked at booking.
+            Same-day appliance / click-in veneers ("appliesToBill"):
+              The order pays for the chair-side work itself, so the
+              card hero-displays the amount as a pre-paid credit
+              against the bill at checkout.
+            Impression appointments (in-person + virtual): the order
+              pays for the future same-day visit, not for this
+              impression appointment. The card switches to a quieter
+              "related online order" treatment — order name + View
+              in Shopify link, no price hero — so staff still have
+              the audit trail without the misleading "credits against
+              the bill" framing. */}
+        {appt.shopify_order_name && (appt.shopify_order_total_pence ?? 0) > 0 ? (
           <OnlineOrderCreditCard
             orderName={appt.shopify_order_name}
+            orderId={appt.shopify_order_id ?? null}
             pence={appt.shopify_order_total_pence ?? 0}
+            appliesToBill={
+              appt.service_type === 'same_day_appliance' ||
+              appt.service_type === 'click_in_veneers'
+            }
           />
         ) : null}
         {/* NotesCard was previously rendered here. Lifted above the
@@ -2102,56 +2108,124 @@ function humaniseIntakeAnswer(label: string, value: string): string {
   return trimmed;
 }
 
-// Hero card for the Shopify-paid order linked at booking. Mirrors
-// DepositCard's accent-tinted background and 32px amount typography
-// so the receptionist reads it as the same "money already in" signal,
-// but with copy that makes the difference clear: this isn't a
-// deposit reserved against a future bill, it's the actual amount the
-// customer paid online for the product they're coming in to redeem,
-// and that amount will come off the till at checkout.
-function OnlineOrderCreditCard({ orderName, pence }: { orderName: string; pence: number }) {
-  return (
-    <Card
-      padding="lg"
-      style={{
-        background: theme.color.accentBg,
-        border: '1px solid rgba(31, 77, 58, 0.18)',
-      }}
-    >
-      <DetailSectionHeader
-        icon={<BadgeCheck size={16} aria-hidden />}
-        title="Paid online via venneir.com"
-      />
-      <div
+// Hero card for the Shopify-paid order linked at booking. Two
+// modes:
+//
+//   appliesToBill = true (same-day appliance / click-in veneers):
+//     Mirrors DepositCard's accent-tinted background and 32px
+//     amount typography so the receptionist reads it as the same
+//     "money already in" signal. Copy makes the difference clear:
+//     this isn't a deposit reserved against a future bill, it's
+//     the actual amount the customer paid online for the product
+//     they're coming in to redeem, and that amount comes off the
+//     till at checkout.
+//
+//   appliesToBill = false (in-person + virtual impression):
+//     Quieter "related online order" variant — order name + View
+//     in Shopify link, no price hero. Impression appointments
+//     don't carry a bill of their own, so showing the paid amount
+//     as a credit would imply money's owed back. We still surface
+//     the order for audit because the impression is the
+//     prerequisite for the upgrade the patient already bought —
+//     staff need a one-tap way to see what's queued up for the
+//     downstream same-day visit.
+function OnlineOrderCreditCard({
+  orderName,
+  orderId,
+  pence,
+  appliesToBill,
+}: {
+  orderName: string;
+  orderId: string | null;
+  pence: number;
+  appliesToBill: boolean;
+}) {
+  if (appliesToBill) {
+    return (
+      <Card
+        padding="lg"
         style={{
-          display: 'flex',
-          alignItems: 'baseline',
-          gap: theme.space[3],
-          marginTop: theme.space[1],
-          flexWrap: 'wrap',
+          background: theme.color.accentBg,
+          border: '1px solid rgba(31, 77, 58, 0.18)',
         }}
       >
-        <span
+        <DetailSectionHeader
+          icon={<BadgeCheck size={16} aria-hidden />}
+          title="Paid online via venneir.com"
+        />
+        <div
           style={{
-            fontSize: 32,
+            display: 'flex',
+            alignItems: 'baseline',
+            gap: theme.space[3],
+            marginTop: theme.space[1],
+            flexWrap: 'wrap',
+          }}
+        >
+          <span
+            style={{
+              fontSize: 32,
+              fontWeight: theme.type.weight.semibold,
+              color: theme.color.ink,
+              letterSpacing: theme.type.tracking.tight,
+              lineHeight: 1,
+              fontVariantNumeric: 'tabular-nums',
+            }}
+          >
+            {formatPence(pence)}
+          </span>
+          <span
+            style={{
+              fontSize: theme.type.size.sm,
+              color: theme.color.inkMuted,
+            }}
+          >
+            already paid for order <strong style={{ color: theme.color.ink, fontWeight: theme.type.weight.semibold }}>{orderName}</strong>. This credits against the bill at checkout, so the till only collects anything extra on the day.
+          </span>
+        </div>
+      </Card>
+    );
+  }
+  // Impression variant — no price hero, just a compact audit-link
+  // card that anchors the appointment to its driving order.
+  const adminUrl = orderId
+    ? `https://admin.shopify.com/store/venneir/orders/${orderId}`
+    : null;
+  return (
+    <Card padding="lg">
+      <DetailSectionHeader
+        icon={<BadgeCheck size={16} aria-hidden />}
+        title="Related online order"
+      />
+      <p
+        style={{
+          margin: `${theme.space[1]}px 0 ${theme.space[3]}px`,
+          fontSize: theme.type.size.sm,
+          color: theme.color.inkMuted,
+          lineHeight: theme.type.leading.snug,
+        }}
+      >
+        This impression appointment was booked from venneir.com order{' '}
+        <strong style={{ color: theme.color.ink, fontWeight: theme.type.weight.semibold }}>{orderName}</strong>. The upgrade fee on that order credits against the future in-clinic visit when the patient returns.
+      </p>
+      {adminUrl ? (
+        <a
+          href={adminUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: theme.space[2],
+            fontSize: theme.type.size.xs,
             fontWeight: theme.type.weight.semibold,
-            color: theme.color.ink,
-            letterSpacing: theme.type.tracking.tight,
-            lineHeight: 1,
-            fontVariantNumeric: 'tabular-nums',
+            color: theme.color.accent,
+            textDecoration: 'none',
           }}
         >
-          {formatPence(pence)}
-        </span>
-        <span
-          style={{
-            fontSize: theme.type.size.sm,
-            color: theme.color.inkMuted,
-          }}
-        >
-          already paid for order <strong style={{ color: theme.color.ink, fontWeight: theme.type.weight.semibold }}>{orderName}</strong>. This credits against the bill at checkout, so the till only collects anything extra on the day.
-        </span>
-      </div>
+          View order {orderName} in Shopify
+        </a>
+      ) : null}
     </Card>
   );
 }

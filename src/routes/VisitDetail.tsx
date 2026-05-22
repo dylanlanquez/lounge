@@ -4412,7 +4412,7 @@ function ShopifyOrderCard({
           >
             {appliesToBill
               ? `Paid online · ${formatPence(order.pence)} credited against the bill`
-              : `Paid online · ${formatPence(order.pence)} (credits against the future in-clinic visit)`}
+              : `This appointment was booked from this order`}
           </span>
         </div>
 
@@ -4445,7 +4445,7 @@ function ShopifyOrderCard({
       >
         {appliesToBill
           ? `Open the order in Shopify to confirm the patient paid ${formatPence(order.pence)} ${order.currency} online. The same amount is automatically credited against the cart below.`
-          : `Open the order in Shopify to confirm the patient paid ${formatPence(order.pence)} ${order.currency} online. This is an impression appointment, so the upgrade fee credits against the patient's next in-clinic visit, not this one.`}
+          : `Impression appointments don't carry a bill of their own. Open the order in Shopify to see what was paid for, and which future in-clinic visit the credit applies to when the patient returns.`}
       </p>
     </div>
   );
