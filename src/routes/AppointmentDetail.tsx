@@ -637,7 +637,8 @@ function Loaded({
                 itself is hidden (the meeting is over or stale). */}
             <VirtualCallReminder
               appointmentId={appt.id}
-              patientHasPhone={!!(appt.patient.phone ?? '').trim()}
+              patientFirstName={appt.patient.first_name}
+              patientPhone={appt.patient.phone}
             />
           </>
         ) : appt.service_type === 'virtual_impression_appointment' ? (

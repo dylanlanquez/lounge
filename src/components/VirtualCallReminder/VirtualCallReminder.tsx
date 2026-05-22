@@ -1,152 +1,226 @@
 import { useCallback, useEffect, useState } from 'react';
-import { ChevronRight, Loader2, MessageSquare, Send } from 'lucide-react';
+import { Loader2, MessageSquare, Send } from 'lucide-react';
 import { supabase } from '../../lib/supabase.ts';
 import { theme } from '../../theme/index.ts';
 import { BottomSheet } from '../BottomSheet/BottomSheet.tsx';
 import { Button } from '../Button/Button.tsx';
+import { Card } from '../Card/Card.tsx';
+import { properCase } from '../../lib/queries/appointments.ts';
 
-// VirtualCallReminder — text-the-patient affordance that sits under
-// MeetingLinkCard on a virtual impression appointment. Reception
-// fires this when the clinician is on the Meet call but the
-// patient hasn't joined yet — the SMS carries the join URL so the
-// patient taps straight through from their phone.
+// VirtualCallReminder — the "Patient not on the virtual call" SMS
+// surface that sits under MeetingLinkCard on a virtual impression
+// appointment. Visual language is the exact same shape as
+// PatientCommsCard on the Visit page: hero header with a chat-bubble
+// icon disc + "Send an SMS" title + a subtitle naming the patient,
+// then a status row below carrying the destination phone and a dark
+// "Preview & send" pill on the trailing edge.
+//
+// No template picker here — the appointment surface fires exactly
+// one template (`virtual_call_waiting`), so a dropdown would be a
+// row of one. The picker is only on the Visit page where multiple
+// templates make sense.
 //
 // Flow:
-//   • Inline pill button "Text the join link" → opens BottomSheet
-//   • Sheet fetches a preview via send-visit-ready-sms with
-//     { appointment_id, template_key: 'virtual_call_waiting',
-//       preview: true } so the user sees the exact text before it
-//     goes out
-//   • "Send now" fires the same function without preview; on
-//     success the sheet auto-closes after a moment so the
-//     receptionist isn't stuck on a confirmation screen.
-//
-// Twilio delivery status + history land in lng_sms_messages
-// (audited by appointment_id, since the visit row doesn't exist
-// yet) and show on the patient timeline. No realtime polling on
-// this card — the visit page surfaces delivery state once the
-// patient actually joins.
+//   • Tap "Preview & send" → BottomSheet opens
+//   • Sheet fetches a render of the SMS body via
+//     send-visit-ready-sms with { appointment_id, template_key:
+//     'virtual_call_waiting', preview: true } so reception sees the
+//     exact text before it goes out
+//   • "Send now" fires the same edge function without `preview`,
+//     and the sheet auto-closes after success
 
 const TEMPLATE_KEY = 'virtual_call_waiting';
 
-interface VirtualCallReminderProps {
+export interface VirtualCallReminderProps {
   appointmentId: string;
-  /** Used only to disable the button when the patient has no phone
-   *  on file — keeps the receptionist from clicking through to a
-   *  sheet that will immediately error. The edge function does its
-   *  own check too. */
-  patientHasPhone: boolean;
+  patientFirstName: string | null;
+  patientPhone: string | null;
 }
 
 export function VirtualCallReminder({
   appointmentId,
-  patientHasPhone,
+  patientFirstName,
+  patientPhone,
 }: VirtualCallReminderProps) {
   const [open, setOpen] = useState(false);
-  const [hover, setHover] = useState(false);
-  const disabled = !patientHasPhone;
+  const phoneOk = !!patientPhone && patientPhone.trim().length > 0;
+  const properFirstName = properCase(patientFirstName ?? '') || 'the patient';
+  const formattedPhone = formatUkPhone(patientPhone ?? '');
   return (
     <>
-      {/* Action-row visual: full-width tappable strip with a circular
-          icon disc, label + sub-description, trailing chevron. Mirrors
-          the pattern used by "Join meeting", "Patient profile",
-          "Mark as no-show" etc. so the SMS reminder reads as the
-          same kind of affordance, not a stray pill. */}
-      <button
-        type="button"
-        onClick={() => setOpen(true)}
-        disabled={disabled}
-        onMouseEnter={() => setHover(true)}
-        onMouseLeave={() => setHover(false)}
-        title={
-          disabled
-            ? 'Add a phone number to the patient before sending an SMS.'
-            : undefined
-        }
-        style={{
-          appearance: 'none',
-          width: '100%',
-          marginTop: theme.space[3],
-          // Bigger than ActionRow's stock padding so the call-to-action
-          // reads as the hero affordance on the page (it's the move
-          // staff make when the patient is late to the call), but
-          // shy of slab-button height — still a row, not a full CTA.
-          padding: `${theme.space[4]}px ${theme.space[5]}px`,
-          // Hero-tinted accent background so the row pops against the
-          // surrounding cards. Matches the "Booked for HH:MM" hero
-          // ribbon's tint above. Hover deepens the tint slightly.
-          background: hover && !disabled
-            ? 'rgba(31, 77, 58, 0.14)'
-            : theme.color.accentBg,
-          border: `1px solid ${theme.color.accent}`,
-          borderRadius: theme.radius.input,
-          display: 'flex',
-          alignItems: 'center',
-          gap: theme.space[3],
-          cursor: disabled ? 'not-allowed' : 'pointer',
-          fontFamily: 'inherit',
-          textAlign: 'left',
-          color: theme.color.ink,
-          opacity: disabled ? 0.55 : 1,
-          transition: `background ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
-          WebkitTapHighlightColor: 'transparent',
-        }}
-      >
-        <span
-          aria-hidden
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            width: 36,
-            height: 36,
-            borderRadius: theme.radius.pill,
-            background: theme.color.surface,
-            border: `1px solid ${theme.color.accent}`,
-            color: theme.color.accent,
-            flexShrink: 0,
-          }}
-        >
-          <MessageSquare size={18} aria-hidden />
-        </span>
-        <span style={{ flex: 1, minWidth: 0 }}>
-          <span
-            style={{
-              display: 'block',
-              fontSize: theme.type.size.base,
-              fontWeight: theme.type.weight.semibold,
-              color: theme.color.ink,
-              letterSpacing: theme.type.tracking.tight,
-            }}
-          >
-            Text the join link to the patient
-          </span>
-          <span
-            style={{
-              display: 'block',
-              marginTop: 2,
-              fontSize: theme.type.size.xs,
-              color: theme.color.inkMuted,
-              lineHeight: theme.type.leading.snug,
-            }}
-          >
-            {disabled
-              ? 'No phone number on file'
-              : 'Preview the SMS, then send the meeting URL to the patient.'}
-          </span>
-        </span>
-        <ChevronRight
-          size={18}
-          aria-hidden
-          style={{ color: theme.color.accent, flexShrink: 0 }}
-        />
-      </button>
+      <Card padding="lg">
+        <SmsHeroHeader patientFirstName={properFirstName} />
+        <div style={{ marginTop: theme.space[4] }}>
+          <StatusRow
+            phone={formattedPhone || '+44000000000'}
+            onOpen={() => setOpen(true)}
+            phoneOk={phoneOk}
+          />
+        </div>
+      </Card>
       <ReminderSheet
         open={open}
         onClose={() => setOpen(false)}
         appointmentId={appointmentId}
       />
     </>
+  );
+}
+
+// Hero header — accent disc + "Send an SMS" + subtitle naming who
+// the message would go to. Matches PatientCommsCard's
+// SmsHeroHeader exactly so the two surfaces read as one design.
+function SmsHeroHeader({ patientFirstName }: { patientFirstName: string }) {
+  return (
+    <header
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: theme.space[3],
+      }}
+    >
+      <span
+        aria-hidden
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          width: 32,
+          height: 32,
+          borderRadius: theme.radius.pill,
+          background: theme.color.accentBg,
+          color: theme.color.accent,
+          flexShrink: 0,
+        }}
+      >
+        <MessageSquare size={16} aria-hidden />
+      </span>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <p
+          style={{
+            margin: 0,
+            fontSize: theme.type.size.sm,
+            fontWeight: theme.type.weight.semibold,
+            color: theme.color.ink,
+            letterSpacing: theme.type.tracking.tight,
+          }}
+        >
+          Send an SMS
+        </p>
+        <p
+          style={{
+            margin: 0,
+            fontSize: theme.type.size.sm,
+            color: theme.color.inkMuted,
+            lineHeight: theme.type.leading.snug,
+          }}
+        >
+          Text{' '}
+          <strong style={{ color: theme.color.ink, fontWeight: theme.type.weight.medium }}>
+            {patientFirstName}
+          </strong>{' '}
+          the meeting join link when they are not on the call.
+        </p>
+      </div>
+    </header>
+  );
+}
+
+// Status row — neutral tone with "Not sent yet" label, formatted
+// phone underneath, dark Preview & send pill on the trailing edge.
+// Mirrors PatientCommsCard's NotifyReadyRow in its neutral (never
+// sent) state. We don't track sent-status on the appointment side
+// since the audit lives in lng_sms_messages and the realtime sub
+// is on the Visit page; for this surface a single "preview, then
+// send" affordance is all the receptionist needs.
+function StatusRow({
+  phone,
+  phoneOk,
+  onOpen,
+}: {
+  phone: string;
+  phoneOk: boolean;
+  onOpen: () => void;
+}) {
+  return (
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: theme.space[4],
+        padding: `${theme.space[4]}px ${theme.space[4]}px`,
+        borderRadius: theme.radius.card,
+        background: theme.color.bg,
+        border: `1px solid ${theme.color.border}`,
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: theme.space[3], flex: 1, minWidth: 0 }}>
+        <span
+          aria-hidden
+          style={{
+            width: 10,
+            height: 10,
+            borderRadius: '50%',
+            background: theme.color.accent,
+            flexShrink: 0,
+            marginTop: 7,
+          }}
+        />
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0, flex: 1 }}>
+          <span
+            style={{
+              fontSize: theme.type.size.base,
+              fontWeight: theme.type.weight.semibold,
+              color: theme.color.ink,
+              letterSpacing: theme.type.tracking.tight,
+              lineHeight: 1.3,
+            }}
+          >
+            Not sent yet
+          </span>
+          <span
+            style={{
+              fontSize: theme.type.size.sm,
+              color: theme.color.inkMuted,
+              fontVariantNumeric: 'tabular-nums',
+              lineHeight: 1.4,
+            }}
+          >
+            {phone}
+          </span>
+        </div>
+      </div>
+      <button
+        type="button"
+        onClick={onOpen}
+        disabled={!phoneOk}
+        title={phoneOk ? undefined : 'No phone number on file'}
+        style={{
+          appearance: 'none',
+          border: 'none',
+          fontFamily: 'inherit',
+          fontSize: theme.type.size.sm,
+          fontWeight: theme.type.weight.semibold,
+          color: theme.color.surface,
+          background: theme.color.ink,
+          padding: `${theme.space[2]}px ${theme.space[4]}px`,
+          borderRadius: theme.radius.pill,
+          cursor: phoneOk ? 'pointer' : 'not-allowed',
+          opacity: phoneOk ? 1 : 0.55,
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: theme.space[2],
+          height: 36,
+          whiteSpace: 'nowrap',
+          flexShrink: 0,
+          WebkitTapHighlightColor: 'transparent',
+        }}
+      >
+        <MessageSquare size={14} aria-hidden />
+        Preview & send
+      </button>
+    </div>
   );
 }
 
@@ -174,9 +248,6 @@ function ReminderSheet({
   const [preview, setPreview] = useState<PreviewState>({ status: 'idle' });
   const [send, setSend] = useState<SendState>({ status: 'idle' });
 
-  // Preview pass on open. Re-fires when appointmentId changes (won't
-  // in practice — the card is mounted per-appointment — but keeps the
-  // effect dependencies honest).
   useEffect(() => {
     if (!open) {
       setPreview({ status: 'idle' });
@@ -210,11 +281,7 @@ function ReminderSheet({
         });
         return;
       }
-      setPreview({
-        status: 'loaded',
-        body: data.body,
-        to: data.to ?? '',
-      });
+      setPreview({ status: 'loaded', body: data.body, to: data.to ?? '' });
     })();
     return () => {
       cancelled = true;
@@ -243,12 +310,11 @@ function ReminderSheet({
       return;
     }
     setSend({ status: 'sent', to: data.to ?? '' });
-    // Auto-close after a short delay so the receptionist sees the
-    // success state before the sheet goes away.
     setTimeout(onClose, 1200);
   }, [appointmentId, onClose]);
 
-  const canSend = preview.status === 'loaded' && send.status !== 'sending' && send.status !== 'sent';
+  const canSend =
+    preview.status === 'loaded' && send.status !== 'sending' && send.status !== 'sent';
 
   return (
     <BottomSheet
@@ -268,7 +334,12 @@ function ReminderSheet({
           <Button variant="secondary" size="md" onClick={onClose}>
             Cancel
           </Button>
-          <Button size="md" onClick={handleSend} disabled={!canSend} loading={send.status === 'sending'}>
+          <Button
+            size="md"
+            onClick={handleSend}
+            disabled={!canSend}
+            loading={send.status === 'sending'}
+          >
             <Send size={14} aria-hidden />
             {send.status === 'sending' ? 'Sending' : 'Send now'}
           </Button>
@@ -371,4 +442,22 @@ function ResultPanel({
       {message}
     </div>
   );
+}
+
+// "+44 7…" lightly formatted UK number. Mirrors the visit-side
+// formatter so the destination phone reads consistently across
+// surfaces. Returns the raw input if it doesn't look UK so we
+// never invent digits.
+function formatUkPhone(raw: string): string {
+  const digits = (raw ?? '').replace(/[^0-9+]/g, '');
+  if (!digits) return '';
+  // Already E.164 with country code → split as "+44 7xxx xxxxxx"
+  if (digits.startsWith('+44') && digits.length >= 12) {
+    const rest = digits.slice(3);
+    return `+44 ${rest.slice(0, 4)} ${rest.slice(4)}`;
+  }
+  if (digits.startsWith('0') && digits.length === 11) {
+    return `${digits.slice(0, 5)} ${digits.slice(5, 8)} ${digits.slice(8)}`;
+  }
+  return raw;
 }
