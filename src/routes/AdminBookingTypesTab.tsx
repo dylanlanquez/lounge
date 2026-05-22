@@ -23,6 +23,7 @@ import {
   type OpeningHoursWeek,
 } from '../lib/queries/clinicSettings.ts';
 import { theme } from '../theme/index.ts';
+import { fmtTzAbbr } from '../lib/dateFormat.ts';
 import {
   type BookingServiceType,
   type BookingTypeConfigRow,
@@ -1936,6 +1937,12 @@ function WorkingHoursEditor({
     onChange(next as unknown as OpeningHoursWeek);
   };
 
+  // Single zone banner above the day rows so a Cairo-based admin
+  // (or anyone whose device isn't on UK time) doesn't have to guess
+  // which clock these HH:MM values are in. Lounge stores working
+  // hours as UK clinic wall-clock; we surface that explicitly here.
+  const tzAbbr = fmtTzAbbr(new Date().toISOString());
+
   return (
     <div
       style={{
@@ -1945,6 +1952,20 @@ function WorkingHoursEditor({
         overflow: 'hidden',
       }}
     >
+      <div
+        style={{
+          padding: `${theme.space[2]}px ${theme.space[4]}px`,
+          background: theme.color.bg,
+          borderBottom: `1px solid ${theme.color.border}`,
+          fontSize: theme.type.size.xs,
+          fontWeight: theme.type.weight.semibold,
+          color: theme.color.inkMuted,
+          letterSpacing: theme.type.tracking.wide,
+          textTransform: 'uppercase',
+        }}
+      >
+        All times shown in UK clinic time ({tzAbbr})
+      </div>
       <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
         {value.map((day, i) => {
           const closed = day.closed === true;

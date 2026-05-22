@@ -1,5 +1,6 @@
 import { type ReactNode, useEffect, useState } from 'react';
 import { theme } from '../../theme/index.ts';
+import { fmtTzAbbr } from '../../lib/dateFormat.ts';
 
 export interface CalendarGridProps {
   // First hour shown (24h, e.g. 8 = 08:00)
@@ -43,10 +44,30 @@ export function CalendarGrid({
 
   const showNow = showNowIndicator && now !== null;
 
+  // Single zone label rendered above the axis so we don't repeat
+  // "BST" next to every hour. The label tracks DST automatically so
+  // the same column reads "GMT" in winter.
+  const axisZone = fmtTzAbbr(new Date().toISOString());
+
   return (
     <div style={{ position: 'relative', display: 'flex', width: '100%' }}>
       {/* Time axis */}
       <div style={{ width: TIME_AXIS_WIDTH, flexShrink: 0, position: 'relative', height: totalHeight }}>
+        <div
+          style={{
+            position: 'absolute',
+            top: -22,
+            right: theme.space[3],
+            fontSize: 10,
+            fontWeight: theme.type.weight.semibold,
+            color: theme.color.inkSubtle,
+            letterSpacing: theme.type.tracking.wide,
+            textTransform: 'uppercase',
+            fontVariantNumeric: 'tabular-nums',
+          }}
+        >
+          {axisZone}
+        </div>
         {hours.map((h, i) => (
           <div
             key={h}
@@ -174,11 +195,12 @@ function NowLine({ offset, beforeStart }: { offset: number; beforeStart: boolean
 
 function NowPill({ offset, beforeStart }: { offset: number; beforeStart: boolean }) {
   const now = new Date();
-  const h = now.getHours();
-  const m = now.getMinutes();
+  // Pinned to clinic time so the "now" indicator on the schedule
+  // grid reads in BST/GMT for every viewer.
+  const { hour: h, minute: m } = londonHourMinute(now);
   const hh = h % 12 === 0 ? 12 : h % 12;
   const ampm = h < 12 ? 'am' : 'pm';
-  const label = `${hh}:${String(m).padStart(2, '0')} ${ampm}`;
+  const label = `${hh}:${String(m).padStart(2, '0')} ${ampm} ${fmtTzAbbr(now.toISOString())}`;
 
   // Anchor to the right edge of the time-axis column so the pill ends just
   // before the slot column starts — never overlaps appointment cards.
@@ -220,10 +242,26 @@ const CARD_TOP_GAP = 6;
 const CARD_BOTTOM_GAP = 6;
 
 export function offsetForTime(iso: string, startHour: number, pxPerHour: number): number {
-  const d = new Date(iso);
-  const minutes = d.getHours() * 60 + d.getMinutes();
+  // Wall-clock minutes computed in clinic time. The grid renders
+  // a UK-clinic day, so a Cairo-based viewer with their device set
+  // to Cairo time mustn't see their cards drift two hours.
+  const { hour: h, minute: m } = londonHourMinute(iso);
+  const minutes = h * 60 + m;
   const startMinutes = startHour * 60;
   return ((minutes - startMinutes) / 60) * pxPerHour + CARD_TOP_GAP;
+}
+
+function londonHourMinute(d: Date | string): { hour: number; minute: number } {
+  const date = typeof d === 'string' ? new Date(d) : d;
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/London',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).formatToParts(date);
+  const hour = Number(parts.find((p) => p.type === 'hour')?.value ?? '0') % 24;
+  const minute = Number(parts.find((p) => p.type === 'minute')?.value ?? '0');
+  return { hour, minute };
 }
 
 export function heightForDuration(startIso: string, endIso: string, pxPerHour: number): number {
@@ -368,7 +406,8 @@ function useNowOffset(startHour: number, endHour: number, pxPerHour: number, isT
     }
     const update = () => {
       const now = new Date();
-      const minutes = now.getHours() * 60 + now.getMinutes();
+      const { hour: h, minute: m } = londonHourMinute(now);
+      const minutes = h * 60 + m;
       const startMinutes = startHour * 60;
       const endMinutes = endHour * 60;
       // Past the last visible hour, drop the indicator entirely so it

@@ -338,10 +338,15 @@ export function Schedule() {
       const start = new Date(r.start_at);
       const end = new Date(r.end_at);
       if (!Number.isNaN(start.getTime())) {
-        s = Math.min(s, start.getHours());
+        // Grid bounds use clinic-time hours so a UK booking near the
+        // edge of a day always falls inside the rendered range, even
+        // when the viewer's device is set to a different timezone.
+        const sh = londonHourMinute(r.start_at).hour;
+        s = Math.min(s, sh);
       }
       if (!Number.isNaN(end.getTime())) {
-        const endH = end.getHours() + (end.getMinutes() > 0 ? 1 : 0);
+        const eParts = londonHourMinute(r.end_at);
+        const endH = eParts.hour + (eParts.minute > 0 ? 1 : 0);
         e = Math.max(e, endH);
       }
     }
@@ -2050,22 +2055,37 @@ function formatClusterRange(rows: AppointmentRow[]): string {
     if (r.start_at < earliestStart) earliestStart = r.start_at;
     if (r.end_at > latestEnd) latestEnd = r.end_at;
   }
-  const s = new Date(earliestStart);
-  const e = new Date(latestEnd);
-  const day = s.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
-  return `${day} · ${formatTime12h(s)} to ${formatTime12h(e)}`;
+  const day = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/London',
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+  }).format(new Date(earliestStart));
+  return `${day} · ${formatTime12h(earliestStart)} to ${formatTime12h(latestEnd)} ${fmtTzAbbr(earliestStart)}`;
 }
 
 // 12-hour time, lowercase am/pm, no leading zero on the hour. Mirrors the
 // formatter in ScheduleListView so the cluster sheet header reads in the
-// same style as the rows below it.
-function formatTime12h(d: Date): string {
-  const h = d.getHours();
-  const m = d.getMinutes();
+// same style as the rows below it. Clinic time; zone suffix added once
+// at the end of the composed phrase by the caller above.
+function formatTime12h(iso: string): string {
+  const { hour: h, minute: m } = londonHourMinute(iso);
   const hh = h % 12 === 0 ? 12 : h % 12;
   const mm = m === 0 ? '' : `:${String(m).padStart(2, '0')}`;
   const ampm = h < 12 ? 'am' : 'pm';
   return `${hh}${mm}${ampm}`;
+}
+
+function londonHourMinute(iso: string): { hour: number; minute: number } {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/London',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).formatToParts(new Date(iso));
+  const hour = Number(parts.find((p) => p.type === 'hour')?.value ?? '0') % 24;
+  const minute = Number(parts.find((p) => p.type === 'minute')?.value ?? '0');
+  return { hour, minute };
 }
 
 // Solid badge + label that surfaces a Calendly deposit on the booking

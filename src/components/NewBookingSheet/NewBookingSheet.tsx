@@ -1737,19 +1737,56 @@ function ShopifyOrderCard({
 function splitIso(iso: string): { date: string; time: string } {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return { date: '', time: '' };
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, '0');
-  const dd = String(d.getDate()).padStart(2, '0');
-  const hh = String(d.getHours()).padStart(2, '0');
-  const mi = String(d.getMinutes()).padStart(2, '0');
-  return { date: `${yyyy}-${mm}-${dd}`, time: `${hh}:${mi}` };
+  // Split into clinic-time wall components so the date and time
+  // inputs reflect UK time regardless of which timezone the staff
+  // member's device is in.
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/London',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).formatToParts(d);
+  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? '';
+  return {
+    date: `${get('year')}-${get('month')}-${get('day')}`,
+    time: `${get('hour')}:${get('minute')}`,
+  };
 }
 
 function composeIso(date: string, time: string): string | null {
   if (!date || !time) return null;
-  const d = new Date(`${date}T${time}:00`);
-  if (Number.isNaN(d.getTime())) return null;
-  return d.toISOString();
+  // Interpret the typed parts as clinic-time wall clock and emit
+  // the matching UTC instant. Same correction as RescheduleSheet —
+  // see commentary there for why the naive `new Date()` parse
+  // can't be used directly.
+  const [Y, M, D] = date.split('-').map(Number);
+  const [hh, mi] = time.split(':').map(Number);
+  if (!Y || !M || !D || Number.isNaN(hh) || Number.isNaN(mi)) return null;
+  const naiveUtc = Date.UTC(Y, M - 1, D, hh, mi, 0);
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/London',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).formatToParts(new Date(naiveUtc));
+  const n = (type: string) => Number(parts.find((p) => p.type === type)?.value ?? '0');
+  const londonAsUtc = Date.UTC(
+    n('year'),
+    n('month') - 1,
+    n('day'),
+    n('hour') % 24,
+    n('minute'),
+    n('second'),
+  );
+  const offset = londonAsUtc - naiveUtc;
+  return new Date(naiveUtc - offset).toISOString();
 }
 
 // Working hours come back as 'HH:MM' strings; bound them to whole

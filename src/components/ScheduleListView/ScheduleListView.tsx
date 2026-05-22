@@ -16,6 +16,7 @@ import {
   staffDisplayName,
 } from '../../lib/queries/appointments.ts';
 import { useNow } from '../../lib/useNow.ts';
+import { fmtTzAbbr } from '../../lib/dateFormat.ts';
 
 export interface ScheduleListViewProps {
   rows: AppointmentRow[];
@@ -27,8 +28,11 @@ export function ScheduleListView({ rows, onPick }: ScheduleListViewProps) {
   const sorted = [...rows].sort((a, b) =>
     a.start_at < b.start_at ? -1 : a.start_at > b.start_at ? 1 : 0
   );
-  const morning = sorted.filter((r) => new Date(r.start_at).getHours() < 12);
-  const afternoon = sorted.filter((r) => new Date(r.start_at).getHours() >= 12);
+  // Morning/afternoon split is computed in clinic time so a 12:01 BST
+  // booking always lands under Afternoon for every viewer, regardless
+  // of the staff member's device timezone.
+  const morning = sorted.filter((r) => londonHour(r.start_at) < 12);
+  const afternoon = sorted.filter((r) => londonHour(r.start_at) >= 12);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[5] }}>
@@ -247,13 +251,29 @@ function statusToTone(s: AppointmentRow['status']) {
 }
 
 function formatTime(iso: string): string {
-  const d = new Date(iso);
-  const h = d.getHours();
-  const m = d.getMinutes();
+  // Pinned to clinic time and labelled with the active zone
+  // (BST/GMT) so a row reads the same on every staff device.
+  const { hour: h, minute: m } = londonHourMinute(iso);
   const hh = h % 12 === 0 ? 12 : h % 12;
   const mm = m === 0 ? '' : `:${String(m).padStart(2, '0')}`;
   const ampm = h < 12 ? 'am' : 'pm';
-  return `${hh}${mm}${ampm}`;
+  return `${hh}${mm}${ampm} ${fmtTzAbbr(iso)}`;
+}
+
+function londonHour(iso: string): number {
+  return londonHourMinute(iso).hour;
+}
+
+function londonHourMinute(iso: string): { hour: number; minute: number } {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/London',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).formatToParts(new Date(iso));
+  const hour = Number(parts.find((p) => p.type === 'hour')?.value ?? '0') % 24;
+  const minute = Number(parts.find((p) => p.type === 'minute')?.value ?? '0');
+  return { hour, minute };
 }
 
 function durationLabel(startIso: string, endIso: string): string {

@@ -741,19 +741,68 @@ function CurrentSlotSummary({
 function splitIso(iso: string): { date: string; time: string } {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return { date: '', time: '' };
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, '0');
-  const dd = String(d.getDate()).padStart(2, '0');
-  const hh = String(d.getHours()).padStart(2, '0');
-  const mi = String(d.getMinutes()).padStart(2, '0');
-  return { date: `${yyyy}-${mm}-${dd}`, time: `${hh}:${mi}` };
+  // Split into clinic-time wall-clock components so the date and
+  // time inputs above show UK time regardless of device timezone.
+  // A booking at 10:30 BST always shows as 10:30 in the editor for
+  // a Cairo-based staff member too.
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/London',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).formatToParts(d);
+  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? '';
+  return {
+    date: `${get('year')}-${get('month')}-${get('day')}`,
+    time: `${get('hour')}:${get('minute')}`,
+  };
 }
 
 function composeIso(date: string, time: string): string | null {
   if (!date || !time) return null;
-  const d = new Date(`${date}T${time}:00`);
-  if (Number.isNaN(d.getTime())) return null;
-  return d.toISOString();
+  // Interpret the typed date + time as clinic-time wall clock,
+  // then back out the BST/GMT offset to produce the matching UTC
+  // instant. Without this, a Cairo-based staff member typing
+  // "10:30" would have stored 07:30 UTC (= 08:30 BST) instead of
+  // the intended 09:30 UTC (= 10:30 BST).
+  const [Y, M, D] = date.split('-').map(Number);
+  const [hh, mi] = time.split(':').map(Number);
+  if (!Y || !M || !D || Number.isNaN(hh) || Number.isNaN(mi)) return null;
+  // Naive UTC built from the typed parts. The brief "treat as UTC"
+  // step is corrected below using the London wall-clock difference.
+  const naiveUtc = Date.UTC(Y, M - 1, D, hh, mi, 0);
+  const offset = londonOffsetMs(new Date(naiveUtc));
+  return new Date(naiveUtc - offset).toISOString();
+}
+
+// What does this instant read as in clinic time, minus what it
+// reads as in UTC, expressed in milliseconds? Positive = London is
+// ahead of UTC (BST → +1h). Used by composeIso to back the offset
+// out of a "treat the typed parts as UTC" approximation.
+function londonOffsetMs(d: Date): number {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/London',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).formatToParts(d);
+  const n = (type: string) => Number(parts.find((p) => p.type === type)?.value ?? '0');
+  const londonAsUtc = Date.UTC(
+    n('year'),
+    n('month') - 1,
+    n('day'),
+    n('hour') % 24,
+    n('minute'),
+    n('second'),
+  );
+  return londonAsUtc - d.getTime();
 }
 
 

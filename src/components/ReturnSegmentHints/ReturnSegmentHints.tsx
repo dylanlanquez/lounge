@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { theme } from '../../theme/index.ts';
 import { InlineHint } from '../InlineHint/InlineHint.tsx';
 import type { ResolvedBookingTypeConfig } from '../../lib/queries/bookingTypes.ts';
+import { fmtTzAbbr } from '../../lib/dateFormat.ts';
 
 // Threshold for the "patient comes back" hint, in minutes. Mirrors
 // the default in lng_settings.booking.patient_segmented_threshold_
@@ -74,8 +75,15 @@ export function ReturnSegmentHints({ phases, startIso }: ReturnSegmentHintsProps
 }
 
 function formatHmm(epochMs: number): string {
+  // Pinned to clinic time + zone suffix — these hints are read in
+  // clinic and must always reflect UK wall clock with the active
+  // BST/GMT label.
   const d = new Date(epochMs);
-  const h = String(d.getHours()).padStart(2, '0');
-  const m = String(d.getMinutes()).padStart(2, '0');
-  return `${h}:${m}`;
+  const time = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/London',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(d);
+  return `${time} ${fmtTzAbbr(d.toISOString())}`;
 }
