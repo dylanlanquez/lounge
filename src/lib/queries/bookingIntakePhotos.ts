@@ -90,3 +90,39 @@ export async function signIntakePhotoUrl(
   if (error || !data?.signedUrl) return null;
   return data.signedUrl;
 }
+
+// Delete a single intake-photo slot (front/left/right) for an
+// appointment via the staff-delete-intake-photo edge function. The
+// function removes both the storage object and the index row.
+// Idempotent: a missing row returns ok=true.
+export async function deleteIntakePhoto(args: {
+  appointmentId: string;
+  kind: IntakePhotoKind;
+}): Promise<void> {
+  const { data, error } = await supabase.functions.invoke<{
+    ok?: boolean;
+    error?: string;
+    detail?: string;
+  }>('staff-delete-intake-photo', {
+    body: { appointment_id: args.appointmentId, kind: args.kind },
+  });
+  if (error) {
+    const ctx = (error as { context?: unknown }).context;
+    if (ctx && typeof (ctx as Response).json === 'function') {
+      try {
+        const body = (await (ctx as Response).clone().json()) as {
+          error?: string;
+          detail?: string;
+        };
+        const code = body?.error ?? 'delete_failed';
+        throw new Error(body?.detail ? `${code}: ${body.detail}` : code);
+      } catch (e) {
+        if (e instanceof Error) throw e;
+      }
+    }
+    throw new Error(error.message);
+  }
+  if (!data?.ok) {
+    throw new Error(data?.error ?? 'delete_failed');
+  }
+}

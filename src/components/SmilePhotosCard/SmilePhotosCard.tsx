@@ -1,11 +1,12 @@
 import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowRight, Camera, Check, ChevronDown, Loader2, Upload } from 'lucide-react';
+import { ArrowRight, Camera, Check, ChevronDown, Loader2, Trash2, Upload } from 'lucide-react';
 import { BottomSheet } from '../BottomSheet/BottomSheet.tsx';
 import { Button } from '../Button/Button.tsx';
 import { Card } from '../Card/Card.tsx';
 import { PhotoLightbox, type LightboxPhoto } from '../PhotoLightbox/PhotoLightbox.tsx';
 import { theme } from '../../theme/index.ts';
 import {
+  deleteIntakePhoto,
   signIntakePhotoUrl,
   useBookingIntakePhotos,
   type IntakePhotoRow,
@@ -344,6 +345,45 @@ export function SmilePhotosCard({
     }
   };
 
+  // Per-tile delete state. Mirrors uploadByKind so an in-flight delete
+  // on Front doesn't grey out the Left/Right tiles. Confirmation lives
+  // in a BottomSheet (consistent with the "Replace existing" sheet
+  // above) — staff tap trash → sheet asks them to confirm → delete
+  // runs; the slot empties back to the upload affordance.
+  type DeleteState =
+    | { status: 'idle' }
+    | { status: 'busy' };
+  const [deleteByKind, setDeleteByKind] = useState<Record<Kind, DeleteState>>({
+    front: { status: 'idle' },
+    left: { status: 'idle' },
+    right: { status: 'idle' },
+  });
+  const [deleteConfirm, setDeleteConfirm] = useState<{ kind: Kind } | null>(null);
+
+  const handleDelete = async (kind: Kind) => {
+    setDeleteByKind((prev) => ({ ...prev, [kind]: { status: 'busy' } }));
+    try {
+      await deleteIntakePhoto({ appointmentId, kind });
+      setDeleteByKind((prev) => ({ ...prev, [kind]: { status: 'idle' } }));
+      // Clear any prior upload-error on this slot — the slot is now
+      // empty so the affordance reverts to "Upload photo".
+      setUploadByKind((prev) => ({ ...prev, [kind]: { status: 'idle' } }));
+      refresh();
+    } catch (e) {
+      const message = e instanceof Error ? e.message : 'Delete failed';
+      setDeleteByKind((prev) => ({ ...prev, [kind]: { status: 'idle' } }));
+      // Surface the failure on the upload-state error channel — the
+      // tile already has a slot for an inline alert there.
+      setUploadByKind((prev) => ({ ...prev, [kind]: { status: 'error', message } }));
+      await logFailure({
+        source: 'smile_photo_staff_delete_failed',
+        severity: 'error',
+        message,
+        context: { appointmentId, kind },
+      });
+    }
+  };
+
   const panelId = `lng-smile-photos-${appointmentId}`;
 
   return (
@@ -465,6 +505,8 @@ export function SmilePhotosCard({
                     allowStaffUpload={allowStaffUpload}
                     uploadState={uploadByKind[s.kind]}
                     onPickFile={(file) => handleUpload(s.kind, file)}
+                    onRequestDelete={row ? () => setDeleteConfirm({ kind: s.kind }) : null}
+                    deleteBusy={deleteByKind[s.kind].status === 'busy'}
                   />
                 );
               })}
@@ -518,6 +560,41 @@ export function SmilePhotosCard({
         {/* No body content beyond title + description; the footer
             carries the action. BottomSheet's chrome handles the
             close X + backdrop dismiss for us. */}
+        <div style={{ height: 1 }} />
+      </BottomSheet>
+      {/* Per-tile delete confirmation. Tapping the trash overlay on a
+          filled tile lands here; confirm fires handleDelete and the
+          slot empties back to the upload affordance. */}
+      <BottomSheet
+        open={!!deleteConfirm}
+        onClose={() => setDeleteConfirm(null)}
+        title="Delete this smile photo?"
+        description={
+          deleteConfirm
+            ? `The ${
+                SLOTS.find((s) => s.kind === deleteConfirm.kind)?.label.toLowerCase() ?? deleteConfirm.kind
+              } photo will be removed from this appointment. The patient's profile smile photo, if it was already added there, is not affected.`
+            : ''
+        }
+        footer={
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+            <Button variant="secondary" onClick={() => setDeleteConfirm(null)}>
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              onClick={() => {
+                if (!deleteConfirm) return;
+                const { kind } = deleteConfirm;
+                setDeleteConfirm(null);
+                void handleDelete(kind);
+              }}
+            >
+              Delete photo
+            </Button>
+          </div>
+        }
+      >
         <div style={{ height: 1 }} />
       </BottomSheet>
     </Card>
@@ -603,6 +680,8 @@ function PhotoTile({
   allowStaffUpload,
   uploadState,
   onPickFile,
+  onRequestDelete,
+  deleteBusy,
 }: {
   label: string;
   loading: boolean;
@@ -631,6 +710,13 @@ function PhotoTile({
   allowStaffUpload: boolean;
   uploadState: { status: 'idle' } | { status: 'busy' } | { status: 'error'; message: string };
   onPickFile: (file: File) => void;
+  /** Opens the delete confirmation BottomSheet. Null when the slot
+   *  is empty or the parent hasn't wired a delete path. */
+  onRequestDelete: (() => void) | null;
+  /** True while the staff-delete-intake-photo function is in flight
+   *  for this slot. Disables the trash overlay so a double-tap can't
+   *  fire two requests; a Loader2 spinner replaces the trash icon. */
+  deleteBusy: boolean;
 }) {
   // Tile chrome matches PhotoGallery.tsx's UploadTile precisely:
   // square aspect, theme.radius.card corners, 1.5px dashed border in
@@ -662,6 +748,7 @@ function PhotoTile({
     }
   };
   const interactive = (signedUrl && onOpenLightbox) || showUploadAffordance;
+  const showDeleteOverlay = !!signedUrl && !!onRequestDelete;
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
       <input
@@ -677,6 +764,7 @@ function PhotoTile({
           if (file) onPickFile(file);
         }}
       />
+      <div style={{ position: 'relative' }}>
       <button
         type="button"
         onClick={interactive ? handleTileClick : undefined}
@@ -809,6 +897,53 @@ function PhotoTile({
           </>
         )}
       </button>
+      {showDeleteOverlay ? (
+        <button
+          type="button"
+          onClick={(e) => {
+            // The tile button below this overlay otherwise catches
+            // the click and opens the lightbox. Stop it so only the
+            // delete path runs.
+            e.stopPropagation();
+            if (!deleteBusy) onRequestDelete?.();
+          }}
+          disabled={deleteBusy}
+          aria-label={`Delete ${label} photo`}
+          title={`Delete ${label} photo`}
+          style={{
+            position: 'absolute',
+            top: 6,
+            right: 6,
+            width: 30,
+            height: 30,
+            borderRadius: theme.radius.pill,
+            border: 'none',
+            // Translucent dark wash so the trash icon stays legible
+            // on top of any photo content underneath.
+            background: 'rgba(17, 17, 17, 0.55)',
+            color: '#fff',
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            cursor: deleteBusy ? 'default' : 'pointer',
+            padding: 0,
+            margin: 0,
+            WebkitTapHighlightColor: 'transparent',
+            opacity: deleteBusy ? 0.7 : 1,
+          }}
+        >
+          {deleteBusy ? (
+            <Loader2
+              size={14}
+              aria-hidden
+              style={{ animation: 'lng-smile-promote-spin 0.9s linear infinite' }}
+            />
+          ) : (
+            <Trash2 size={14} aria-hidden />
+          )}
+        </button>
+      ) : null}
+      </div>
       {/* Caption + per-tile promote affordance share one row so the
           two read as a single piece of metadata under the photo —
           "Front smile · Added ✓" — rather than the label sitting
