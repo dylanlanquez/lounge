@@ -105,7 +105,7 @@ function SmsHeroHeader({ patientFirstName }: { patientFirstName: string }) {
             letterSpacing: theme.type.tracking.tight,
           }}
         >
-          Send an SMS
+          Patient not on the call?
         </p>
         <p
           style={{
@@ -115,11 +115,11 @@ function SmsHeroHeader({ patientFirstName }: { patientFirstName: string }) {
             lineHeight: theme.type.leading.snug,
           }}
         >
-          Text{' '}
+          Send{' '}
           <strong style={{ color: theme.color.ink, fontWeight: theme.type.weight.medium }}>
             {patientFirstName}
           </strong>{' '}
-          the meeting join link when they are not on the call.
+          a text with the join link so they can jump on the meeting now.
         </p>
       </div>
     </header>
