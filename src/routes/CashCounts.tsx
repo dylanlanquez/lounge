@@ -18,6 +18,7 @@ import { theme } from '../theme/index.ts';
 import { useAuth } from '../lib/auth.tsx';
 import { useCurrentAccount } from '../lib/queries/currentAccount.tsx';
 import { useIsMobile } from '../lib/useIsMobile.ts';
+import { fmtTzAbbr } from '../lib/dateFormat.ts';
 import {
   type CashCountRow,
   type CashPosition,
@@ -1914,11 +1915,14 @@ function formatLongDate(iso: string): string {
 }
 
 function formatDateTime(iso: string): string {
-  return new Date(iso).toLocaleString('en-GB', {
+  const stamp = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/London',
     day: 'numeric',
     month: 'short',
     hour: '2-digit',
     minute: '2-digit',
-  });
+    hour12: false,
+  }).format(new Date(iso));
+  return `${stamp} ${fmtTzAbbr(iso)}`;
 }
 

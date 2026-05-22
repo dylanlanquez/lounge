@@ -251,6 +251,16 @@ export function AppointmentCard({
             )}
             <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
               {formatTime(startAt)}
+              <span
+                style={{
+                  marginLeft: 3,
+                  fontSize: '0.78em',
+                  opacity: 0.55,
+                  fontWeight: theme.type.weight.medium,
+                }}
+              >
+                {fmtTzAbbr(startAt)}
+              </span>
               {serviceLabel ? ` · ${serviceLabel}` : staffName ? ` · ${staffName}` : ''}
               {showLate ? (
                 <span style={{ color: theme.color.alert, fontWeight: theme.type.weight.semibold }}>

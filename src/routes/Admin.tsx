@@ -22,6 +22,7 @@ import { KIOSK_STATUS_BAR_HEIGHT } from '../components/KioskStatusBar/KioskStatu
 import { theme } from '../theme/index.ts';
 import { useAuth } from '../lib/auth.tsx';
 import { useIsMobile } from '../lib/useIsMobile.ts';
+import { fmtTzAbbr } from '../lib/dateFormat.ts';
 import {
   importReadersFromStripe,
   listLoungeLocations,
@@ -425,7 +426,7 @@ function CalendlyTab() {
             <StatCard label="Errors (24h)" value={String(d.recentFailures)} tone={d.recentFailures > 0 ? 'alert' : 'normal'} />
             <StatCard
               label="Last delivery"
-              value={d.lastDelivery ? new Date(d.lastDelivery).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—'}
+              value={d.lastDelivery ? `${new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/London', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(d.lastDelivery))} ${fmtTzAbbr(d.lastDelivery)}` : '—'}
             />
           </div>
         )}
@@ -858,7 +859,7 @@ function ReceiptsTab() {
                     ) : null}
                   </span>
                   <span style={{ fontSize: theme.type.size.xs, color: theme.color.inkSubtle }}>
-                    {new Date(row.created_at).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                    {`${new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/London', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(row.created_at))} ${fmtTzAbbr(row.created_at)}`}
                   </span>
                   <Button variant="secondary" size="sm" loading={retrying === row.id} onClick={() => onRetry(row.id)}>
                     Retry
@@ -1021,7 +1022,7 @@ function TestingTab() {
             <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
               {dirty.data.map((row) => {
                 const name = `${row.first_name ?? ''} ${row.last_name ?? ''}`.trim() || 'Patient';
-                const when = new Date(row.start_at).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+                const when = `${new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/London', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(row.start_at))} ${fmtTzAbbr(row.start_at)}`;
                 return (
                   <li
                     key={row.id}
@@ -1522,14 +1523,17 @@ function formatLaunchDateLong(iso: string): string {
 function formatLaunchInstantLong(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleString('en-GB', {
+  const stamp = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/London',
     weekday: 'short',
     day: 'numeric',
     month: 'short',
     year: 'numeric',
     hour: '2-digit',
     minute: '2-digit',
-  });
+    hour12: false,
+  }).format(d);
+  return `${stamp} ${fmtTzAbbr(iso)}`;
 }
 
 function DevicesTab() {
@@ -1762,7 +1766,7 @@ function DevicesTab() {
                     {s.device_label ?? s.device_id.slice(0, 8)}
                   </p>
                   <p style={{ margin: `${theme.space[1]}px 0 0`, fontSize: theme.type.size.xs, color: theme.color.inkMuted }}>
-                    Signed in {new Date(s.signed_in_at).toLocaleString('en-GB')}
+                    Signed in {`${new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/London', day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(s.signed_in_at))} ${fmtTzAbbr(s.signed_in_at)}`}
                   </p>
                 </div>
                 <StatusPill
@@ -4522,7 +4526,7 @@ function FailuresTab() {
                 </StatusPill>
                 <span style={{ fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>{f.source}</span>
                 <span style={{ fontSize: theme.type.size.xs, color: theme.color.inkSubtle, marginLeft: 'auto' }}>
-                  {new Date(f.occurred_at).toLocaleString('en-GB')}
+                  {`${new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/London', day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(f.occurred_at))} ${fmtTzAbbr(f.occurred_at)}`}
                 </span>
               </div>
               <p style={{ margin: 0, fontSize: theme.type.size.base, color: theme.color.ink }}>{f.message}</p>

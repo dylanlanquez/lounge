@@ -19,6 +19,7 @@ import {
 } from '../../lib/queries/financials.ts';
 import { formatNumber, formatPence } from '../../lib/queries/carts.ts';
 import { csvFilename, downloadCsv, toCsv, type CsvColumn } from '../../lib/csv.ts';
+import { fmtTzAbbr } from '../../lib/dateFormat.ts';
 
 interface Props {
   range: DateRange;
@@ -207,13 +208,15 @@ function VoidsList({ data, onExport }: { data: VoidsData; onExport: () => void }
                     {v.patient_name}
                   </p>
                   <p style={{ margin: `${theme.space[1]}px 0 0`, fontSize: theme.type.size.xs, color: theme.color.inkMuted, fontVariantNumeric: 'tabular-nums' }}>
-                    {new Date(v.cancelled_at).toLocaleString('en-GB', {
+                    {`${new Intl.DateTimeFormat('en-GB', {
+                      timeZone: 'Europe/London',
                       day: 'numeric',
                       month: 'short',
                       year: 'numeric',
                       hour: '2-digit',
                       minute: '2-digit',
-                    })}
+                      hour12: false,
+                    }).format(new Date(v.cancelled_at))} ${fmtTzAbbr(v.cancelled_at)}`}
                   </p>
                 </div>
                 <div style={{ textAlign: 'right' }}>
@@ -345,13 +348,15 @@ function RefundsList({
                     fontVariantNumeric: 'tabular-nums',
                   }}
                 >
-                  {new Date(r.refunded_at).toLocaleString('en-GB', {
+                  {`${new Intl.DateTimeFormat('en-GB', {
+                    timeZone: 'Europe/London',
                     day: 'numeric',
                     month: 'short',
                     year: 'numeric',
                     hour: '2-digit',
                     minute: '2-digit',
-                  })}
+                    hour12: false,
+                  }).format(new Date(r.refunded_at))} ${fmtTzAbbr(r.refunded_at)}`}
                 </p>
               </div>
               <div style={{ textAlign: 'right' }}>

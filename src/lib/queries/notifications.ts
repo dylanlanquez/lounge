@@ -192,36 +192,25 @@ export function formatBookingTypeForNotification(args: {
 }
 
 // ── Scheduled-at label ────────────────────────────────────────────
-// "Monday, 19 May 2026 at 10:30 BST" exactly per spec. Built from
-// the existing dateFormat helpers + a single timeZoneName segment
-// from Intl.DateTimeFormat (toLocaleString doesn't expose
-// timeZoneName cleanly on its own, so we use formatToParts).
+// "Monday, 19 May 2026 at 10:30 BST" — pinned to clinic time so a
+// notification opened in Cairo reads the same UK clock the
+// receptionist quoted to the patient. formatTime already returns
+// the BST/GMT suffix, so we don't re-stamp the zone here.
 export function formatNotificationDateTime(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
-  // "Monday, 19 May 2026"
-  const weekday = d.toLocaleDateString('en-GB', { weekday: 'long' });
-  const dayMonthYear = d.toLocaleDateString('en-GB', {
+  const weekday = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/London',
+    weekday: 'long',
+  }).format(d);
+  const dayMonthYear = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/London',
     day: 'numeric',
     month: 'long',
     year: 'numeric',
-  });
-  // "10:30"
-  const time = formatTime(iso);
-  // "BST" — pulled from the parts API; falls back silently if
-  // unavailable on the runtime (older Safari).
-  let tz = '';
-  try {
-    const parts = new Intl.DateTimeFormat('en-GB', {
-      timeZoneName: 'short',
-    }).formatToParts(d);
-    tz = parts.find((p) => p.type === 'timeZoneName')?.value ?? '';
-  } catch {
-    tz = '';
-  }
-  return tz
-    ? `${weekday}, ${dayMonthYear} at ${time} ${tz}`
-    : `${weekday}, ${dayMonthYear} at ${time}`;
+  }).format(d);
+  // formatTime already returns "10:30 BST".
+  return `${weekday}, ${dayMonthYear} at ${formatTime(iso)}`;
 }
 
 // ── Compact relative time ─────────────────────────────────────────

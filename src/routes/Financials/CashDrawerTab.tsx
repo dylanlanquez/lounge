@@ -24,6 +24,7 @@ import { formatNumber, formatPence } from '../../lib/queries/carts.ts';
 import { useCurrentAccount } from '../../lib/queries/currentAccount.tsx';
 import { useLocations } from '../../lib/queries/locations.ts';
 import { useCashCountStatement } from '../../lib/queries/cashCounts.ts';
+import { fmtTzAbbr } from '../../lib/dateFormat.ts';
 import {
   type CashDrawerLine,
   type PastSettlementRow,
@@ -1156,13 +1157,16 @@ function PaymentStatusPill({ line }: { line: CashDrawerLine }) {
 
 function formatDateTime(iso: string): string {
   if (!iso) return '—';
-  return new Date(iso).toLocaleString('en-GB', {
+  const stamp = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/London',
     day: 'numeric',
     month: 'short',
     year: 'numeric',
     hour: '2-digit',
     minute: '2-digit',
-  });
+    hour12: false,
+  }).format(new Date(iso));
+  return `${stamp} ${fmtTzAbbr(iso)}`;
 }
 
 const th = {

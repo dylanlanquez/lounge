@@ -33,6 +33,7 @@ import {
   useReportsOnlineOrders,
 } from '../../lib/queries/reports.ts';
 import { formatNumber, formatPence } from '../../lib/queries/carts.ts';
+import { fmtTzAbbr } from '../../lib/dateFormat.ts';
 
 const ROWS_PER_PAGE = 20;
 
@@ -531,13 +532,16 @@ function PaginationButton({
 
 function formatStartDate(iso: string): string {
   const d = new Date(iso);
-  return d.toLocaleString('en-GB', {
+  const stamp = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/London',
     day: '2-digit',
     month: 'short',
     year: 'numeric',
     hour: '2-digit',
     minute: '2-digit',
-  });
+    hour12: false,
+  }).format(d);
+  return `${stamp} ${fmtTzAbbr(iso)}`;
 }
 
 function humaniseStatus(s: string): string {

@@ -15,6 +15,7 @@ import {
   useAnomalies,
 } from '../../lib/queries/cashCounts.ts';
 import { formatNumber, formatPence } from '../../lib/queries/carts.ts';
+import { fmtTzAbbr } from '../../lib/dateFormat.ts';
 
 interface Props {
   range: DateRange;
@@ -182,13 +183,15 @@ function FlagList({ data, onOpenVisit }: { data: AnomalyData; onOpenVisit: (visi
                       fontVariantNumeric: 'tabular-nums',
                     }}
                   >
-                    {new Date(f.occurred_at).toLocaleString('en-GB', {
+                    {`${new Intl.DateTimeFormat('en-GB', {
+                      timeZone: 'Europe/London',
                       day: 'numeric',
                       month: 'short',
                       year: 'numeric',
                       hour: '2-digit',
                       minute: '2-digit',
-                    })}
+                      hour12: false,
+                    }).format(new Date(f.occurred_at))} ${fmtTzAbbr(f.occurred_at)}`}
                   </p>
                 ) : null}
               </div>

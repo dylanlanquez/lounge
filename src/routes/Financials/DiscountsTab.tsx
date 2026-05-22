@@ -16,6 +16,7 @@ import {
 } from '../../lib/queries/financials.ts';
 import { formatNumber, formatPence } from '../../lib/queries/carts.ts';
 import { csvFilename, downloadCsv, toCsv, type CsvColumn } from '../../lib/csv.ts';
+import { fmtTzAbbr } from '../../lib/dateFormat.ts';
 
 interface Props {
   range: DateRange;
@@ -242,13 +243,15 @@ function DiscountsList({ data, onExport }: { data: DiscountsData; onExport: () =
                     fontVariantNumeric: 'tabular-nums',
                   }}
                 >
-                  {new Date(d.applied_at).toLocaleString('en-GB', {
+                  {`${new Intl.DateTimeFormat('en-GB', {
+                    timeZone: 'Europe/London',
                     day: 'numeric',
                     month: 'short',
                     year: 'numeric',
                     hour: '2-digit',
                     minute: '2-digit',
-                  })}
+                    hour12: false,
+                  }).format(new Date(d.applied_at))} ${fmtTzAbbr(d.applied_at)}`}
                 </p>
               </div>
               <div style={{ textAlign: 'right' }}>

@@ -18,6 +18,7 @@ import {
 } from '../../lib/queries/financials.ts';
 import { formatNumber, formatPence } from '../../lib/queries/carts.ts';
 import { csvFilename, downloadCsv, toCsv, type CsvColumn } from '../../lib/csv.ts';
+import { fmtTzAbbr } from '../../lib/dateFormat.ts';
 
 interface Props {
   range: DateRange;
@@ -256,11 +257,14 @@ function CartStatusPill({ status }: { status: string }) {
 }
 
 function formatDate(iso: string): string {
-  return new Date(iso).toLocaleString('en-GB', {
+  const stamp = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/London',
     day: 'numeric',
     month: 'short',
     year: 'numeric',
     hour: '2-digit',
     minute: '2-digit',
-  });
+    hour12: false,
+  }).format(new Date(iso));
+  return `${stamp} ${fmtTzAbbr(iso)}`;
 }

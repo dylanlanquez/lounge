@@ -1,6 +1,5 @@
 import { type ReactNode, useEffect, useState } from 'react';
 import { theme } from '../../theme/index.ts';
-import { fmtTzAbbr } from '../../lib/dateFormat.ts';
 
 export interface CalendarGridProps {
   // First hour shown (24h, e.g. 8 = 08:00)
@@ -44,30 +43,10 @@ export function CalendarGrid({
 
   const showNow = showNowIndicator && now !== null;
 
-  // Single zone label rendered above the axis so we don't repeat
-  // "BST" next to every hour. The label tracks DST automatically so
-  // the same column reads "GMT" in winter.
-  const axisZone = fmtTzAbbr(new Date().toISOString());
-
   return (
     <div style={{ position: 'relative', display: 'flex', width: '100%' }}>
       {/* Time axis */}
       <div style={{ width: TIME_AXIS_WIDTH, flexShrink: 0, position: 'relative', height: totalHeight }}>
-        <div
-          style={{
-            position: 'absolute',
-            top: -22,
-            right: theme.space[3],
-            fontSize: 10,
-            fontWeight: theme.type.weight.semibold,
-            color: theme.color.inkSubtle,
-            letterSpacing: theme.type.tracking.wide,
-            textTransform: 'uppercase',
-            fontVariantNumeric: 'tabular-nums',
-          }}
-        >
-          {axisZone}
-        </div>
         {hours.map((h, i) => (
           <div
             key={h}

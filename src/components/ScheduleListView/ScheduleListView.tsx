@@ -53,11 +53,6 @@ function Section({
   onPick: (r: AppointmentRow) => void;
   now: Date;
 }) {
-  // Single subtle zone label per section. The rows below render
-  // just the time ("10:30am") to keep the column clean; the zone
-  // sits up here next to the section name so it's still visible
-  // without crowding every row.
-  const zone = rows.length > 0 ? fmtTzAbbr(rows[0]!.start_at) : '';
   return (
     <div>
       <p
@@ -71,9 +66,6 @@ function Section({
         }}
       >
         {label}
-        {zone ? (
-          <span style={{ marginLeft: theme.space[2], opacity: 0.7 }}>· {zone}</span>
-        ) : null}
       </p>
       <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
         {rows.map((r) => (
@@ -159,6 +151,16 @@ export function ScheduleListRow({
             }}
           >
             {formatTime(row.start_at)}
+            <span
+              style={{
+                marginLeft: 3,
+                fontSize: '0.7em',
+                fontWeight: theme.type.weight.medium,
+                color: theme.color.inkSubtle,
+              }}
+            >
+              {fmtTzAbbr(row.start_at)}
+            </span>
           </p>
           <p
             style={{
