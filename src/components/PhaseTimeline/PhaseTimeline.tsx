@@ -1,7 +1,7 @@
 import { Fragment, type ReactNode } from 'react';
 import { Flag, Hourglass, UserRound } from 'lucide-react';
 import { theme } from '../../theme/index.ts';
-import { formatTime } from '../../lib/dateFormat.ts';
+import { fmtTzAbbr, formatTime, formatTimeNoZone } from '../../lib/dateFormat.ts';
 import type { AppointmentPhaseSummary } from '../../lib/queries/appointments.ts';
 
 // PhaseTimeline — vertical timeline of the materialised phases for
@@ -125,7 +125,20 @@ function EstimatedFinishRow({ finishAt }: { finishAt: string }) {
         >
           {/* Tilde stays so it still reads as an estimate, not a
               hard close — same convention the inline sub-label used. */}
-          ~{finishStr}
+          ~{formatTimeNoZone(finishAt)}
+        </span>
+        <span
+          style={{
+            marginTop: 1,
+            fontSize: 10,
+            fontWeight: theme.type.weight.medium,
+            color: theme.color.inkSubtle,
+            letterSpacing: theme.type.tracking.wide,
+            lineHeight: 1,
+          }}
+          aria-hidden
+        >
+          {fmtTzAbbr(finishAt)}
         </span>
       </div>
       <div
@@ -230,7 +243,6 @@ function PhaseRow({
 }) {
   const active = phase.patient_required;
   const Icon = active ? UserRound : Hourglass;
-  const startStr = formatTime(phase.start_at);
   const endStr = formatTime(phase.end_at);
   const durationMin = Math.max(
     Math.round(
@@ -275,7 +287,19 @@ function PhaseRow({
             lineHeight: 1.2,
           }}
         >
-          {startStr}
+          {formatTimeNoZone(phase.start_at)}
+        </span>
+        <span
+          style={{
+            marginTop: 1,
+            fontSize: 10,
+            fontWeight: theme.type.weight.medium,
+            color: theme.color.inkSubtle,
+            letterSpacing: theme.type.tracking.wide,
+            lineHeight: 1,
+          }}
+        >
+          {fmtTzAbbr(phase.start_at)}
         </span>
         {/* No end-time sub-label here — the EstimatedFinishRow at
             the bottom of the timeline owns that information now. */}
