@@ -106,6 +106,17 @@ export function ConflictBlock({
 // present (pool busy in a specific phase, time window known) and
 // falls back to the legacy "pool at capacity" sentence otherwise.
 function describeConflict(c: RescheduleConflict): string {
+  if (c.conflict_kind === 'min_notice') {
+    // pool_capacity carries the notice window in minutes (see the
+    // RescheduleConflict comment + lng_booking_check_conflict). The
+    // earliest bookable time sits in conflict_end_at — surface it so
+    // the operator picks the next valid slot without doing the math.
+    const earliest = c.conflict_end_at
+      ? `${formatTime(c.conflict_end_at)} ${fmtTzAbbr(c.conflict_end_at)}`
+      : null;
+    const tail = earliest ? ` Earliest bookable: ${earliest}.` : '';
+    return `This booking type needs at least ${c.pool_capacity} min of notice.${tail}`;
+  }
   if (c.conflict_kind === 'max_concurrent') {
     return `Service is at its concurrent-bookings cap (${c.current_count}/${c.pool_capacity} already booked).`;
   }

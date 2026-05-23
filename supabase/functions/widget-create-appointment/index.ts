@@ -280,7 +280,7 @@ Deno.serve(async (req) => {
     return jsonResponse(500, { error: 'resolve_failed' });
   }
   const resolved = (Array.isArray(resolvedRaw) ? resolvedRaw[0] : null) as
-    | { duration_default?: number }
+    | { duration_default?: number; min_notice_minutes?: number | null }
     | null;
   if (!resolved || typeof resolved.duration_default !== 'number') {
     return jsonResponse(400, { error: 'no_booking_config' });
@@ -297,6 +297,25 @@ Deno.serve(async (req) => {
   // past (corrupting reports, double-booking the "next" 9am, etc).
   if (startAt.getTime() <= Date.now()) {
     return jsonResponse(400, { error: 'startAt_in_past' });
+  }
+  // Booking-notice guard — same defence-in-depth as the past-time
+  // check. The slot scanner already hides notice-violating slots
+  // from the picker and the conflict checker re-runs the same test,
+  // but a hand-crafted request should fail loudly here with a
+  // dedicated error code instead of a generic slot_unavailable.
+  const noticeMinutes =
+    typeof resolved.min_notice_minutes === 'number' && resolved.min_notice_minutes > 0
+      ? resolved.min_notice_minutes
+      : 0;
+  if (noticeMinutes > 0) {
+    const earliest = Date.now() + noticeMinutes * 60_000;
+    if (startAt.getTime() < earliest) {
+      return jsonResponse(400, {
+        error: 'within_min_notice',
+        min_notice_minutes: noticeMinutes,
+        earliest_start_at: new Date(earliest).toISOString(),
+      });
+    }
   }
   const endAt = new Date(startAt.getTime() + durationMin * 60_000);
 

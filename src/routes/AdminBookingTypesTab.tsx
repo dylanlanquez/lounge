@@ -1507,6 +1507,29 @@ function BookingTypeEditorDialog({
   const [displayLabel, setDisplayLabel] = useState<string>(row?.display_label ?? '');
 
   const [notes, setNotes] = useState<string>(row?.notes ?? '');
+
+  // Booking notice mode + minutes. NULL on the row means "no notice"
+  // (parent) or "inherit parent" (child); a positive int means
+  // "custom". Default custom buffer is 30 min — the first concrete
+  // use case (virtual_impression_appointment) needs that to give the
+  // operator time to join the Meet link.
+  const initialNoticeMinutes = row?.min_notice_minutes ?? null;
+  type NoticeMode = 'off' | 'inherit' | 'custom';
+  const [noticeMode, setNoticeMode] = useState<NoticeMode>(() => {
+    if (initialNoticeMinutes !== null && initialNoticeMinutes >= 0) return 'custom';
+    return isParent ? 'off' : 'inherit';
+  });
+  const [noticeMinutes, setNoticeMinutes] = useState<number>(
+    initialNoticeMinutes ?? 30,
+  );
+  // Inherited notice — surfaced in the child editor's sub copy so
+  // the admin knows what they're inheriting before flipping to
+  // Custom. Only meaningful when isParent is false.
+  const parentNoticeMinutes = parent?.min_notice_minutes ?? null;
+  const noticeIsValid =
+    noticeMode !== 'custom' ||
+    (Number.isInteger(noticeMinutes) && noticeMinutes >= 0);
+
   const [busy, setBusy] = useState(false);
 
   // Title for the editor sheet. For new multi-axis children, the
@@ -1545,7 +1568,7 @@ function BookingTypeEditorDialog({
   })();
 
   const save = async () => {
-    if (hoursHaveInvalidLunch) return;
+    if (hoursHaveInvalidLunch || !noticeIsValid) return;
     setBusy(true);
     try {
       const trimmedLabel = displayLabel.trim();
@@ -1577,6 +1600,11 @@ function BookingTypeEditorDialog({
         ...(isParent
           ? {}
           : { display_label: trimmedLabel === '' ? null : trimmedLabel }),
+        // Booking notice: custom = persist the int; off/inherit =
+        // null (resolver coalesces null on child to parent, null on
+        // parent to "no notice").
+        min_notice_minutes:
+          noticeMode === 'custom' ? Math.max(0, Math.floor(noticeMinutes)) : null,
         notes: notes.trim() === '' ? null : notes.trim(),
       };
 
@@ -1637,7 +1665,7 @@ function BookingTypeEditorDialog({
             variant="primary"
             onClick={save}
             loading={busy}
-            disabled={hoursHaveInvalidLunch}
+            disabled={hoursHaveInvalidLunch || !noticeIsValid}
           >
             {busy ? 'Saving…' : 'Save'}
           </Button>
@@ -1706,6 +1734,69 @@ function BookingTypeEditorDialog({
         >
           {!hoursInherits ? (
             <WorkingHoursEditor value={hours} onChange={setHours} />
+          ) : null}
+        </DialogSection>
+
+        <DialogSection
+          title="Booking notice"
+          sub={noticeSubCopy(
+            isParent,
+            noticeMode,
+            noticeMinutes,
+            parentNoticeMinutes,
+          )}
+          action={
+            <SegmentedControl
+              size="sm"
+              value={noticeMode}
+              onChange={(v) => setNoticeMode(v as NoticeMode)}
+              options={
+                isParent
+                  ? [
+                      { value: 'off', label: 'No notice' },
+                      { value: 'custom', label: 'Require notice' },
+                    ]
+                  : [
+                      { value: 'inherit', label: 'Inherit from parent' },
+                      { value: 'custom', label: 'Custom notice' },
+                    ]
+              }
+            />
+          }
+        >
+          {noticeMode === 'custom' ? (
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: theme.space[3],
+              }}
+            >
+              <Input
+                value={String(noticeMinutes)}
+                onChange={(e) => {
+                  const raw = e.target.value.trim();
+                  if (raw === '') {
+                    setNoticeMinutes(0);
+                    return;
+                  }
+                  const parsed = Number.parseInt(raw, 10);
+                  setNoticeMinutes(Number.isFinite(parsed) ? parsed : 0);
+                }}
+                numericFormat="integer"
+                aria-label="Minimum booking notice in minutes"
+                fullWidth={false}
+                style={{ width: 96 }}
+              />
+              <span
+                style={{
+                  fontSize: theme.type.size.sm,
+                  color: theme.color.inkMuted,
+                }}
+              >
+                minutes from now
+              </span>
+            </div>
           ) : null}
         </DialogSection>
 
@@ -1820,6 +1911,29 @@ function ResetLink({
 
 function labelOfService(s: BookingServiceType): string {
   return BOOKING_SERVICE_TYPES.find((x) => x.value === s)?.label ?? s;
+}
+
+// Booking-notice sub copy. Phrasing depends on parent vs child and
+// the active mode so the admin reads the actual current behaviour
+// before changing it. Patient-side surfaces and conflict checker
+// both read the same resolved value, so we promise "everywhere" in
+// the custom-mode copy.
+function noticeSubCopy(
+  isParent: boolean,
+  mode: 'off' | 'inherit' | 'custom',
+  minutes: number,
+  parentMinutes: number | null,
+): string {
+  if (mode === 'custom') {
+    return `Patients must book at least ${minutes} min in advance. The slot picker, "first opening" banner, and conflict checker enforce it on every surface (widget, staff sheets, Checkpoint, self-serve).`;
+  }
+  if (isParent) {
+    return 'No notice required. Patients can book the next free slot.';
+  }
+  if (parentMinutes === null) {
+    return 'Inheriting from the parent service (no notice required).';
+  }
+  return `Inheriting from the parent service (${parentMinutes} min notice).`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -63,6 +63,12 @@ export interface BookingTypeConfigRow {
   // exact type. Independent of resource-pool capacity (both rules
   // apply at conflict-check time). Null = inherit from parent.
   max_concurrent: number | null;
+  // Optional minimum notice in minutes between "now" and the
+  // earliest bookable slot. Slot scanners + conflict checker both
+  // honour this server-side so the gate lands on every surface
+  // (widget, staff sheets, Checkpoint, self-serve). Null on parent
+  // = no notice required. Null on child = inherit parent.
+  min_notice_minutes: number | null;
   // Patient-facing duration as a min/max range. min is the lower
   // bound (or fixed value when max is null). max is null for fixed
   // values; set when the patient should see a range like "30 to 45
@@ -153,6 +159,10 @@ export interface ResolvedBookingTypeConfig {
   // Per-booking-type concurrent cap (resolved from child or parent).
   // Null when neither sets it.
   max_concurrent: number | null;
+  // Resolved minimum notice in minutes (child over parent). Null
+  // when neither sets it — slot scanners and the conflict checker
+  // treat null as 0 (no notice).
+  min_notice_minutes: number | null;
   // Pool ids this booking type consumes (aggregated across all phases).
   // Kept for backwards compatibility; new callers should read `phases`.
   pool_ids: string[];
@@ -283,6 +293,7 @@ export async function resolveBookingTypeConfig(args: {
     duration_max: row.duration_max as number,
     duration_default: resolvedDuration as number,
     max_concurrent: (row.max_concurrent as number | null) ?? null,
+    min_notice_minutes: (row.min_notice_minutes as number | null) ?? null,
     pool_ids: Array.isArray(row.pool_ids) ? (row.pool_ids as string[]) : [],
     notes: row.notes ?? null,
     source: row.source as 'child' | 'parent',
@@ -504,6 +515,7 @@ export async function upsertBookingTypeConfig(input: {
   duration_max?: number | null;
   duration_default?: number | null;
   max_concurrent?: number | null;
+  min_notice_minutes?: number | null;
   patient_facing_min_minutes?: number | null;
   patient_facing_max_minutes?: number | null;
   display_label?: string | null;
@@ -522,6 +534,7 @@ export async function upsertBookingTypeConfig(input: {
   if (input.duration_max !== undefined) payload.duration_max = input.duration_max;
   if (input.duration_default !== undefined) payload.duration_default = input.duration_default;
   if (input.max_concurrent !== undefined) payload.max_concurrent = input.max_concurrent;
+  if (input.min_notice_minutes !== undefined) payload.min_notice_minutes = input.min_notice_minutes;
   if (input.patient_facing_min_minutes !== undefined)
     payload.patient_facing_min_minutes = input.patient_facing_min_minutes;
   if (input.patient_facing_max_minutes !== undefined)

@@ -34,10 +34,17 @@ import { sendAppointmentConfirmation } from './sendAppointmentConfirmation.ts';
 // the whole block will run in a single PL/pgSQL transaction.)
 
 export interface RescheduleConflict {
-  conflict_kind: 'pool_at_capacity' | 'max_concurrent';
+  conflict_kind: 'pool_at_capacity' | 'max_concurrent' | 'min_notice';
   pool_id: string | null;
+  // For pool_at_capacity / max_concurrent: the pool's effective
+  // capacity. For min_notice: the booking type's notice in minutes
+  // (re-used field so callers can read "X minutes" without changing
+  // the row shape).
   pool_capacity: number;
-  current_count: number;
+  // Null for min_notice (the gate isn't a count of overlapping
+  // appointments — it's a time check); always populated for the
+  // other kinds.
+  current_count: number | null;
   // Phase-aware fields populated by the phase-aware conflict checker
   // (M5). For pool_at_capacity, names the candidate's phase that hit
   // the limit and the time window of that phase. Null for
@@ -199,7 +206,7 @@ export function mapConflictRow(r: {
   conflict_kind: string;
   pool_id: string | null;
   pool_capacity: number;
-  current_count: number;
+  current_count: number | null;
   phase_index?: number | null;
   phase_label?: string | null;
   conflict_start_at?: string | null;
@@ -732,6 +739,9 @@ function describeConflicts(conflicts: RescheduleConflict[]): string {
       if (c.conflict_kind === 'pool_at_capacity') {
         const phase = c.phase_label ? ` during ${c.phase_label}` : '';
         return `pool "${c.pool_id}" at capacity ${c.pool_capacity}${phase} (${c.current_count} already booked)`;
+      }
+      if (c.conflict_kind === 'min_notice') {
+        return `slot inside the ${c.pool_capacity}-minute booking-notice window`;
       }
       return `service hits max-concurrent ${c.pool_capacity} (${c.current_count} already booked)`;
     })

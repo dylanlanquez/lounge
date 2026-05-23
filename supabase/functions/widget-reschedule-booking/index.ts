@@ -150,10 +150,29 @@ Deno.serve(async (req) => {
     return jsonResponse(500, { error: 'resolve_failed' });
   }
   const cfg = (Array.isArray(cfgRaw) ? cfgRaw[0] : null) as
-    | { duration_default?: number }
+    | { duration_default?: number; min_notice_minutes?: number | null }
     | null;
   if (!cfg || typeof cfg.duration_default !== 'number') {
     return jsonResponse(400, { error: 'no_booking_config' });
+  }
+  // Booking-notice guard. Defence-in-depth: the slot scanner already
+  // hides notice-violating slots from the reschedule picker, but a
+  // hand-crafted request should fail loudly with a dedicated error
+  // code rather than the generic slot_unavailable response that
+  // would otherwise come back from the conflict check.
+  const noticeMinutes =
+    typeof cfg.min_notice_minutes === 'number' && cfg.min_notice_minutes > 0
+      ? cfg.min_notice_minutes
+      : 0;
+  if (noticeMinutes > 0) {
+    const earliest = Date.now() + noticeMinutes * 60_000;
+    if (newStart.getTime() < earliest) {
+      return jsonResponse(400, {
+        error: 'within_min_notice',
+        min_notice_minutes: noticeMinutes,
+        earliest_start_at: new Date(earliest).toISOString(),
+      });
+    }
   }
   const newEnd = new Date(newStart.getTime() + cfg.duration_default * 60_000);
 
