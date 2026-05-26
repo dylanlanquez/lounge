@@ -403,8 +403,37 @@ export function useAppointmentTimeline(
           });
         }
 
+        // Resolve smsMessageId by joining sms_delivered / sms_failed
+        // events to lng_sms_messages on twilio_sid. Without this the
+        // timeline can't open the View SMS modal because patient_events
+        // only carries the SID, not the lng_sms_messages.id. Same
+        // pattern as visitTimeline.ts.
+        const smsTwilioSids = rows
+          .filter((r) => r.event_type === 'sms_delivered' || r.event_type === 'sms_failed')
+          .map((r) => (typeof r.payload?.twilio_sid === 'string' ? r.payload.twilio_sid : null))
+          .filter((sid): sid is string => !!sid);
+        const smsBySid = new Map<string, { id: string; to_phone: string }>();
+        if (smsTwilioSids.length > 0) {
+          const { data: smsRows } = await supabase
+            .from('lng_sms_messages')
+            .select('id, twilio_message_sid, to_phone')
+            .in('twilio_message_sid', smsTwilioSids);
+          for (const smsRow of (smsRows ?? []) as Array<{
+            id: string;
+            twilio_message_sid: string | null;
+            to_phone: string;
+          }>) {
+            if (smsRow.twilio_message_sid) {
+              smsBySid.set(smsRow.twilio_message_sid, {
+                id: smsRow.id,
+                to_phone: smsRow.to_phone,
+              });
+            }
+          }
+        }
+
         for (const r of rows) {
-          const mapped = mapEvent(r, appt, actorById, siblingById, accountById, walkIn);
+          const mapped = mapEvent(r, appt, actorById, siblingById, accountById, walkIn, smsBySid);
           if (mapped) out.push(mapped);
         }
 
@@ -476,6 +505,7 @@ function mapEvent(
   siblingById: Map<string, { start_at: string }>,
   accountById: Map<string, string>,
   walkIn: RawWalkInRow | null,
+  smsBySid: Map<string, { id: string; to_phone: string }>,
 ): TimelineEvent | null {
   const actor = row.actor_account_id ? actorById.get(row.actor_account_id) : undefined;
   const base = { id: row.id, timestamp: row.created_at, actor };
@@ -853,6 +883,26 @@ function mapEvent(
         ),
         hint: 'card',
         tone: 'alert',
+      };
+    }
+
+    case 'sms_delivered':
+    case 'sms_failed': {
+      const twilioSid = readString(row.payload, 'twilio_sid');
+      const smsRow = twilioSid ? smsBySid.get(twilioSid) ?? null : null;
+      const smsMessageId =
+        smsRow?.id ??
+        (typeof row.payload?.sms_message_id === 'string' ? row.payload.sms_message_id : null);
+      const toPhone = smsRow?.to_phone ?? null;
+      const failed = row.event_type === 'sms_failed';
+      return {
+        ...base,
+        type: 'patient_event',
+        title: failed ? "Text message didn't reach the patient" : 'Text message delivered',
+        detail: toPhone ? `Sent to ${toPhone}` : undefined,
+        hint: failed ? 'sms_failed' : 'sms',
+        tone: failed ? 'alert' : undefined,
+        smsMessageId,
       };
     }
 
