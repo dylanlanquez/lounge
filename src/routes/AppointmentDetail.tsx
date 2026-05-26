@@ -371,6 +371,7 @@ function Loaded({
   const [confirmReverseNoShowOpen, setConfirmReverseNoShowOpen] = useState(false);
   const [resending, setResending] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [timelineTick, setTimelineTick] = useState(0);
 
   // Meeting-join gating. Tapping Join / Rejoin from a tablet, phone
   // or from a Customer-Service-only account doesn't proceed; it
@@ -650,6 +651,7 @@ function Loaded({
                 appointmentId={appt.id}
                 patientFirstName={appt.patient.first_name}
                 patientPhone={appt.patient.phone}
+                onSent={() => setTimelineTick((t) => t + 1)}
               />
             ) : null}
           </>
@@ -821,7 +823,7 @@ function Loaded({
             /visit/:id (above) and VisitDetail mounts the same hook
             with visitId set, picking up the post-arrival events on
             top of the same pre-arrival history. */}
-        <ContinuousTimeline appointmentId={appt.id} visitId={null} />
+        <ContinuousTimeline key={timelineTick} appointmentId={appt.id} visitId={null} />
       </section>
 
       {rescheduling ? (

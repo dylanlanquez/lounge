@@ -35,12 +35,14 @@ export interface VirtualCallReminderProps {
   appointmentId: string;
   patientFirstName: string | null;
   patientPhone: string | null;
+  onSent?: () => void;
 }
 
 export function VirtualCallReminder({
   appointmentId,
   patientFirstName,
   patientPhone,
+  onSent,
 }: VirtualCallReminderProps) {
   const [open, setOpen] = useState(false);
   const phoneOk = !!patientPhone && patientPhone.trim().length > 0;
@@ -62,6 +64,7 @@ export function VirtualCallReminder({
         open={open}
         onClose={() => setOpen(false)}
         appointmentId={appointmentId}
+        onSent={onSent}
       />
     </>
   );
@@ -240,10 +243,12 @@ function ReminderSheet({
   open,
   onClose,
   appointmentId,
+  onSent,
 }: {
   open: boolean;
   onClose: () => void;
   appointmentId: string;
+  onSent?: () => void;
 }) {
   const [preview, setPreview] = useState<PreviewState>({ status: 'idle' });
   const [send, setSend] = useState<SendState>({ status: 'idle' });
@@ -310,6 +315,7 @@ function ReminderSheet({
       return;
     }
     setSend({ status: 'sent', to: data.to ?? '' });
+    onSent?.();
     setTimeout(onClose, 1200);
   }, [appointmentId, onClose]);
 
