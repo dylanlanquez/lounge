@@ -139,7 +139,7 @@ export function ScheduleListRow({
         {barColor ? (
           <div style={{ width: 6, background: barColor, flexShrink: 0 }} aria-hidden />
         ) : null}
-        <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: theme.space[4], padding: theme.space[4] }}>
+        <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: theme.space[4], padding: theme.space[4] }}>
         <div style={{ width: 80, flexShrink: 0 }}>
           <p
             style={{
@@ -226,10 +226,12 @@ export function ScheduleListRow({
             {formatLateDuration(lateMin)} late
           </span>
         ) : null}
-        <StatusPill tone={tone} size="sm">
-          {humaniseStatus(row.status)}
-        </StatusPill>
-        <ChevronRight size={18} color={theme.color.inkSubtle} aria-hidden />
+        <span style={{ flexShrink: 0 }}>
+          <StatusPill tone={tone} size="sm">
+            {humaniseStatus(row.status)}
+          </StatusPill>
+        </span>
+        <ChevronRight size={18} color={theme.color.inkSubtle} aria-hidden style={{ flexShrink: 0 }} />
         </div>
       </button>
     </li>
