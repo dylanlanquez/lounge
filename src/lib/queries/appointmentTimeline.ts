@@ -409,7 +409,7 @@ export function useAppointmentTimeline(
         // only carries the SID, not the lng_sms_messages.id. Same
         // pattern as visitTimeline.ts.
         const smsTwilioSids = rows
-          .filter((r) => r.event_type === 'sms_delivered' || r.event_type === 'sms_failed')
+          .filter((r) => r.event_type === 'sms_queued' || r.event_type === 'sms_delivered' || r.event_type === 'sms_failed')
           .map((r) => (typeof r.payload?.twilio_sid === 'string' ? r.payload.twilio_sid : null))
           .filter((sid): sid is string => !!sid);
         const smsBySid = new Map<string, { id: string; to_phone: string }>();
@@ -432,7 +432,25 @@ export function useAppointmentTimeline(
           }
         }
 
+        // When both sms_queued AND sms_delivered/sms_failed exist for
+        // the same twilio_sid, drop the queued row — it would double
+        // every send into two timeline entries. The terminal event
+        // (delivered/failed) is the one staff care about.
+        const terminalSmsSids = new Set<string>(
+          rows
+            .filter((r) => r.event_type === 'sms_delivered' || r.event_type === 'sms_failed')
+            .map((r) => (typeof r.payload?.twilio_sid === 'string' ? r.payload.twilio_sid : ''))
+            .filter(Boolean),
+        );
+
         for (const r of rows) {
+          if (
+            r.event_type === 'sms_queued' &&
+            typeof r.payload?.twilio_sid === 'string' &&
+            terminalSmsSids.has(r.payload.twilio_sid)
+          ) {
+            continue;
+          }
           const mapped = mapEvent(r, appt, actorById, siblingById, accountById, walkIn, smsBySid);
           if (mapped) out.push(mapped);
         }
@@ -886,6 +904,7 @@ function mapEvent(
       };
     }
 
+    case 'sms_queued':
     case 'sms_delivered':
     case 'sms_failed': {
       const twilioSid = readString(row.payload, 'twilio_sid');
@@ -893,12 +912,17 @@ function mapEvent(
       const smsMessageId =
         smsRow?.id ??
         (typeof row.payload?.sms_message_id === 'string' ? row.payload.sms_message_id : null);
-      const toPhone = smsRow?.to_phone ?? null;
+      const toPhone = smsRow?.to_phone ?? readString(row.payload, 'to_phone');
       const failed = row.event_type === 'sms_failed';
+      const queued = row.event_type === 'sms_queued';
       return {
         ...base,
         type: 'patient_event',
-        title: failed ? "Text message didn't reach the patient" : 'Text message delivered',
+        title: failed
+          ? "Text message didn't reach the patient"
+          : queued
+            ? 'Text message sent'
+            : 'Text message delivered',
         detail: toPhone ? `Sent to ${toPhone}` : undefined,
         hint: failed ? 'sms_failed' : 'sms',
         tone: failed ? 'alert' : undefined,
