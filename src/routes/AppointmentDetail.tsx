@@ -1380,7 +1380,7 @@ function buildApptRibbon(
         icon: <CheckCircle2 size={16} aria-hidden />,
         timeLine: bookedForLine,
         relative: appt.join_url ? 'Meeting complete' : 'Visit complete',
-        tone: 'neutral',
+        tone: 'accent',
       };
     }
     case 'no_show': {
