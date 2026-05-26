@@ -119,7 +119,7 @@ describe('availableActions', () => {
     // including Calendly, which is normally blocked from Lounge-side
     // rescheduling for in-person bookings.
 
-    it('booked + calendly + virtual: reschedule is offered', () => {
+    it('booked + calendly + virtual: reschedule + mark_virtual_complete offered', () => {
       const out = availableActions({
         ...base,
         status: 'booked',
@@ -127,6 +127,7 @@ describe('availableActions', () => {
         isVirtual: true,
       });
       expect(out).toContain('reschedule');
+      expect(out).toContain('mark_virtual_complete');
     });
 
     it('joined + calendly + virtual: reschedule is offered alongside rejoin', () => {
@@ -175,12 +176,22 @@ describe('availableActions', () => {
       expect(out).toContain('mark_virtual_complete');
     });
 
-    it('booked + virtual: mark_virtual_complete is NOT offered (call not started)', () => {
+    it('booked + virtual: mark_virtual_complete IS offered', () => {
       const out = availableActions({
         ...base,
         status: 'booked',
         source: 'native',
         isVirtual: true,
+      });
+      expect(out).toContain('mark_virtual_complete');
+    });
+
+    it('booked + in-person: mark_virtual_complete is NOT offered', () => {
+      const out = availableActions({
+        ...base,
+        status: 'booked',
+        source: 'native',
+        isVirtual: false,
       });
       expect(out).not.toContain('mark_virtual_complete');
     });

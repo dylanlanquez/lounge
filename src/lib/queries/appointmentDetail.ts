@@ -622,6 +622,7 @@ export function availableActions(input: AvailableActionsInput): AppointmentActio
   if (status === 'booked') {
     // Virtual: Join replaces the arrival wizard; in-person: normal arrival flow.
     out.push(isVirtual ? 'join_meeting' : 'mark_arrived');
+    if (isVirtual) out.push('mark_virtual_complete');
     out.push('mark_no_show');
     if (canReschedule) out.push('reschedule');
     if (canCancel) out.push('cancel');
