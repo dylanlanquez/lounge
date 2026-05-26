@@ -4376,7 +4376,7 @@ function ShopifyOrderCard({
             letterSpacing: theme.type.tracking.tight,
           }}
         >
-          Online order from venneir.com
+          Linked Shopify order
         </span>
       </div>
 
@@ -4421,7 +4421,7 @@ function ShopifyOrderCard({
           >
             {appliesToBill
               ? `Paid online · ${formatPence(order.pence)} credited against the bill`
-              : `This appointment was booked from this order`}
+              : `This impression appointment is part of this order`}
           </span>
         </div>
 
@@ -4454,7 +4454,7 @@ function ShopifyOrderCard({
       >
         {appliesToBill
           ? `Open the order in Shopify to confirm the patient paid ${formatPence(order.pence)} ${order.currency} online. The same amount is automatically credited against the cart below.`
-          : `Impression appointments don't carry a bill of their own. Open the order in Shopify to see what was paid for, and which future in-clinic visit the credit applies to when the patient returns.`}
+          : `Open the order in Shopify to see what was purchased.`}
       </p>
     </div>
   );
