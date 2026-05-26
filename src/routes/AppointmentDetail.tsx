@@ -2216,7 +2216,7 @@ function OnlineOrderCreditCard({
     <Card padding="lg">
       <DetailSectionHeader
         icon={<BadgeCheck size={16} aria-hidden />}
-        title="Related online order"
+        title="Linked Shopify order"
       />
       <p
         style={{
@@ -2226,8 +2226,8 @@ function OnlineOrderCreditCard({
           lineHeight: theme.type.leading.snug,
         }}
       >
-        This impression appointment was booked from venneir.com order{' '}
-        <strong style={{ color: theme.color.ink, fontWeight: theme.type.weight.semibold }}>{orderName}</strong>. The upgrade fee on that order credits against the future in-clinic visit when the patient returns.
+        This impression appointment is part of order{' '}
+        <strong style={{ color: theme.color.ink, fontWeight: theme.type.weight.semibold }}>{orderName}</strong>. Open the order in Shopify to see what was purchased.
       </p>
       {adminUrl ? (
         <a
