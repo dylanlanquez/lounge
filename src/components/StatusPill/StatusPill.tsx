@@ -52,9 +52,9 @@ const TONE_STYLES: Record<StatusTone, CSSProperties> = {
     boxShadow: `inset 0 0 0 1.5px ${theme.color.accent}`,
   },
   complete: {
-    background: 'transparent',
-    color: theme.color.inkMuted,
-    boxShadow: `inset 0 0 0 1px ${theme.color.border}`,
+    background: theme.color.accentBg,
+    color: theme.color.accent,
+    boxShadow: `inset 0 0 0 1px ${theme.color.accent}`,
   },
   no_show: {
     background: 'transparent',
