@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../supabase.ts';
 import { logFailure } from '../failureLog.ts';
+import { useRealtimeRefresh } from '../useRealtimeRefresh.ts';
 import type { AppointmentSource } from './appointments.ts';
 import type { AppointmentStatus } from '../../components/AppointmentCard/AppointmentCard.tsx';
 
@@ -562,6 +563,16 @@ export function useAppointmentDetail(appointmentId: string | undefined | null): 
       cancelled = true;
     };
   }, [appointmentId, tick]);
+
+  // Auto-refresh when the appointment row changes (e.g. meet-fetch-
+  // attendance writes conference_started_at / conference_ended_at, or
+  // status flips from another tab). Same pattern as appointmentTimeline.
+  useRealtimeRefresh(
+    appointmentId
+      ? [{ table: 'lng_appointments', filter: `id=eq.${appointmentId}` }]
+      : [],
+    () => setTick((t) => t + 1),
+  );
 
   return { result, refresh: () => setTick((t) => t + 1) };
 }

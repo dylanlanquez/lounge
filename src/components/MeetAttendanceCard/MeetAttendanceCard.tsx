@@ -1,5 +1,5 @@
-import { Fragment, useMemo, useState, type ReactNode } from 'react';
-import { CheckCircle2, Loader2, RefreshCw, ShieldCheck, TriangleAlert, Users, Video } from 'lucide-react';
+import { Fragment, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { CheckCircle2, ChevronDown, ChevronUp, Loader2, RefreshCw, ShieldCheck, TriangleAlert, Users, Video } from 'lucide-react';
 import { theme } from '../../theme/index.ts';
 import { useIsMobile } from '../../lib/useIsMobile.ts';
 import { fmtTzAbbr } from '../../lib/dateFormat.ts';
@@ -78,26 +78,26 @@ export function MeetAttendanceCard({
     | null
   >(null);
 
-  const onRefresh = async () => {
-    setPulling(true);
+  const doFetch = async (silent: boolean) => {
+    if (!silent) setPulling(true);
     try {
       const result = await fetchMeetAttendance(appointmentId);
       if (result.ok) {
-        if (result.waitingForMeeting) {
+        if (!silent) {
           setToast({
             tone: 'success',
-            title: 'No attendance yet',
-            description:
-              'Google publishes attendance once the meeting ends. Try again after the appointment finishes.',
-          });
-        } else {
-          setToast({
-            tone: 'success',
-            title: result.upserts === 1 ? '1 participant updated' : `${result.upserts ?? 0} participants updated`,
+            title: result.waitingForMeeting
+              ? 'No attendance yet'
+              : result.upserts === 1
+                ? '1 participant updated'
+                : `${result.upserts ?? 0} participants updated`,
+            description: result.waitingForMeeting
+              ? 'Google publishes attendance once the meeting ends. Try again after the appointment finishes.'
+              : undefined,
           });
         }
         refresh();
-      } else {
+      } else if (!silent) {
         setToast({
           tone: 'error',
           title: 'Could not refresh attendance',
@@ -105,15 +105,29 @@ export function MeetAttendanceCard({
         });
       }
     } catch (e) {
-      setToast({
-        tone: 'error',
-        title: 'Could not refresh attendance',
-        description: e instanceof Error ? e.message : undefined,
-      });
+      if (!silent) {
+        setToast({
+          tone: 'error',
+          title: 'Could not refresh attendance',
+          description: e instanceof Error ? e.message : undefined,
+        });
+      }
     } finally {
-      setPulling(false);
+      if (!silent) setPulling(false);
     }
   };
+
+  const onRefresh = () => doFetch(false);
+
+  // Auto-poll Google for attendance while the meeting is still in
+  // progress. Fires every 30s silently so the card updates live
+  // without toasts or spinners. Clears when meetingHasEnded flips
+  // true or on unmount.
+  useEffect(() => {
+    if (meetingHasEnded) return;
+    const id = setInterval(() => { void doFetch(true); }, 30_000);
+    return () => clearInterval(id);
+  }, [meetingHasEnded, appointmentId]);
 
   const grouped = useMemo(() => groupByPerson(rows), [rows]);
   const verdict = useMemo(
@@ -564,6 +578,12 @@ function MetadataList({
 // Participants — grouped by person, one row each
 // ─────────────────────────────────────────────────────────────────────
 
+interface SessionDetail {
+  joinedAt: string | null;
+  leftAt: string | null;
+  durationSeconds: number;
+}
+
 interface GroupedParticipant {
   key: string;
   displayName: string;
@@ -573,6 +593,7 @@ interface GroupedParticipant {
   firstJoinedAt: string | null;
   lastLeftAt: string | null;
   stillIn: boolean;
+  sessions: SessionDetail[];
 }
 
 function groupByPerson(rows: MeetAttendanceRow[]): GroupedParticipant[] {
@@ -587,6 +608,11 @@ function groupByPerson(rows: MeetAttendanceRow[]): GroupedParticipant[] {
     const seconds = row.duration_seconds ?? 0;
     const joinedMs = row.joined_at ? new Date(row.joined_at).getTime() : null;
     const leftMs = row.left_at ? new Date(row.left_at).getTime() : null;
+    const session: SessionDetail = {
+      joinedAt: row.joined_at,
+      leftAt: row.left_at,
+      durationSeconds: seconds,
+    };
     if (!existing) {
       map.set(key, {
         key,
@@ -597,11 +623,13 @@ function groupByPerson(rows: MeetAttendanceRow[]): GroupedParticipant[] {
         firstJoinedAt: row.joined_at,
         lastLeftAt: row.left_at,
         stillIn: row.left_at == null,
+        sessions: [session],
       });
       continue;
     }
     existing.sessionCount += 1;
     existing.totalSeconds += seconds;
+    existing.sessions.push(session);
     // is_host = true for any session sticks; staff covering for one
     // another counts as the staff side.
     if (row.is_host) existing.isHost = true;
@@ -619,7 +647,17 @@ function groupByPerson(rows: MeetAttendanceRow[]): GroupedParticipant[] {
     }
     if (row.left_at == null) existing.stillIn = true;
   }
-  return Array.from(map.values()).sort((a, b) => {
+  const result = Array.from(map.values());
+  // Sort individual sessions chronologically within each person so
+  // the expanded sub-rows read top-to-bottom in time order.
+  for (const p of result) {
+    p.sessions.sort((x, y) => {
+      const xMs = x.joinedAt ? new Date(x.joinedAt).getTime() : 0;
+      const yMs = y.joinedAt ? new Date(y.joinedAt).getTime() : 0;
+      return xMs - yMs;
+    });
+  }
+  return result.sort((a, b) => {
     // Host rows surface above non-host. Within each, longest stay first.
     if (a.isHost !== b.isHost) return a.isHost ? -1 : 1;
     return b.totalSeconds - a.totalSeconds;
@@ -648,47 +686,169 @@ function ParticipantList({
 
   return (
     <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
-      {grouped.map((person) => {
-        const hasSameNameDuplicate = (sameNameTally.get(person.displayName) ?? 0) > 1;
-        // Identity match is only meaningful for non-host participants —
-        // it's specifically the "is this actually the patient on file?"
-        // question. Skip hosts entirely; they have their own Host chip.
-        const identityMatch = person.isHost
-          ? null
-          : matchesPatientName(person.displayName, patientFirstName, patientLastName);
-        return (
-          <li
-            key={person.key}
+      {grouped.map((person) => (
+        <ParticipantRow
+          key={person.key}
+          person={person}
+          hasSameNameDuplicate={(sameNameTally.get(person.displayName) ?? 0) > 1}
+          patientFirstName={patientFirstName}
+          patientLastName={patientLastName}
+        />
+      ))}
+    </ul>
+  );
+}
+
+function ParticipantRow({
+  person,
+  hasSameNameDuplicate,
+  patientFirstName,
+  patientLastName,
+}: {
+  person: GroupedParticipant;
+  hasSameNameDuplicate: boolean;
+  patientFirstName: string | null;
+  patientLastName: string | null;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const hasMultipleSessions = person.sessionCount > 1;
+
+  // Identity match is only meaningful for non-host participants.
+  const identityMatch = person.isHost
+    ? null
+    : matchesPatientName(person.displayName, patientFirstName, patientLastName);
+
+  return (
+    <li
+      style={{
+        borderRadius: theme.radius.input,
+        background: theme.color.surface,
+        border: `1px solid ${theme.color.border}`,
+        overflow: 'hidden',
+      }}
+    >
+      {/* Main row */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: theme.space[3],
+          padding: `${theme.space[3]}px ${theme.space[4]}px`,
+          cursor: hasMultipleSessions ? 'pointer' : undefined,
+        }}
+        role={hasMultipleSessions ? 'button' : undefined}
+        tabIndex={hasMultipleSessions ? 0 : undefined}
+        aria-expanded={hasMultipleSessions ? expanded : undefined}
+        onClick={hasMultipleSessions ? () => setExpanded((v) => !v) : undefined}
+        onKeyDown={hasMultipleSessions ? (e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            setExpanded((v) => !v);
+          }
+        } : undefined}
+      >
+        <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[2], minWidth: 0, flexWrap: 'wrap' }}>
+            <p
+              style={{
+                margin: 0,
+                fontSize: theme.type.size.base,
+                fontWeight: theme.type.weight.semibold,
+                color: theme.color.ink,
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {person.displayName}
+            </p>
+            <HostChip isHost={person.isHost} />
+            {hasSameNameDuplicate ? <SeparateAccountChip /> : null}
+            {identityMatch === 'mismatch' ? <IdentityMismatchChip /> : null}
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            {hasMultipleSessions ? (
+              expanded ? (
+                <ChevronUp size={12} aria-hidden style={{ color: theme.color.inkMuted, flexShrink: 0 }} />
+              ) : (
+                <ChevronDown size={12} aria-hidden style={{ color: theme.color.inkMuted, flexShrink: 0 }} />
+              )
+            ) : null}
+            <p
+              style={{
+                margin: 0,
+                fontSize: theme.type.size.xs,
+                color: theme.color.inkMuted,
+                fontVariantNumeric: 'tabular-nums',
+              }}
+            >
+              {person.sessionCount === 1
+                ? formatSingleSessionWindow(person)
+                : `${person.sessionCount} sessions`}
+            </p>
+          </div>
+        </div>
+        <div
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'flex-end',
+            gap: 2,
+            flexShrink: 0,
+          }}
+        >
+          <p
             style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              gap: theme.space[3],
-              padding: `${theme.space[3]}px ${theme.space[4]}px`,
-              borderRadius: theme.radius.input,
-              background: theme.color.surface,
-              border: `1px solid ${theme.color.border}`,
+              margin: 0,
+              fontSize: theme.type.size.sm,
+              color: theme.color.ink,
+              fontVariantNumeric: 'tabular-nums',
+              fontWeight: theme.type.weight.medium,
             }}
           >
-            <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[2], minWidth: 0, flexWrap: 'wrap' }}>
-                <p
-                  style={{
-                    margin: 0,
-                    fontSize: theme.type.size.base,
-                    fontWeight: theme.type.weight.semibold,
-                    color: theme.color.ink,
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap',
-                  }}
-                >
-                  {person.displayName}
-                </p>
-                <HostChip isHost={person.isHost} />
-                {hasSameNameDuplicate ? <SeparateAccountChip /> : null}
-                {identityMatch === 'mismatch' ? <IdentityMismatchChip /> : null}
-              </div>
+            {hasMultipleSessions && !expanded
+              ? `total ${formatDuration(person.totalSeconds)}`
+              : formatDuration(person.totalSeconds)}
+          </p>
+          {person.stillIn ? (
+            <p
+              style={{
+                margin: 0,
+                fontSize: theme.type.size.xs,
+                color: theme.color.inkMuted,
+              }}
+            >
+              still in meeting
+            </p>
+          ) : null}
+        </div>
+      </div>
+      {/* Expanded session sub-rows */}
+      {hasMultipleSessions && expanded ? (
+        <div
+          style={{
+            borderTop: `1px solid ${theme.color.border}`,
+            padding: `${theme.space[2]}px ${theme.space[4]}px ${theme.space[3]}px`,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: theme.space[1],
+            background: theme.color.bg,
+          }}
+        >
+          {person.sessions.map((s, i) => (
+            <div
+              key={i}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: theme.space[3],
+                paddingLeft: theme.space[4],
+                paddingTop: theme.space[1],
+                paddingBottom: theme.space[1],
+              }}
+            >
               <p
                 style={{
                   margin: 0,
@@ -697,47 +857,42 @@ function ParticipantList({
                   fontVariantNumeric: 'tabular-nums',
                 }}
               >
-                {person.sessionCount === 1
-                  ? formatSingleSessionWindow(person)
-                  : `${person.sessionCount} sessions · ${formatSingleSessionWindow(person)}`}
+                {formatSessionWindow(s)}
               </p>
-            </div>
-            <div
-              style={{
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'flex-end',
-                gap: 2,
-              }}
-            >
               <p
                 style={{
                   margin: 0,
-                  fontSize: theme.type.size.sm,
-                  color: theme.color.ink,
+                  fontSize: theme.type.size.xs,
+                  color: theme.color.inkMuted,
                   fontVariantNumeric: 'tabular-nums',
                   fontWeight: theme.type.weight.medium,
+                  flexShrink: 0,
                 }}
               >
-                {formatDuration(person.totalSeconds)}
+                {formatDuration(s.durationSeconds)}
               </p>
-              {person.stillIn ? (
-                <p
-                  style={{
-                    margin: 0,
-                    fontSize: theme.type.size.xs,
-                    color: theme.color.inkMuted,
-                  }}
-                >
-                  still in meeting
-                </p>
-              ) : null}
             </div>
-          </li>
-        );
-      })}
-    </ul>
+          ))}
+        </div>
+      ) : null}
+    </li>
   );
+}
+
+function formatSessionWindow(session: SessionDetail): string {
+  if (!session.joinedAt) return '';
+  const fmt = (iso: string) =>
+    new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Europe/London',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    }).format(new Date(iso));
+  const zone = fmtTzAbbr(session.joinedAt);
+  if (!session.leftAt) {
+    return `from ${fmt(session.joinedAt)} ${zone}`;
+  }
+  return `${fmt(session.joinedAt)} → ${fmt(session.leftAt)} ${zone}`;
 }
 
 // Returns 'match' when the participant's display name shares at least
