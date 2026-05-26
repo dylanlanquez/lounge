@@ -2773,15 +2773,6 @@ function Actions({
         onClick={onPatientProfile}
         first={isFirstAction}
       />
-      {has('mark_virtual_complete') ? (
-        <ActionRow
-          icon={<CheckCircle2 size={16} aria-hidden />}
-          label="Mark call as complete"
-          description="Ends the virtual consultation"
-          onClick={onMarkVirtualComplete}
-          accent
-        />
-      ) : null}
       {has('mark_no_show') ? (
         <ActionRow
           icon={<CircleSlash size={16} aria-hidden />}
@@ -2791,6 +2782,15 @@ function Actions({
       ) : null}
       {has('reschedule') ? (
         <ActionRow icon={<CalendarClock size={16} aria-hidden />} label="Reschedule" onClick={onReschedule} />
+      ) : null}
+      {has('mark_virtual_complete') ? (
+        <ActionRow
+          icon={<CheckCircle2 size={16} aria-hidden />}
+          label="Mark call as complete"
+          description="Ends the virtual consultation"
+          onClick={onMarkVirtualComplete}
+          accent
+        />
       ) : null}
       {has('resend_confirmation') ? (
         <ActionRow
