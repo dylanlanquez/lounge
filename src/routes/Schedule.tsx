@@ -425,26 +425,60 @@ export function Schedule() {
 
         <div
           style={{
-            display: 'grid',
-            gridTemplateColumns: '40px 1fr 40px',
-            alignItems: 'center',
-            gap: theme.space[2],
+            position: 'relative',
             marginBottom: theme.space[5],
+            ...(isMobile
+              ? {
+                  marginLeft: -theme.space[4],
+                  marginRight: -theme.space[4],
+                }
+              : {}),
           }}
         >
-          <IconNavButton ariaLabel="Previous day" onClick={() => handleShiftDay(-1)}>
-            <ChevronLeft size={20} />
-          </IconNavButton>
-          <WeekStrip
-            selectedIso={selectedDate}
-            todayIso={todayIso}
-            counts={weekCounts.counts}
-            onSelect={handleSelectDate}
-            loading={weekCounts.loading}
-          />
-          <IconNavButton ariaLabel="Next day" onClick={() => handleShiftDay(1)}>
-            <ChevronRight size={20} />
-          </IconNavButton>
+          <div
+            style={
+              isMobile
+                ? { display: 'block' }
+                : {
+                    display: 'grid',
+                    gridTemplateColumns: '40px 1fr 40px',
+                    alignItems: 'center',
+                    gap: theme.space[2],
+                  }
+            }
+          >
+            {!isMobile && (
+              <IconNavButton ariaLabel="Previous day" onClick={() => handleShiftDay(-1)}>
+                <ChevronLeft size={20} />
+              </IconNavButton>
+            )}
+            <WeekStrip
+              selectedIso={selectedDate}
+              todayIso={todayIso}
+              counts={weekCounts.counts}
+              onSelect={handleSelectDate}
+              loading={weekCounts.loading}
+            />
+            {!isMobile && (
+              <IconNavButton ariaLabel="Next day" onClick={() => handleShiftDay(1)}>
+                <ChevronRight size={20} />
+              </IconNavButton>
+            )}
+          </div>
+          {isMobile && (
+            <>
+              <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, display: 'flex', alignItems: 'center', zIndex: 2 }}>
+                <IconNavButton ariaLabel="Previous day" onClick={() => handleShiftDay(-1)}>
+                  <ChevronLeft size={20} />
+                </IconNavButton>
+              </div>
+              <div style={{ position: 'absolute', right: 0, top: 0, bottom: 0, display: 'flex', alignItems: 'center', zIndex: 2 }}>
+                <IconNavButton ariaLabel="Next day" onClick={() => handleShiftDay(1)}>
+                  <ChevronRight size={20} />
+                </IconNavButton>
+              </div>
+            </>
+          )}
         </div>
 
         {/* Selected-day section heading. View toggle on the right.
