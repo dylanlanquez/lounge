@@ -437,6 +437,33 @@ export async function markVirtualMeetingJoined(appointmentId: string): Promise<v
   });
 }
 
+// Marks a virtual appointment as complete. The call is done — flips
+// status to 'complete' and writes a patient_events row for the timeline.
+// Virtual appointments don't create visits, so this is the terminal
+// happy-path state (the counterpart to completeVisit for in-person).
+export async function markVirtualComplete(appointmentId: string): Promise<void> {
+  const { data: appt, error } = await supabase
+    .from('lng_appointments')
+    .update({ status: 'complete' })
+    .eq('id', appointmentId)
+    .select('id, patient_id')
+    .single();
+  if (error || !appt) throw new Error(error?.message ?? 'Could not complete virtual call');
+
+  const { data: accountId } = await supabase.rpc('auth_account_id');
+
+  await supabase.from('patient_events').insert({
+    patient_id: appt.patient_id,
+    event_type: 'virtual_call_completed',
+    actor_account_id: (accountId as string | null) ?? null,
+    payload: {
+      appointment_id: appt.id,
+      staff_account_id: (accountId as string | null) ?? null,
+      completed_at: new Date().toISOString(),
+    },
+  });
+}
+
 // Records that staff rejoined an already-joined virtual meeting. No
 // status flip — the appointment stays 'joined'. Writes a patient_events
 // row so the timeline tracks every time the link was reopened.

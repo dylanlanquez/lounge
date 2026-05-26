@@ -681,6 +681,15 @@ function mapEvent(
         tone: 'neutral',
       };
 
+    case 'virtual_call_completed':
+      return {
+        ...base,
+        type: 'patient_event',
+        title: 'Virtual call completed',
+        hint: 'check',
+        tone: 'accent',
+      };
+
     case 'appointment_confirmation_sent':
     case 'appointment_cancellation_sent': {
       const recipient = readString(row.payload, 'recipient');

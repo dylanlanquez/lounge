@@ -587,6 +587,7 @@ export type AppointmentAction =
   | 'reverse_cancellation'   // cancelled
   | 'reverse_no_show'        // no_show
   | 'view_rescheduled_to'    // rescheduled with a forward link
+  | 'mark_virtual_complete'  // joined, virtual only — call finished
   | 'view_visit';            // arrived / complete with an in-person visit
 
 export interface AvailableActionsInput {
@@ -639,6 +640,7 @@ export function availableActions(input: AvailableActionsInput): AppointmentActio
     // the call live (per Dylan's call — once a virtual is in
     // progress, staff is the only one who can act on it).
     out.push('rejoin_meeting');
+    out.push('mark_virtual_complete');
     out.push('mark_no_show');
     if (canReschedule) out.push('reschedule');
     if (canCancel) out.push('cancel');

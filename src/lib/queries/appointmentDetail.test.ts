@@ -138,6 +138,7 @@ describe('availableActions', () => {
       });
       expect(out).toContain('reschedule');
       expect(out).toContain('rejoin_meeting');
+      expect(out).toContain('mark_virtual_complete');
     });
 
     it('booked + calendly + in-person (non-virtual): reschedule still blocked', () => {
@@ -160,6 +161,37 @@ describe('availableActions', () => {
         isVirtual: true,
       });
       expect(out).toContain('reschedule');
+    });
+  });
+
+  describe('virtual: mark_virtual_complete', () => {
+    it('joined + virtual: mark_virtual_complete is offered', () => {
+      const out = availableActions({
+        ...base,
+        status: 'joined',
+        source: 'native',
+        isVirtual: true,
+      });
+      expect(out).toContain('mark_virtual_complete');
+    });
+
+    it('booked + virtual: mark_virtual_complete is NOT offered (call not started)', () => {
+      const out = availableActions({
+        ...base,
+        status: 'booked',
+        source: 'native',
+        isVirtual: true,
+      });
+      expect(out).not.toContain('mark_virtual_complete');
+    });
+
+    it('complete + virtual: mark_virtual_complete is NOT offered (already done)', () => {
+      const out = availableActions({
+        ...base,
+        status: 'complete',
+        isVirtual: true,
+      });
+      expect(out).not.toContain('mark_virtual_complete');
     });
   });
 });

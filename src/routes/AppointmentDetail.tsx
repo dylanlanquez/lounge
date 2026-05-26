@@ -82,7 +82,7 @@ import {
 import { formatPence } from '../lib/queries/carts.ts';
 import { useAppointmentLivePhases } from '../lib/queries/appointmentLivePhases.ts';
 import { createMeetSpaceForAppointment, fetchMeetAttendance, useMeetHosts } from '../lib/queries/meetHosts.ts';
-import { humaniseCancelReason, logVirtualMeetingRejoin, markNoShow, markVirtualMeetingJoined, NO_SHOW_REASONS, reverseNoShow } from '../lib/queries/visits.ts';
+import { humaniseCancelReason, logVirtualMeetingRejoin, markNoShow, markVirtualComplete, markVirtualMeetingJoined, NO_SHOW_REASONS, reverseNoShow } from '../lib/queries/visits.ts';
 import { useLaunchDate } from '../lib/queries/launchDate.ts';
 import { cancelAppointment, reverseCancellation } from '../lib/queries/cancelAppointment.ts';
 import { recordOwedToPatient } from '../lib/queries/owedToPatient.ts';
@@ -520,6 +520,23 @@ function Loaded({
     }
   };
 
+  const handleMarkVirtualComplete = async () => {
+    setActionError(null);
+    try {
+      await markVirtualComplete(appt.id);
+      onChanged();
+    } catch (e) {
+      const message = e instanceof Error ? e.message : 'Could not complete virtual call';
+      await logFailure({
+        source: 'AppointmentDetail.markVirtualComplete',
+        severity: 'error',
+        message,
+        context: { appointmentId: appt.id },
+      });
+      setActionError(message);
+    }
+  };
+
   const handleResendConfirmation = async () => {
     if (resending) return;
     setActionError(null);
@@ -625,24 +642,19 @@ function Loaded({
         }}
       >
         {appt.status === 'rescheduled' ||
-        appt.status === 'cancelled' ||
-        appt.status === 'no_show' ||
-        appt.status === 'complete' ? null : appt.join_url ? (
+        appt.status === 'cancelled' ? null : appt.join_url ? (
           <>
             <MeetingLinkCard joinUrl={appt.join_url} />
-            {/* "Patient not on the call" SMS reminder — visible
-                wherever the join link card is, so reception can
-                send the join URL to the patient's phone when the
-                clinician is on the call alone. Hidden on the
-                terminal statuses for the same reason the link
-                itself is hidden (the meeting is over or stale). */}
-            <VirtualCallReminder
-              appointmentId={appt.id}
-              patientFirstName={appt.patient.first_name}
-              patientPhone={appt.patient.phone}
-            />
+            {appt.status !== 'no_show' && appt.status !== 'complete' ? (
+              <VirtualCallReminder
+                appointmentId={appt.id}
+                patientFirstName={appt.patient.first_name}
+                patientPhone={appt.patient.phone}
+              />
+            ) : null}
           </>
-        ) : appt.service_type === 'virtual_impression_appointment' ? (
+        ) : appt.service_type === 'virtual_impression_appointment' &&
+          appt.status !== 'no_show' && appt.status !== 'complete' ? (
           <GenerateMeetLinkCard appointmentId={appt.id} currentHostId={appt.meet_host_id} onCreated={onChanged} />
         ) : null}
         <BookingFactsCard appt={appt} />
@@ -759,6 +771,7 @@ function Loaded({
         onMarkArrived={handleArrived}
         onJoinMeeting={handleJoinMeeting}
         onRejoinMeeting={handleRejoinMeeting}
+        onMarkVirtualComplete={handleMarkVirtualComplete}
         onMarkNoShow={() => setConfirmNoShowOpen(true)}
         onReschedule={() => setRescheduling(true)}
         onCancel={() => setCancelling(true)}
@@ -2666,6 +2679,7 @@ function Actions({
   onMarkArrived,
   onJoinMeeting,
   onRejoinMeeting,
+  onMarkVirtualComplete,
   onMarkNoShow,
   onReschedule,
   onCancel,
@@ -2685,6 +2699,7 @@ function Actions({
   onMarkArrived: () => void;
   onJoinMeeting: () => void;
   onRejoinMeeting: () => void;
+  onMarkVirtualComplete: () => void;
   onMarkNoShow: () => void;
   onReschedule: () => void;
   onCancel: () => void;
@@ -2700,6 +2715,7 @@ function Actions({
   // view_rescheduled_to, join_meeting) pass through unchanged.
   const CS_HIDDEN: ReadonlyArray<AppointmentAction> = [
     'mark_arrived',
+    'mark_virtual_complete',
     'mark_no_show',
     'reverse_no_show',
   ];
@@ -2755,6 +2771,15 @@ function Actions({
         onClick={onPatientProfile}
         first={isFirstAction}
       />
+      {has('mark_virtual_complete') ? (
+        <ActionRow
+          icon={<CheckCircle2 size={16} aria-hidden />}
+          label="Mark call as complete"
+          description="Ends the virtual consultation"
+          onClick={onMarkVirtualComplete}
+          accent
+        />
+      ) : null}
       {has('mark_no_show') ? (
         <ActionRow
           icon={<CircleSlash size={16} aria-hidden />}
