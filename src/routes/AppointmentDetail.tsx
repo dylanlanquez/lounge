@@ -1304,7 +1304,7 @@ function buildApptRibbon(
    * the OLD slot is the live one. */
   dateLong?: string;
   timeLine: ReactNode;
-  relative: string | null;
+  relative: ReactNode | null;
   /** Standalone secondary affordance rendered on its OWN row below
    * the time/relative line — used to surface the "Estimated
    * appointment length" link without dragging it inline with the
@@ -1379,7 +1379,12 @@ function buildApptRibbon(
       return {
         icon: <CheckCircle2 size={16} aria-hidden />,
         timeLine: bookedForLine,
-        relative: appt.join_url ? 'Meeting complete' : 'Visit complete',
+        relative: (
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            <CheckCircle2 size={13} aria-hidden />
+            {appt.join_url ? 'Meeting complete' : 'Visit complete'}
+          </span>
+        ),
         tone: 'accent',
       };
     }
