@@ -1,5 +1,5 @@
 import { type CSSProperties } from 'react';
-import { AlertTriangle, Ban, Footprints, MousePointerClick, RotateCcw } from 'lucide-react';
+import { AlertTriangle, Ban, CheckCircle2, Footprints, MousePointerClick, RotateCcw } from 'lucide-react';
 import { theme } from '../../theme/index.ts';
 import type { StatusTone } from '../StatusPill/StatusPill.tsx';
 import { CalendlyIcon } from '../Icons/CalendlyIcon.tsx';
@@ -211,7 +211,7 @@ export function AppointmentCard({
             />
           ) : null}
         </p>
-        {status === 'cancelled' || status === 'rescheduled' ? (
+        {status === 'cancelled' || status === 'rescheduled' || status === 'complete' ? (
           <p
             style={{
               margin: 0,
@@ -220,15 +220,21 @@ export function AppointmentCard({
               display: 'flex',
               alignItems: 'center',
               gap: 3,
-              color: status === 'cancelled' ? theme.color.alert : theme.color.warn,
+              color: status === 'cancelled'
+                ? theme.color.alert
+                : status === 'complete'
+                  ? theme.color.accent
+                  : theme.color.warn,
               fontWeight: theme.type.weight.medium,
             }}
           >
             {status === 'cancelled'
               ? <Ban size={10} aria-hidden style={{ flexShrink: 0 }} />
-              : <RotateCcw size={10} aria-hidden style={{ flexShrink: 0 }} />
+              : status === 'complete'
+                ? <CheckCircle2 size={10} aria-hidden style={{ flexShrink: 0 }} />
+                : <RotateCcw size={10} aria-hidden style={{ flexShrink: 0 }} />
             }
-            {status === 'cancelled' ? 'Cancelled' : 'Rescheduled'}
+            {status === 'cancelled' ? 'Cancelled' : status === 'complete' ? 'Complete' : 'Rescheduled'}
           </p>
         ) : (
           <p

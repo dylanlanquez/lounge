@@ -1234,13 +1234,14 @@ export async function completeVisit(input: CompleteVisitInput): Promise<void> {
     .eq('visit_id', input.visit_id)
     .eq('status', 'open');
 
-  // Free the JB on the source row. The visit's own captured jb_ref
-  // is immutable and survives this clearing, so the timeline +
-  // history stay intact.
+  // Free the JB and flip the source row to 'complete' so the
+  // schedule calendar shows the appointment/walk-in as done.
+  // The visit's own captured jb_ref is immutable and survives
+  // this clearing, so the timeline + history stay intact.
   if (input.appointment_id) {
     await supabase
       .from('lng_appointments')
-      .update({ jb_ref: null })
+      .update({ jb_ref: null, status: 'complete' })
       .eq('id', input.appointment_id);
   }
   if (input.walk_in_id) {
