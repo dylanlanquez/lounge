@@ -61,11 +61,24 @@ Deno.serve(async (req) => {
       }
       case 'payment_intent.payment_failed': {
         const pi = event.data.object as PaymentIntent;
-        await markStatus(supabase, pi.id, 'failed', {
-          raw_event: event,
-          failure_reason: pi.last_payment_error?.message ?? 'unknown',
-        });
-        await emitPatientEvent(supabase, pi, 'payment_failed');
+        // Stripe fires payment_intent.payment_failed on every failed
+        // charge attempt, even when the reader is still alive for retry
+        // (e.g. contactless declined → reader waiting for chip+PIN). The
+        // PI status in the event body tells us: requires_payment_method
+        // or requires_action = still retryable, don't mark terminal.
+        const retryable = ['requires_payment_method', 'requires_action', 'requires_confirmation', 'processing'];
+        if (retryable.includes(pi.status ?? '')) {
+          await supabase
+            .from('lng_terminal_payments')
+            .update({ raw_event: event, reader_action_status: 'retrying' })
+            .eq('stripe_payment_intent_id', pi.id);
+        } else {
+          await markStatus(supabase, pi.id, 'failed', {
+            raw_event: event,
+            failure_reason: pi.last_payment_error?.message ?? 'unknown',
+          });
+          await emitPatientEvent(supabase, pi, 'payment_failed');
+        }
         break;
       }
       case 'payment_intent.canceled': {
@@ -104,6 +117,7 @@ interface StripeEvent {
 }
 interface PaymentIntent {
   id: string;
+  status?: string;
   metadata?: { visit_id?: string; cart_id?: string; payment_journey?: string };
   last_payment_error?: { message?: string };
 }

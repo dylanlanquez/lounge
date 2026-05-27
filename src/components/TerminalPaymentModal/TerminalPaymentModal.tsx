@@ -42,6 +42,7 @@ export function TerminalPaymentModal({
   const [state, setState] = useState<TerminalState>('idle');
   const [paymentId, setPaymentId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [readerHint, setReaderHint] = useState<string | null>(null);
   // Client-supplied attempt id. Stable across HTTP retries of the
   // SAME user gesture so the server-side idempotency key (which
   // anchors both the Stripe PI dedupe AND the lng_terminal_payments
@@ -55,6 +56,7 @@ export function TerminalPaymentModal({
       setState('idle');
       setPaymentId(null);
       setError(null);
+      setReaderHint(null);
       // crypto.randomUUID() is supported in every browser we ship to;
       // Safari iOS 15.4+, Chrome 92+, Firefox 95+. No fallback needed.
       setAttemptId(crypto.randomUUID());
@@ -120,18 +122,32 @@ export function TerminalPaymentModal({
           },
         );
         if (!r.ok) return;
-        const body = (await r.json()) as { local_status?: string | null };
+        const body = (await r.json()) as {
+          local_status?: string | null;
+          stripe_status?: string | null;
+          failure_hint?: string | null;
+        };
         if (cancelled) return;
         if (body.local_status === 'succeeded') {
           setState('succeeded');
+          setReaderHint(null);
           onSucceeded?.(paymentId);
         } else if (body.local_status === 'failed') {
           setState('failed');
-          // The realtime channel will hydrate the failure_reason via
-          // its UPDATE event; until then keep a generic message.
+          setReaderHint(null);
           setError((prev) => prev ?? 'Payment failed');
         } else if (body.local_status === 'cancelled') {
           setState('cancelled');
+          setReaderHint(null);
+        } else if (
+          body.failure_hint &&
+          (body.stripe_status === 'requires_payment_method' || body.stripe_status === 'requires_action')
+        ) {
+          setReaderHint(
+            body.failure_hint.toLowerCase().includes('pin')
+              ? 'The reader is waiting for chip and PIN.'
+              : 'The first attempt was declined. The reader is retrying.',
+          );
         }
       } catch {
         // Best-effort. Don't surface poll-side errors to staff —
@@ -250,7 +266,7 @@ export function TerminalPaymentModal({
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: theme.space[4], padding: `${theme.space[6]}px 0` }}>
             <Loader2 size={48} style={{ color: theme.color.accent, animation: 'lng-spin 0.8s linear infinite' }} />
             <p style={{ margin: 0, textAlign: 'center', color: theme.color.ink, fontSize: theme.type.size.md }}>
-              {state === 'starting' ? 'Sending to reader…' : 'Waiting for the customer to tap or insert.'}
+              {state === 'starting' ? 'Sending to reader…' : readerHint ?? 'Waiting for the customer to tap or insert.'}
             </p>
             <p style={{ margin: 0, textAlign: 'center', color: theme.color.inkMuted, fontSize: theme.type.size.sm }}>
               The reader screen shows the next step.

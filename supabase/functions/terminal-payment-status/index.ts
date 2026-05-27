@@ -110,8 +110,21 @@ Deno.serve(async (req) => {
     next = 'cancelled';
     cancelledAt = new Date().toISOString();
   } else if (pi.last_payment_error) {
-    next = 'failed';
-    failureReason = pi.last_payment_error.message ?? 'Payment failed';
+    // Stripe keeps last_payment_error from the most recent failed charge
+    // attempt even while the PI is still alive for retry (e.g. contactless
+    // tap declined with offline_pin_required, reader now waiting for
+    // chip+PIN). Only treat as terminal failure when the PI status itself
+    // is NOT in a retryable state.
+    const retryable: string[] = [
+      'requires_payment_method',
+      'requires_action',
+      'requires_confirmation',
+      'processing',
+    ];
+    if (!retryable.includes(pi.status)) {
+      next = 'failed';
+      failureReason = pi.last_payment_error.message ?? 'Payment failed';
+    }
   }
 
   if (next) {
@@ -152,6 +165,7 @@ Deno.serve(async (req) => {
     stripe_status: pi.status,
     local_status: next,
     amount: pi.amount,
+    failure_hint: pi.last_payment_error?.message ?? null,
   });
 });
 
