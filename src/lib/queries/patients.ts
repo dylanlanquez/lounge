@@ -549,6 +549,29 @@ export function usePatientSearch(term: string): SearchResult {
   return { data, loading, fetching, error };
 }
 
+// Direct lookup by shopify_customer_id, bypassing the SHOPIFY_ACTIVE_FILTER
+// that usePatientSearch applies. The picker uses this to dedup Shopify hits:
+// when the Shopify search returns a customer who already has a patients row
+// (even one with zero orders, hidden from the regular search), we surface
+// the existing patient instead of offering a "Register & continue" path
+// that would otherwise fail server-side with shopify_customer_already_linked.
+// RLS still applies — cross-location matches won't surface here.
+export async function findPatientsByShopifyCustomerIds(
+  ids: ReadonlyArray<string>,
+): Promise<PatientRow[]> {
+  const unique = Array.from(new Set(ids.filter((s) => !!s)));
+  if (unique.length === 0) return [];
+  const { data, error } = await supabase
+    .from('patients')
+    .select(
+      'id, location_id, internal_ref, first_name, last_name, email, phone, date_of_birth, shopify_customer_id'
+    )
+    .in('shopify_customer_id', unique)
+    .limit(50);
+  if (error) return [];
+  return (data ?? []) as PatientRow[];
+}
+
 export async function getPatient(id: string): Promise<PatientRow | null> {
   const { data, error } = await supabase
     .from('patients')

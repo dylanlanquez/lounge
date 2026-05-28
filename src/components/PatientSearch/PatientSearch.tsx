@@ -1,4 +1,4 @@
-import { type ReactNode, useMemo, useState } from 'react';
+import { type ReactNode, useEffect, useMemo, useState } from 'react';
 import { Info, Loader2, Phone, Search, User, Users, Mail, ShoppingBag } from 'lucide-react';
 import { Input } from '../Input/Input.tsx';
 import { Skeleton } from '../Skeleton/Skeleton.tsx';
@@ -12,6 +12,7 @@ import {
   registerShopifyCustomerAsPatient,
   patientFullName,
   getPatient,
+  findPatientsByShopifyCustomerIds,
 } from '../../lib/queries/patients.ts';
 
 // Hash a stable identifier (email preferred, id as fallback) into a
@@ -62,18 +63,72 @@ export function PatientSearch({
   // window when loading and fetching are simultaneously true.
   const isSearching = fetching || (enableShopifyLookup && shopify.fetching);
 
-  // Dedup Shopify-only hits against local patients so we never show
-  // a Shopify row that already has a corresponding patient. Match on
-  // shopify_customer_id first, then on lowercase email.
+  // Shopify customers can already have a patients row that the regular
+  // patient search doesn't return — usePatientSearch hides shopify-linked
+  // patients with zero orders (SHOPIFY_ACTIVE_FILTER), and the typed term
+  // may not match the patient's stored name even when Shopify's prefix
+  // match finds them. Without this lookup, those customers fall through
+  // to the "Register & continue" path which then fails server-side with
+  // shopify_customer_already_linked. So whenever Shopify search returns
+  // ids, fetch the patients linked to any of them and surface those as
+  // existing patients.
+  const [linkedPatients, setLinkedPatients] = useState<PatientRow[]>([]);
+  const shopifyIdsKey = useMemo(
+    () =>
+      shopify.data
+        .map((c) => c.shopify_customer_id)
+        .filter(Boolean)
+        .sort()
+        .join(','),
+    [shopify.data],
+  );
+  useEffect(() => {
+    if (!enableShopifyLookup) {
+      setLinkedPatients([]);
+      return;
+    }
+    if (!shopifyIdsKey) {
+      setLinkedPatients([]);
+      return;
+    }
+    const ids = shopifyIdsKey.split(',');
+    let cancelled = false;
+    findPatientsByShopifyCustomerIds(ids).then((rows) => {
+      if (!cancelled) setLinkedPatients(rows);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [shopifyIdsKey, enableShopifyLookup]);
+
+  // Existing-patient list shown above the Shopify block: patient search
+  // hits plus any linked patients discovered from the Shopify ids. Dedup
+  // by patient id so a patient who appears in both lists is shown once.
+  const displayedPatients = useMemo<PatientRow[]>(() => {
+    if (linkedPatients.length === 0) return data;
+    const seen = new Set(data.map((p) => p.id));
+    const merged = [...data];
+    for (const lp of linkedPatients) {
+      if (!seen.has(lp.id)) {
+        merged.push(lp);
+        seen.add(lp.id);
+      }
+    }
+    return merged;
+  }, [data, linkedPatients]);
+
+  // Dedup Shopify-only hits against local + linked patients so we never
+  // show a Shopify row that already has a corresponding patient. Match
+  // on shopify_customer_id first, then on lowercase email.
   const shopifyOnly = useMemo<ShopifyCustomerResult[]>(() => {
     if (!enableShopifyLookup) return [];
     const knownIds = new Set(
-      data
+      displayedPatients
         .map((p) => (p.shopify_customer_id ? String(p.shopify_customer_id) : null))
         .filter((s): s is string => !!s),
     );
     const knownEmails = new Set(
-      data.map((p) => (p.email ?? '').trim().toLowerCase()).filter(Boolean),
+      displayedPatients.map((p) => (p.email ?? '').trim().toLowerCase()).filter(Boolean),
     );
     return shopify.data.filter((c) => {
       if (c.shopify_customer_id && knownIds.has(String(c.shopify_customer_id))) return false;
@@ -81,7 +136,7 @@ export function PatientSearch({
       if (email && knownEmails.has(email)) return false;
       return true;
     });
-  }, [data, shopify.data, enableShopifyLookup]);
+  }, [displayedPatients, shopify.data, enableShopifyLookup]);
 
   // Create-new is always offered once the user has typed enough to
   // commit to a search term. It sits below any matches so the
@@ -94,7 +149,7 @@ export function PatientSearch({
     !shopify.loading &&
     !fetching &&
     !shopify.fetching &&
-    data.length === 0 &&
+    displayedPatients.length === 0 &&
     shopifyOnly.length === 0;
 
   return (
@@ -147,20 +202,20 @@ export function PatientSearch({
                   keep visible — without this, a slow request after
                   a "no matches" search reads as still showing the
                   empty state instead of "still working". */}
-          {loading || (fetching && data.length === 0) ? (
+          {loading || (fetching && displayedPatients.length === 0) ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
               <Skeleton height={88} radius={12} />
               <Skeleton height={88} radius={12} />
               <Skeleton height={88} radius={12} />
             </div>
-          ) : data.length > 0 ? (
+          ) : displayedPatients.length > 0 ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2], marginTop: theme.space[3] }}>
               <SearchSectionHeading
                 icon={<Users size={18} aria-hidden style={{ color: theme.color.ink }} />}
                 title="Existing patients on Lounge"
               />
               <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
-                {data.map((p) => (
+                {displayedPatients.map((p) => (
                   <li key={p.id}>
                     <PatientResultRow patient={p} onPick={onPick} />
                   </li>
