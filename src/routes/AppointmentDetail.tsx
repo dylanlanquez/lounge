@@ -385,26 +385,30 @@ function Loaded({
     | null
   >(null);
 
-  // Auto-pull Meet attendance once when the page opens on a virtual
-  // appointment whose end time has passed and Google has nothing for
-  // us yet (no conference_started_at on the row). Removes the
-  // "did the operator remember to tap Refresh?" failure mode that
-  // caused the original "attendance not working" complaint: by the
-  // time someone disputes who attended, the data is already pulled
-  // and the verdict line is already showing the truth. The hook
-  // listens on lng_meet_attendance changes (via useMeetAttendance's
-  // realtime subscription) so the freshly-inserted rows surface
-  // without needing to refresh the appointment row itself.
+  // Auto-pull Meet attendance when the page opens on a virtual
+  // appointment whose end_at has passed and the data might still be
+  // landing. The cron sweep (meet-attendance-sweep) is the durable
+  // safety net; this hook makes the card self-heal on any page open
+  // in the publication window so the operator sees fresh data
+  // without clicking Refresh.
+  //
+  // Gate logic, in priority order:
+  //   • mid-meeting (now < end_at) → skip; the card's 30s in-card
+  //     poll covers the live state.
+  //   • > 1h past end_at AND Google has stamped conference_ended_at →
+  //     skip; data is stable, no need to re-pull on every page open.
+  //   • otherwise → fetch. This is the post-meeting publication
+  //     window where Google may still be writing.
+  //
+  // The previous `if (conference_started_at) return;` short-circuit
+  // caused the LAP-00518 silent failure on 2026-05-28: a mid-meeting
+  // fetch had already set conference_started_at, so the post-meeting
+  // page-load auto-fetch was skipped for ~7 hours.
   useEffect(() => {
-    // Gate on the fields meet-fetch-attendance actually needs:
-    // meet_meeting_code (what it filters on) + meet_host_id (whose
-    // OAuth token to use). meet_space_id is intentionally not part of
-    // this gate — it can legitimately be NULL when an earlier
-    // spaces.get lookup failed, and meeting_code is sufficient for
-    // every downstream API call.
     if (!appt.meet_meeting_code || !appt.meet_host_id) return;
-    if (appt.conference_started_at) return;
-    if (new Date(appt.end_at).getTime() > Date.now()) return;
+    const endMs = new Date(appt.end_at).getTime();
+    if (Date.now() < endMs) return;
+    if (appt.conference_ended_at && Date.now() - endMs > 60 * 60_000) return;
     let cancelled = false;
     void (async () => {
       try {
@@ -426,7 +430,7 @@ function Loaded({
     return () => {
       cancelled = true;
     };
-  }, [appt.id, appt.meet_meeting_code, appt.meet_host_id, appt.conference_started_at, appt.end_at, onChanged]);
+  }, [appt.id, appt.meet_meeting_code, appt.meet_host_id, appt.conference_ended_at, appt.end_at, onChanged]);
 
   const fullName = patientFullDisplayName({
     patient_first_name: appt.patient.first_name,
@@ -791,6 +795,7 @@ function Loaded({
             appointmentId={appt.id}
             meetMeetingCode={appt.meet_meeting_code}
             meetingHasEnded={new Date(appt.end_at).getTime() < Date.now()}
+            endAtIso={appt.end_at}
             conferenceStartedAt={appt.conference_started_at}
             conferenceEndedAt={appt.conference_ended_at}
             conferenceCount={appt.conference_count}

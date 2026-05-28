@@ -25,3 +25,17 @@
 #   that's now broken on the new key model.
 [functions.send-appointment-confirmation]
 verify_jwt = false
+
+# meet-attendance-sweep
+#   Cron-driven sweep that pulls Google Meet attendance for every
+#   recently-ended virtual appointment. Called every 5 minutes from
+#   pg_cron via lng_run_meet_attendance_sweep, using the service-role
+#   key out of vault.lng_service_role_key as the Bearer credential.
+#   Same key-system mismatch as send-appointment-confirmation: the
+#   service-role token is an opaque `sb_secret_*` value (not a JWT),
+#   so the platform's `verify_jwt = true` rejects it with
+#   `UNAUTHORIZED_INVALID_JWT_FORMAT`. The function's own auth
+#   (decoded-bearer role + project-ref check OR x-cron-secret header)
+#   is the actual gate.
+[functions.meet-attendance-sweep]
+verify_jwt = false

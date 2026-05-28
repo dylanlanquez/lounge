@@ -40,6 +40,11 @@ export interface MeetAttendanceCardProps {
   appointmentId: string;
   meetMeetingCode: string | null;
   meetingHasEnded: boolean;
+  // Booking end time, ISO. Drives the post-meeting publication window
+  // for the in-card auto-poll: Google publishes participantSessions
+  // AFTER end_at, so the poll has to keep firing for ~30 minutes past
+  // end_at to catch the publication, not bail the moment end_at passes.
+  endAtIso: string;
   conferenceStartedAt: string | null;
   conferenceEndedAt: string | null;
   // Number of distinct conferences logged for this space — > 1 when
@@ -63,6 +68,7 @@ export function MeetAttendanceCard({
   appointmentId,
   meetMeetingCode,
   meetingHasEnded,
+  endAtIso,
   conferenceStartedAt,
   conferenceEndedAt,
   conferenceCount,
@@ -119,15 +125,23 @@ export function MeetAttendanceCard({
 
   const onRefresh = () => doFetch(false);
 
-  // Auto-poll Google for attendance while the meeting is still in
-  // progress. Fires every 30s silently so the card updates live
-  // without toasts or spinners. Clears when meetingHasEnded flips
-  // true or on unmount.
+  // Auto-poll Google for attendance while the meeting is in progress
+  // AND for 30 minutes after end_at. The post-end_at window matters
+  // because Google publishes participantSessions AFTER a conference
+  // closes, and that publication can lag several minutes to (per the
+  // LAP-00518 incident on 2026-05-28) several HOURS. Stopping at
+  // end_at means we silently miss the truth in exactly the window
+  // we're meant to capture. 30 min covers the realistic publication
+  // tail; the meet-attendance-sweep cron is the safety net beyond it.
+  const publicationDeadlineMs = useMemo(
+    () => new Date(endAtIso).getTime() + 30 * 60_000,
+    [endAtIso],
+  );
   useEffect(() => {
-    if (meetingHasEnded) return;
+    if (Date.now() > publicationDeadlineMs) return;
     const id = setInterval(() => { void doFetch(true); }, 30_000);
     return () => clearInterval(id);
-  }, [meetingHasEnded, appointmentId]);
+  }, [publicationDeadlineMs, appointmentId]);
 
   const grouped = useMemo(() => groupByPerson(rows), [rows]);
   const verdict = useMemo(
