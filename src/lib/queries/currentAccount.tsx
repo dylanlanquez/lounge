@@ -9,6 +9,7 @@ import {
 import { supabase } from '../supabase.ts';
 import { useAuth } from '../auth.tsx';
 import { fetchCurrentStaffMembership } from './staff.ts';
+import { isConnectivityError } from '../connectivity.ts';
 
 // useCurrentAccount — resolves the signed-in user's identity row from
 // public.accounts (shared with Meridian) PLUS their lng_staff_members
@@ -90,6 +91,19 @@ interface Result {
   account: CurrentAccount | null;
   loading: boolean;
   error: string | null;
+  // True when the most recent fetch failed because Supabase was
+  // unreachable (Cloudflare 5xx, network offline, request aborted,
+  // DNS failure). RequireStaff renders a "Can't reach Lounge servers"
+  // surface with a retry button instead of routing the user to
+  // /no-access — which would falsely tell them they're not on the
+  // staff list when the real reason is platform-side. See
+  // src/lib/connectivity.ts for the detector.
+  connectivityError: boolean;
+  // Trigger a re-fetch of the account row. Wired to the retry button
+  // on the connectivity surface so the user can recover without a
+  // full page reload (which would otherwise discard router state,
+  // open sheets, in-flight forms, etc.).
+  retry: () => void;
 }
 
 // CurrentAccountContext — single source of truth for the signed-in
@@ -116,12 +130,19 @@ export function CurrentAccountProvider({ children }: { children: ReactNode }) {
   const [account, setAccount] = useState<CurrentAccount | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [connectivityError, setConnectivityError] = useState(false);
+  // Bumped by retry() to force the effect to re-run without going
+  // through a full page reload. Re-running this effect refires the
+  // auth_account_id + accounts/staff fetches under the same React
+  // tree, so router state, modals, and in-flight forms survive.
+  const [retryTick, setRetryTick] = useState(0);
 
   useEffect(() => {
     if (authLoading) return;
     if (!user) {
       setAccount(null);
       setError(null);
+      setConnectivityError(false);
       setLoading(false);
       return;
     }
@@ -137,6 +158,7 @@ export function CurrentAccountProvider({ children }: { children: ReactNode }) {
     setAccount(null);
     setLoading(true);
     setError(null);
+    setConnectivityError(false);
     (async () => {
       // Outer try/catch/finally guarantees loading always settles.
       // Without it, any thrown await (network blip, gotrue lock
@@ -151,7 +173,13 @@ export function CurrentAccountProvider({ children }: { children: ReactNode }) {
         const { data: idRaw, error: idErr } = await supabase.rpc('auth_account_id');
         if (cancelled) return;
         if (idErr) {
+          // Connectivity errors get their own flag so RequireStaff
+          // can route to a recovery surface instead of /no-access.
+          // Application-level errors (auth_invalid, RLS denials,
+          // malformed RPC) still fall through to setError + the
+          // existing routing path.
           setError(idErr.message);
+          if (isConnectivityError(idErr)) setConnectivityError(true);
           return;
         }
         const accountId = idRaw as string | null;
@@ -171,6 +199,7 @@ export function CurrentAccountProvider({ children }: { children: ReactNode }) {
         if (cancelled) return;
         if (accountRes.error) {
           setError(accountRes.error.message);
+          if (isConnectivityError(accountRes.error)) setConnectivityError(true);
           return;
         }
         if (!accountRes.data) {
@@ -242,6 +271,7 @@ export function CurrentAccountProvider({ children }: { children: ReactNode }) {
         if (cancelled) return;
         console.error('[currentAccount] account resolution threw', err);
         setError(err instanceof Error ? err.message : 'Account fetch failed');
+        if (isConnectivityError(err)) setConnectivityError(true);
         setAccount(null);
       } finally {
         if (!cancelled) setLoading(false);
@@ -250,14 +280,21 @@ export function CurrentAccountProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [authLoading, user]);
+  }, [authLoading, user, retryTick]);
 
   // Stable identity for the context value so consumers don't re-render
-  // on every parent re-render — only when one of the three fields
-  // genuinely changes.
+  // on every parent re-render — only when one of the tracked fields
+  // genuinely changes. retry is stable across renders because it's
+  // a setter wrapper, not a fresh closure each render.
   const value = useMemo<Result>(
-    () => ({ account, loading, error }),
-    [account, loading, error],
+    () => ({
+      account,
+      loading,
+      error,
+      connectivityError,
+      retry: () => setRetryTick((t) => t + 1),
+    }),
+    [account, loading, error, connectivityError],
   );
 
   return (

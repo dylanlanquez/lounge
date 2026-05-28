@@ -137,10 +137,21 @@ function ScrollToTop() {
 // till at all, even briefly.
 function RequireStaff({ children }: { children: ReactNode }) {
   const { user, loading: authLoading } = useAuth();
-  const { account, loading: accountLoading } = useCurrentAccount();
+  const { account, loading: accountLoading, connectivityError, retry } = useCurrentAccount();
   const mfa = useMfaStatus();
   if (authLoading || accountLoading) return <RouteFallback />;
   if (!user) return <Navigate to="/sign-in" replace />;
+  // Connectivity gate: when the account fetch failed because Supabase
+  // was unreachable (Cloudflare 5xx between the iPad and the
+  // Supabase origin — happens intermittently on certain edge nodes),
+  // show a recovery surface with a retry instead of routing to
+  // /no-access. Without this, an upstream blip would falsely tell
+  // staff they're not on the staff list. The retry re-runs the
+  // account fetch under the same React tree so router state and any
+  // open sheets survive.
+  if (!account && connectivityError) {
+    return <ConnectivityErrorSurface onRetry={retry} />;
+  }
   if (!account || !account.is_lng_staff) return <Navigate to="/no-access" replace />;
 
   // 2FA gate. If the staff row has require_2fa = true and the live
@@ -156,6 +167,81 @@ function RequireStaff({ children }: { children: ReactNode }) {
       : <Navigate to="/enroll-2fa" replace />;
   }
   return <>{children}</>;
+}
+
+// Surface shown when the auth_account_id / accounts lookup failed
+// because Supabase was unreachable (Cloudflare 5xx, network offline,
+// DNS, request abort). The previous behaviour silently routed staff
+// to /no-access — which was a lie: they hadn't lost access, the
+// servers were just briefly unreachable. This surface tells the
+// truth, offers a retry that re-runs the fetch in place (no full
+// page reload, so any open sheet / partially-typed form survives),
+// and a sign-out escape hatch for the rare case where the device's
+// stored session is genuinely the problem.
+//
+// Auto-retries every 4s in the background so transient outages
+// resolve without the receptionist having to interact at all —
+// they'll see the surface appear briefly and disappear when the
+// next retry succeeds. The manual button is for the case where
+// the user wants to act immediately.
+function ConnectivityErrorSurface({ onRetry }: { onRetry: () => void }) {
+  const { signOut } = useAuth();
+  useEffect(() => {
+    const t = window.setInterval(onRetry, 4000);
+    return () => window.clearInterval(t);
+  }, [onRetry]);
+  return (
+    <main
+      role="alert"
+      style={{
+        minHeight: '100dvh',
+        background: theme.color.bg,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: theme.space[6],
+      }}
+    >
+      <div
+        style={{
+          maxWidth: 480,
+          width: '100%',
+          background: theme.color.surface,
+          border: `1px solid ${theme.color.border}`,
+          borderRadius: theme.radius.card,
+          padding: theme.space[6],
+          boxShadow: theme.shadow.card,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: theme.space[4],
+          textAlign: 'center',
+        }}
+      >
+        <h1
+          style={{
+            margin: 0,
+            fontSize: theme.type.size.xl,
+            fontWeight: theme.type.weight.semibold,
+            color: theme.color.ink,
+            letterSpacing: theme.type.tracking.tight,
+          }}
+        >
+          Can’t reach Lounge servers
+        </h1>
+        <p style={{ margin: 0, color: theme.color.inkMuted, fontSize: theme.type.size.sm, lineHeight: 1.5 }}>
+          The connection between this device and Lounge has dropped. We’re retrying every few seconds. If it doesn’t come back, try switching to a different Wi-Fi or your phone’s hotspot.
+        </p>
+        <div style={{ display: 'flex', gap: theme.space[2], justifyContent: 'center', flexWrap: 'wrap' }}>
+          <Button variant="primary" onClick={onRetry}>
+            Try again now
+          </Button>
+          <Button variant="secondary" onClick={signOut}>
+            Sign out
+          </Button>
+        </div>
+      </div>
+    </main>
+  );
 }
 
 function NoAccess() {
