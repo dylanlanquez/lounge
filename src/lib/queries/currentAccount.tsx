@@ -138,101 +138,114 @@ export function CurrentAccountProvider({ children }: { children: ReactNode }) {
     setLoading(true);
     setError(null);
     (async () => {
-      const { data: idRaw, error: idErr } = await supabase.rpc('auth_account_id');
-      if (cancelled) return;
-      if (idErr) {
-        setError(idErr.message);
-        setLoading(false);
-        return;
-      }
-      const accountId = idRaw as string | null;
-      if (!accountId) {
-        setAccount(null);
-        setLoading(false);
-        return;
-      }
+      // Outer try/catch/finally guarantees loading always settles.
+      // Without it, any thrown await (network blip, gotrue lock
+      // recovery surfacing a rejection, RPC transport error) leaves
+      // loading=true forever — RequireStaff then renders the
+      // "Loading…" route fallback indefinitely and the user is
+      // trapped. We log the failure loudly per the project's
+      // "no silent fallbacks" rule and degrade to a no-account
+      // state so the routing gate can decide what to do (typically
+      // a redirect to /sign-in or /no-access).
+      try {
+        const { data: idRaw, error: idErr } = await supabase.rpc('auth_account_id');
+        if (cancelled) return;
+        if (idErr) {
+          setError(idErr.message);
+          return;
+        }
+        const accountId = idRaw as string | null;
+        if (!accountId) {
+          setAccount(null);
+          return;
+        }
 
-      const [accountRes, membership] = await Promise.all([
-        supabase
-          .from('accounts')
-          .select('id, auth_user_id, first_name, last_name, name, login_email, location_id, account_types')
-          .eq('id', accountId)
-          .maybeSingle(),
-        fetchCurrentStaffMembership(accountId).catch(() => null),
-      ]);
-      if (cancelled) return;
-      if (accountRes.error) {
-        setError(accountRes.error.message);
-        setLoading(false);
-        return;
-      }
-      if (!accountRes.data) {
+        const [accountRes, membership] = await Promise.all([
+          supabase
+            .from('accounts')
+            .select('id, auth_user_id, first_name, last_name, name, login_email, location_id, account_types')
+            .eq('id', accountId)
+            .maybeSingle(),
+          fetchCurrentStaffMembership(accountId).catch(() => null),
+        ]);
+        if (cancelled) return;
+        if (accountRes.error) {
+          setError(accountRes.error.message);
+          return;
+        }
+        if (!accountRes.data) {
+          setAccount(null);
+          return;
+        }
+        const r = accountRes.data as {
+          id: string;
+          auth_user_id: string | null;
+          first_name: string | null;
+          last_name: string | null;
+          name: string | null;
+          login_email: string;
+          location_id: string | null;
+          account_types: string[] | null;
+        };
+        const fn = r.first_name?.trim() ?? null;
+        const ln = r.last_name?.trim() ?? null;
+        const display =
+          fn && ln
+            ? `${fn} ${ln}`
+            : fn ?? ln ?? r.name?.trim() ?? r.login_email.split('@')[0] ?? r.login_email;
+        const isSuperAdmin = r.login_email === SUPER_ADMIN_EMAIL;
+        const isActiveStaff = membership?.status === 'active';
+        // Permission resolution: the super admin always passes every
+        // gate (so a brand new install can be administered without
+        // bootstrap chicken-and-egg). For everyone else, the flag must
+        // be explicitly true on the staff_members row AND the row must
+        // be active.
+        const isAdminEff =
+          (isActiveStaff && membership?.is_admin === true) || isSuperAdmin;
+        const isManagerEff = isActiveStaff && membership?.is_manager === true;
+        const isCustomerService =
+          isActiveStaff && membership?.is_customer_service === true;
+        // CS-only = flagged as CS AND no elevated permission. Super
+        // admin always exits this branch because they're an admin.
+        const isCsOnly =
+          isCustomerService && !isAdminEff && !isManagerEff && !isSuperAdmin;
+        setAccount({
+          account_id: r.id,
+          auth_user_id: r.auth_user_id,
+          first_name: fn,
+          last_name: ln,
+          display_name: display,
+          login_email: r.login_email,
+          location_id: r.location_id,
+          account_types: r.account_types ?? [],
+          staff_member_id: membership?.staff_member_id ?? null,
+          is_lng_staff: isActiveStaff || isSuperAdmin,
+          is_admin: isAdminEff,
+          is_manager: isManagerEff,
+          is_customer_service: isCustomerService,
+          is_cs_only: isCsOnly,
+          can_view_reports:
+            (isActiveStaff && membership?.can_view_reports === true) || isSuperAdmin,
+          can_view_financials:
+            (isActiveStaff && membership?.can_view_financials === true) || isSuperAdmin,
+          can_count_cash:
+            (isActiveStaff && membership?.can_count_cash === true) || isSuperAdmin,
+          admin_page_access: isActiveStaff ? (membership?.admin_page_access ?? []) : [],
+          role_name: isActiveStaff ? (membership?.role_name ?? null) : null,
+          // Super admin is exempt from the require_2fa gate so a
+          // brand-new install can never lock itself out. Every other
+          // staff member's flag mirrors lng_staff_members.require_2fa.
+          require_2fa: isActiveStaff && membership?.require_2fa === true && !isSuperAdmin,
+          is_super_admin: isSuperAdmin,
+        });
+      } catch (err) {
+        if (cancelled) return;
+        console.error('[currentAccount] account resolution threw', err);
+        setError(err instanceof Error ? err.message : 'Account fetch failed');
         setAccount(null);
-        setLoading(false);
-        return;
+      } finally {
+        if (!cancelled) setLoading(false);
       }
-      const r = accountRes.data as {
-        id: string;
-        auth_user_id: string | null;
-        first_name: string | null;
-        last_name: string | null;
-        name: string | null;
-        login_email: string;
-        location_id: string | null;
-        account_types: string[] | null;
-      };
-      const fn = r.first_name?.trim() ?? null;
-      const ln = r.last_name?.trim() ?? null;
-      const display =
-        fn && ln
-          ? `${fn} ${ln}`
-          : fn ?? ln ?? r.name?.trim() ?? r.login_email.split('@')[0] ?? r.login_email;
-      const isSuperAdmin = r.login_email === SUPER_ADMIN_EMAIL;
-      const isActiveStaff = membership?.status === 'active';
-      // Permission resolution: the super admin always passes every
-      // gate (so a brand new install can be administered without
-      // bootstrap chicken-and-egg). For everyone else, the flag must
-      // be explicitly true on the staff_members row AND the row must
-      // be active.
-      const isAdminEff =
-        (isActiveStaff && membership?.is_admin === true) || isSuperAdmin;
-      const isManagerEff = isActiveStaff && membership?.is_manager === true;
-      const isCustomerService =
-        isActiveStaff && membership?.is_customer_service === true;
-      // CS-only = flagged as CS AND no elevated permission. Super
-      // admin always exits this branch because they're an admin.
-      const isCsOnly =
-        isCustomerService && !isAdminEff && !isManagerEff && !isSuperAdmin;
-      setAccount({
-        account_id: r.id,
-        auth_user_id: r.auth_user_id,
-        first_name: fn,
-        last_name: ln,
-        display_name: display,
-        login_email: r.login_email,
-        location_id: r.location_id,
-        account_types: r.account_types ?? [],
-        staff_member_id: membership?.staff_member_id ?? null,
-        is_lng_staff: isActiveStaff || isSuperAdmin,
-        is_admin: isAdminEff,
-        is_manager: isManagerEff,
-        is_customer_service: isCustomerService,
-        is_cs_only: isCsOnly,
-        can_view_reports:
-          (isActiveStaff && membership?.can_view_reports === true) || isSuperAdmin,
-        can_view_financials:
-          (isActiveStaff && membership?.can_view_financials === true) || isSuperAdmin,
-        can_count_cash:
-          (isActiveStaff && membership?.can_count_cash === true) || isSuperAdmin,
-        admin_page_access: isActiveStaff ? (membership?.admin_page_access ?? []) : [],
-        role_name: isActiveStaff ? (membership?.role_name ?? null) : null,
-        // Super admin is exempt from the require_2fa gate so a
-        // brand-new install can never lock itself out. Every other
-        // staff member's flag mirrors lng_staff_members.require_2fa.
-        require_2fa: isActiveStaff && membership?.require_2fa === true && !isSuperAdmin,
-        is_super_admin: isSuperAdmin,
-      });
-      setLoading(false);
     })();
     return () => {
       cancelled = true;
