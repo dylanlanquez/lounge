@@ -1,4 +1,4 @@
-import { lazy, Suspense, useLayoutEffect, type ReactNode } from 'react';
+import { Suspense, useEffect, useLayoutEffect, useState, type ReactNode } from 'react';
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from './lib/auth.tsx';
 import {
@@ -11,44 +11,79 @@ import { Button } from './components/Button/Button.tsx';
 import { BottomNav } from './components/BottomNav/BottomNav.tsx';
 import { KioskStatusBar } from './components/KioskStatusBar/KioskStatusBar.tsx';
 import { ErrorBoundary } from './components/ErrorBoundary/ErrorBoundary.tsx';
+import { lazyWithRetry } from './lib/lazyWithRetry.ts';
 
-const SignIn = lazy(() => import('./routes/SignIn.tsx').then((m) => ({ default: m.SignIn })));
-const Welcome = lazy(() => import('./routes/Welcome.tsx').then((m) => ({ default: m.Welcome })));
-const Enroll2fa = lazy(() => import('./routes/Enroll2fa.tsx').then((m) => ({ default: m.Enroll2fa })));
-const Verify2fa = lazy(() => import('./routes/Verify2fa.tsx').then((m) => ({ default: m.Verify2fa })));
-const Schedule = lazy(() => import('./routes/Schedule.tsx').then((m) => ({ default: m.Schedule })));
-const NewWalkIn = lazy(() => import('./routes/NewWalkIn.tsx').then((m) => ({ default: m.NewWalkIn })));
-const VisitDetail = lazy(() => import('./routes/VisitDetail.tsx').then((m) => ({ default: m.VisitDetail })));
-const Pay = lazy(() => import('./routes/Pay.tsx').then((m) => ({ default: m.Pay })));
-const PatientProfile = lazy(() => import('./routes/PatientProfile.tsx').then((m) => ({ default: m.PatientProfile })));
-const Patients = lazy(() => import('./routes/Patients.tsx').then((m) => ({ default: m.Patients })));
-const Ledger = lazy(() => import('./routes/Ledger.tsx').then((m) => ({ default: m.Ledger })));
-const AppointmentDetail = lazy(() => import('./routes/AppointmentDetail.tsx').then((m) => ({ default: m.AppointmentDetail })));
-const InClinic = lazy(() => import('./routes/InClinic.tsx').then((m) => ({ default: m.InClinic })));
-const Admin = lazy(() => import('./routes/Admin.tsx').then((m) => ({ default: m.Admin })));
-const Reports = lazy(() => import('./routes/Reports/Reports.tsx').then((m) => ({ default: m.Reports })));
-const CashCounts = lazy(() => import('./routes/CashCounts.tsx').then((m) => ({ default: m.CashCounts })));
+// Every route is loaded via lazyWithRetry rather than React.lazy
+// directly so a hung or transiently-failing chunk fetch (flaky kiosk
+// Wi-Fi, a brief Vercel propagation gap right after a deploy, a
+// stale-bundle edge case) becomes an automatic recovery instead of
+// trapping the receptionist on the Loading… fallback. See
+// src/lib/lazyWithRetry.ts for the timeout + retry semantics.
+const SignIn = lazyWithRetry(() => import('./routes/SignIn.tsx').then((m) => ({ default: m.SignIn })), 'SignIn');
+const Welcome = lazyWithRetry(() => import('./routes/Welcome.tsx').then((m) => ({ default: m.Welcome })), 'Welcome');
+const Enroll2fa = lazyWithRetry(() => import('./routes/Enroll2fa.tsx').then((m) => ({ default: m.Enroll2fa })), 'Enroll2fa');
+const Verify2fa = lazyWithRetry(() => import('./routes/Verify2fa.tsx').then((m) => ({ default: m.Verify2fa })), 'Verify2fa');
+const Schedule = lazyWithRetry(() => import('./routes/Schedule.tsx').then((m) => ({ default: m.Schedule })), 'Schedule');
+const NewWalkIn = lazyWithRetry(() => import('./routes/NewWalkIn.tsx').then((m) => ({ default: m.NewWalkIn })), 'NewWalkIn');
+const VisitDetail = lazyWithRetry(() => import('./routes/VisitDetail.tsx').then((m) => ({ default: m.VisitDetail })), 'VisitDetail');
+const Pay = lazyWithRetry(() => import('./routes/Pay.tsx').then((m) => ({ default: m.Pay })), 'Pay');
+const PatientProfile = lazyWithRetry(() => import('./routes/PatientProfile.tsx').then((m) => ({ default: m.PatientProfile })), 'PatientProfile');
+const Patients = lazyWithRetry(() => import('./routes/Patients.tsx').then((m) => ({ default: m.Patients })), 'Patients');
+const Ledger = lazyWithRetry(() => import('./routes/Ledger.tsx').then((m) => ({ default: m.Ledger })), 'Ledger');
+const AppointmentDetail = lazyWithRetry(() => import('./routes/AppointmentDetail.tsx').then((m) => ({ default: m.AppointmentDetail })), 'AppointmentDetail');
+const InClinic = lazyWithRetry(() => import('./routes/InClinic.tsx').then((m) => ({ default: m.InClinic })), 'InClinic');
+const Admin = lazyWithRetry(() => import('./routes/Admin.tsx').then((m) => ({ default: m.Admin })), 'Admin');
+const Reports = lazyWithRetry(() => import('./routes/Reports/Reports.tsx').then((m) => ({ default: m.Reports })), 'Reports');
+const CashCounts = lazyWithRetry(() => import('./routes/CashCounts.tsx').then((m) => ({ default: m.CashCounts })), 'CashCounts');
 // /widget/* on lounge.venneir.com is redirected at the Vercel
 // layer to book.venneir.com (see vercel.json), so the staff
 // bundle no longer needs the customer widget code at all.
-const Arrival = lazy(() => import('./routes/Arrival.tsx').then((m) => ({ default: m.Arrival })));
-const GoogleMeetCallback = lazy(() => import('./routes/GoogleMeetCallback.tsx').then((m) => ({ default: m.GoogleMeetCallback })));
-const NotFound = lazy(() => import('./routes/NotFound.tsx').then((m) => ({ default: m.NotFound })));
+const Arrival = lazyWithRetry(() => import('./routes/Arrival.tsx').then((m) => ({ default: m.Arrival })), 'Arrival');
+const GoogleMeetCallback = lazyWithRetry(() => import('./routes/GoogleMeetCallback.tsx').then((m) => ({ default: m.GoogleMeetCallback })), 'GoogleMeetCallback');
+const NotFound = lazyWithRetry(() => import('./routes/NotFound.tsx').then((m) => ({ default: m.NotFound })), 'NotFound');
 
 function RouteFallback() {
+  // Escape hatch — when the fallback has been on screen for 10s it
+  // almost certainly means a chunk fetch is hung (flaky Wi-Fi, partial
+  // CDN propagation right after a deploy, an iPad that's been open
+  // long enough for index.html and chunks to drift apart) and the
+  // staff member is stuck staring at "Loading…" with no recovery path.
+  // After 10s we surface a Reload button so they can fix it themselves
+  // without having to find the home button + reopen Safari. lazy
+  // imports also hit their own 8s timeout in lazyWithRetry.ts; the
+  // escape hatch is the final safety net if both retries also stall.
+  const [stalled, setStalled] = useState(false);
+  useEffect(() => {
+    const t = window.setTimeout(() => setStalled(true), 10_000);
+    return () => window.clearTimeout(t);
+  }, []);
   return (
     <div
       style={{
         minHeight: '100dvh',
         background: theme.color.bg,
         display: 'flex',
+        flexDirection: 'column',
         alignItems: 'center',
         justifyContent: 'center',
+        gap: theme.space[4],
         color: theme.color.inkMuted,
         fontSize: theme.type.size.sm,
+        padding: theme.space[6],
+        textAlign: 'center',
       }}
     >
-      Loading…
+      <span>Loading…</span>
+      {stalled ? (
+        <>
+          <span style={{ color: theme.color.inkSubtle, fontSize: theme.type.size.xs, maxWidth: 320 }}>
+            This is taking longer than usual. Reloading usually clears it.
+          </span>
+          <Button variant="primary" onClick={() => window.location.reload()}>
+            Reload
+          </Button>
+        </>
+      ) : null}
     </div>
   );
 }

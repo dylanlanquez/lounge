@@ -17,7 +17,7 @@
     }
   ],
   "rewrites": [
-    { "source": "/((?!embed/|widgets/).*)", "destination": "/index.html" }
+    { "source": "/((?!assets/|embed/|widgets/).*)", "destination": "/index.html" }
   ],
   "headers": [
     {
@@ -29,6 +29,24 @@
           "key": "Permissions-Policy",
           "value": "camera=(self), microphone=(), geolocation=()"
         }
+      ]
+    },
+    {
+      "source": "/",
+      "headers": [
+        { "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" }
+      ]
+    },
+    {
+      "source": "/index.html",
+      "headers": [
+        { "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" }
+      ]
+    },
+    {
+      "source": "/assets/(.*)",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }
       ]
     },
     {
