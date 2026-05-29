@@ -734,22 +734,27 @@ export function VisitDetail() {
   // showed "Outstanding £25" — staff could collect £273 again,
   // double-charging by the £248 already in the till.
   const subtotalAfterDiscount = Math.max(0, subtotal - discount);
-  // Subtract the un-applied Shopify credit so impression visits don't
-  // appear over-paid against a £0 cart.
-  const amountPaidPence = Math.max(
-    0,
-    (paidStatus?.amount_paid_pence ?? 0) - (rawShopifyCreditPence - shopifyCreditPence),
-  );
+  // A Shopify order is a CREDIT, not a refundable payment: it applies
+  // against the bill but never pays cash back. Cap what it credits at
+  // the cart total so a same-day upgrade whose online order exceeds the
+  // chair work (e.g. £249.90 paid online against a £199 retainer) can
+  // NEVER produce an "owed back / refund" — the excess simply isn't
+  // applied. This is the amount actually credited here, and it's what
+  // the cart's credit row + the outstanding/owed math both use.
+  const appliedShopifyCreditPence = Math.min(shopifyCreditPence, subtotalAfterDiscount);
+  // Real, refundable money on file = everything paid (the paid-status
+  // view sums deposit + the full raw Shopify credit + till payments)
+  // MINUS the entire raw Shopify credit. Only deposit + till money can
+  // ever be owed back; the credit never can.
+  const refundablePaidPence = Math.max(0, (paidStatus?.amount_paid_pence ?? 0) - rawShopifyCreditPence);
+  const amountPaidPence = refundablePaidPence + appliedShopifyCreditPence;
   const total = Math.max(0, subtotalAfterDiscount - amountPaidPence);
-  // Inverse of the outstanding balance: when the patient has paid
-  // more than the cart owes (cart item removed after a full pre-pay,
-  // discount applied retroactively, etc) we owe THEM. The red banner
-  // above the cart surfaces this so staff can issue a refund before
-  // wrapping up the visit. Capped at amountPaidPence so a malformed
-  // negative subtotal can't ask for a refund larger than was ever
-  // collected.
+  // Owed back only ever from refundable money (deposit / till) — never
+  // from the capped credit. So a cart that drops below real money paid
+  // (item removed after a deposit, retroactive discount) still surfaces
+  // the refund, but an over-credited same-day upgrade does not.
   const owedToPatientPence = Math.min(
-    amountPaidPence,
+    refundablePaidPence,
     Math.max(0, amountPaidPence - subtotalAfterDiscount),
   );
 
@@ -1608,7 +1613,7 @@ export function VisitDetail() {
                 the hero so it lands in the first scan of the page. */}
             {shopifyOrder ? (
               <div style={{ marginBottom: theme.space[6] }}>
-                <ShopifyOrderCard order={shopifyOrder} appliesToBill={shopifyAppliesToBill} />
+                <ShopifyOrderCard order={shopifyOrder} appliesToBill={shopifyAppliesToBill} appliedPence={appliedShopifyCreditPence} />
               </div>
             ) : null}
 
@@ -1770,7 +1775,7 @@ export function VisitDetail() {
                   discount={discount}
                   depositPence={depositPence}
                   deposit={deposit}
-                  shopifyCreditPence={shopifyCreditPence}
+                  shopifyCreditPence={appliedShopifyCreditPence}
                   shopifyOrderName={shopifyOrder?.name ?? null}
                   tillCollectedPence={tillCollectedPence}
                   total={total}
@@ -4329,6 +4334,7 @@ function formatPaidAtDate(iso: string): string {
 function ShopifyOrderCard({
   order,
   appliesToBill,
+  appliedPence,
 }: {
   order: { id: string; name: string; pence: number; currency: string };
   /** True when the order should reduce this visit's outstanding
@@ -4339,7 +4345,13 @@ function ShopifyOrderCard({
    *  "credited against the bill" for a visit where the bill
    *  doesn't include the upgrade fee. */
   appliesToBill: boolean;
+  /** The amount actually credited against this cart — capped at the
+   *  bill. When it's less than what was paid online, the order paid
+   *  for more than this visit's chair work; the excess is NOT refunded
+   *  (a same-day upgrade's order is a credit, never cash back). */
+  appliedPence: number;
 }) {
+  const capped = appliesToBill && appliedPence < order.pence;
   // Loud, branded callout for visits that originated from a
   // venneir.com Shopify order. Anti-fraud guard rail — staff have
   // a one-click verification path (opens the order in Shopify
@@ -4420,7 +4432,9 @@ function ShopifyOrderCard({
             }}
           >
             {appliesToBill
-              ? `Paid online · ${formatPence(order.pence)} credited against the bill`
+              ? capped
+                ? `Paid online · ${formatPence(appliedPence)} credited against the bill`
+                : `Paid online · ${formatPence(order.pence)} credited against the bill`
               : `This impression appointment is part of this order`}
           </span>
         </div>
@@ -4453,7 +4467,9 @@ function ShopifyOrderCard({
         }}
       >
         {appliesToBill
-          ? `Open the order in Shopify to confirm the patient paid ${formatPence(order.pence)} ${order.currency} online. The same amount is automatically credited against the cart below.`
+          ? capped
+            ? `Open the order in Shopify to confirm the patient paid ${formatPence(order.pence)} ${order.currency} online. ${formatPence(appliedPence)} of it is credited against the cart below; a same-day upgrade never refunds the difference.`
+            : `Open the order in Shopify to confirm the patient paid ${formatPence(order.pence)} ${order.currency} online. The same amount is automatically credited against the cart below.`
           : `Open the order in Shopify to see what was purchased.`}
       </p>
     </div>
