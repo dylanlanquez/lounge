@@ -675,6 +675,11 @@ export interface VisitAppointmentContext {
    *  phase shape (denture_repair has per-variant overrides). Null
    *  for any service that doesn't index by repair variant. */
   repair_variant: string | null;
+  /** Free same-day upgrade flag + reason (set by the Checkpoint booker).
+   *  When true the till collects £0 for the appliance and a banner shows
+   *  on the visit. Null/false for everything else. */
+  free_upgrade: boolean | null;
+  free_upgrade_reason: string | null;
 }
 
 // Visits currently in progress at the receptionist's location. RLS scopes
@@ -846,7 +851,7 @@ export function useVisitDetail(visitId: string | undefined): VisitDetailResult {
           const { data: appt, error: apptErr } = await supabase
             .from('lng_appointments')
             .select(
-              'id, notes, customer_note, event_type_label, intake, deposit_pence, deposit_currency, deposit_provider, deposit_status, shopify_order_id, shopify_order_name, shopify_order_total_pence, shopify_order_currency, appointment_ref, jb_ref, created_at, start_at, end_at, location_id, source, brand_id, paid_in_full_at_booking, service_type, arch, product_key, repair_variant'
+              'id, notes, customer_note, event_type_label, intake, deposit_pence, deposit_currency, deposit_provider, deposit_status, shopify_order_id, shopify_order_name, shopify_order_total_pence, shopify_order_currency, appointment_ref, jb_ref, created_at, start_at, end_at, location_id, source, brand_id, paid_in_full_at_booking, service_type, arch, product_key, repair_variant, free_upgrade, free_upgrade_reason'
             )
             .eq('id', visitRow.appointment_id)
             .maybeSingle();
@@ -878,6 +883,8 @@ export function useVisitDetail(visitId: string | undefined): VisitDetailResult {
               arch: string | null;
               product_key: string | null;
               repair_variant: string | null;
+              free_upgrade: boolean | null;
+              free_upgrade_reason: string | null;
             };
             setAppointment({
               id: a.id,
@@ -896,6 +903,8 @@ export function useVisitDetail(visitId: string | undefined): VisitDetailResult {
               arch: a.arch ?? null,
               product_key: a.product_key ?? null,
               repair_variant: a.repair_variant ?? null,
+              free_upgrade: a.free_upgrade ?? false,
+              free_upgrade_reason: a.free_upgrade_reason ?? null,
             });
             if (
               a.deposit_pence != null &&
@@ -976,6 +985,8 @@ export function useVisitDetail(visitId: string | undefined): VisitDetailResult {
               arch: null,
               product_key: null,
               repair_variant: null,
+              free_upgrade: false,
+              free_upgrade_reason: null,
             });
             setDeposit(null);
           } else {

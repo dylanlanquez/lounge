@@ -12,6 +12,7 @@ import {
   CircleSlash,
   ExternalLink,
   FileText,
+  Gift,
   MapPin,
   MoreHorizontal,
   Package,
@@ -748,15 +749,16 @@ export function VisitDetail() {
   // ever be owed back; the credit never can.
   const refundablePaidPence = Math.max(0, (paidStatus?.amount_paid_pence ?? 0) - rawShopifyCreditPence);
   const amountPaidPence = refundablePaidPence + appliedShopifyCreditPence;
-  const total = Math.max(0, subtotalAfterDiscount - amountPaidPence);
+  // Free same-day upgrade: the appliance is on the house, so the till
+  // collects nothing and owes nothing back — the flag overrides the
+  // normal balance entirely. The reason is shown on the visit banner.
+  const isFreeUpgrade = appointment?.free_upgrade === true;
+  const total = isFreeUpgrade ? 0 : Math.max(0, subtotalAfterDiscount - amountPaidPence);
   // Owed back only ever from refundable money (deposit / till) — never
-  // from the capped credit. So a cart that drops below real money paid
-  // (item removed after a deposit, retroactive discount) still surfaces
-  // the refund, but an over-credited same-day upgrade does not.
-  const owedToPatientPence = Math.min(
-    refundablePaidPence,
-    Math.max(0, amountPaidPence - subtotalAfterDiscount),
-  );
+  // from the capped credit, and never on a free upgrade.
+  const owedToPatientPence = isFreeUpgrade
+    ? 0
+    : Math.min(refundablePaidPence, Math.max(0, amountPaidPence - subtotalAfterDiscount));
 
   // Owed-state transition logger. Writes a patient_events
   // 'owed_to_patient' row ONLY when a mutation handler has staged a
@@ -1614,6 +1616,14 @@ export function VisitDetail() {
             {shopifyOrder ? (
               <div style={{ marginBottom: theme.space[6] }}>
                 <ShopifyOrderCard order={shopifyOrder} appliesToBill={shopifyAppliesToBill} appliedPence={appliedShopifyCreditPence} />
+              </div>
+            ) : null}
+
+            {/* Free same-day upgrade — booked on the house. Loud banner so
+                the till never collects for the appliance. */}
+            {isFreeUpgrade ? (
+              <div style={{ marginBottom: theme.space[6] }}>
+                <FreeUpgradeBanner reason={appointment?.free_upgrade_reason ?? null} />
               </div>
             ) : null}
 
@@ -4472,6 +4482,51 @@ function ShopifyOrderCard({
             : `Open the order in Shopify to confirm the patient paid ${formatPence(order.pence)} ${order.currency} online. The same amount is automatically credited against the cart below.`
           : `Open the order in Shopify to see what was purchased.`}
       </p>
+    </div>
+  );
+}
+
+// Loud banner for a free same-day upgrade booked through Checkpoint.
+// The till already shows £0 to collect; this makes the "do not charge"
+// intent unmistakable and surfaces the accountable reason.
+function FreeUpgradeBanner({ reason }: { reason: string | null }) {
+  return (
+    <div
+      style={{
+        borderRadius: theme.radius.card,
+        border: `1px solid ${theme.color.accent}`,
+        background: theme.color.accentBg,
+        padding: `${theme.space[4]}px ${theme.space[5]}px`,
+        display: 'flex',
+        alignItems: 'flex-start',
+        gap: theme.space[3],
+      }}
+    >
+      <span
+        aria-hidden
+        style={{
+          flexShrink: 0,
+          width: 36,
+          height: 36,
+          borderRadius: theme.radius.pill,
+          background: theme.color.accent,
+          color: '#fff',
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}
+      >
+        <Gift size={18} aria-hidden />
+      </span>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: theme.type.size.md, fontWeight: theme.type.weight.semibold, color: theme.color.accent, letterSpacing: theme.type.tracking.tight }}>
+          Free upgrade — do not collect for the appliance
+        </div>
+        <div style={{ marginTop: 2, fontSize: theme.type.size.sm, color: theme.color.ink, lineHeight: theme.type.leading.snug }}>
+          This same-day upgrade was booked free of charge. The till total below is £0.
+          {reason ? ` Reason: ${reason}.` : ''}
+        </div>
+      </div>
     </div>
   );
 }

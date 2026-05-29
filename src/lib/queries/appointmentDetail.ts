@@ -65,6 +65,8 @@ export interface AppointmentDetailRow {
    *  veneers. Null on customer-widget and legacy rows. */
   quantity: number | null;
   shade: string | null;
+  free_upgrade: boolean | null;
+  free_upgrade_reason: string | null;
   /** Which storefront the booking came from — 'venneir' or
    *  'denture'. Drives the source badge icon + per-brand chrome
    *  on the appointment hero. */
@@ -245,6 +247,8 @@ interface RawAppointment {
    *  (quantity + shade). Null on customer-widget and legacy rows. */
   quantity: number | null;
   shade: string | null;
+  free_upgrade: boolean | null;
+  free_upgrade_reason: string | null;
   /** Which storefront the booking came from — 'venneir' or
    *  'denture'. Drives the source badge icon + transactional
    *  email chrome. Defaults to 'venneir' on rows older than the
@@ -300,7 +304,7 @@ export function useAppointmentDetail(appointmentId: string | undefined | null): 
         const { data: rawAppt, error: apptErr } = await supabase
           .from('lng_appointments')
           .select(
-            'id, status, source, start_at, end_at, event_type_label, appointment_ref, jb_ref, cancel_reason, notes, customer_note, reschedule_to_id, staff_account_id, location_id, patient_id, service_type, product_key, repair_variant, arch, quantity, shade, brand_id, join_url, meeting_platform, meet_host_id, meet_space_id, meet_meeting_code, conference_started_at, conference_ended_at, conference_count, recording_count, transcript_count, patient_rsvp_status, patient_rsvp_updated_at, intake, deposit_pence, deposit_currency, deposit_provider, deposit_status, paid_in_full_at_booking, shopify_order_id, shopify_order_name, shopify_order_total_pence, created_via, created_via_actor, walk_in_id',
+            'id, status, source, start_at, end_at, event_type_label, appointment_ref, jb_ref, cancel_reason, notes, customer_note, reschedule_to_id, staff_account_id, location_id, patient_id, service_type, product_key, repair_variant, arch, quantity, shade, brand_id, join_url, meeting_platform, meet_host_id, meet_space_id, meet_meeting_code, conference_started_at, conference_ended_at, conference_count, recording_count, transcript_count, patient_rsvp_status, patient_rsvp_updated_at, intake, deposit_pence, deposit_currency, deposit_provider, deposit_status, paid_in_full_at_booking, shopify_order_id, shopify_order_name, shopify_order_total_pence, created_via, created_via_actor, free_upgrade, free_upgrade_reason, walk_in_id',
           )
           .eq('id', appointmentId)
           .maybeSingle();
@@ -471,6 +475,8 @@ export function useAppointmentDetail(appointmentId: string | undefined | null): 
           arch: (appt as RawAppointment & { arch?: string | null }).arch ?? null,
           quantity: (appt as RawAppointment & { quantity?: number | null }).quantity ?? null,
           shade: (appt as RawAppointment & { shade?: string | null }).shade ?? null,
+          free_upgrade: (appt as RawAppointment & { free_upgrade?: boolean | null }).free_upgrade ?? null,
+          free_upgrade_reason: (appt as RawAppointment & { free_upgrade_reason?: string | null }).free_upgrade_reason ?? null,
           brand_id: (appt as RawAppointment & { brand_id?: string | null }).brand_id ?? null,
           join_url: appt.join_url,
           meeting_platform: appt.meeting_platform,

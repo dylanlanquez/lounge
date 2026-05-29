@@ -124,6 +124,11 @@ interface SubmitBody {
    *  appointment's primary product_key/arch/quantity/shade are taken
    *  from the first item. The customer widget never sends this. */
   items?: SubmitItem[];
+  /** Checkpoint-only. When true (same-day upgrades only), the appliance
+   *  is booked free of charge — zeroed at the till and flagged on the
+   *  Lounge booking. Requires freeUpgradeReason. */
+  freeUpgrade?: boolean | null;
+  freeUpgradeReason?: string | null;
   upgradeIds?: string[];
   /** Denture-repair line items the patient piled into the cart on
    *  the per-arch repair step. Each line carries the catalogue id +
@@ -738,6 +743,14 @@ Deno.serve(async (req) => {
       created_via_actor: isCheckpointSource
         ? (body.actorName?.trim() || null)
         : null,
+      // Free same-day upgrade — only honoured for Checkpoint same-day
+      // services, and only with a reason. Zeroes the appliance at the
+      // till and flags the booking.
+      free_upgrade: isCheckpointSource && isSameDayService && body.freeUpgrade === true,
+      free_upgrade_reason:
+        isCheckpointSource && isSameDayService && body.freeUpgrade === true
+          ? (body.freeUpgradeReason?.trim() || null)
+          : null,
       ...(depositFields ?? {}),
     })
     .select('id, appointment_ref, manage_token')

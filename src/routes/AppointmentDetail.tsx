@@ -13,6 +13,7 @@ import {
   ClipboardList,
   Copy,
   CreditCard,
+  Gift,
   History,
   Mail,
   MapPin,
@@ -670,6 +671,45 @@ function Loaded({
           <GenerateMeetLinkCard appointmentId={appt.id} currentHostId={appt.meet_host_id} onCreated={onChanged} />
         ) : null}
         <BookingFactsCard appt={appt} />
+        {appt.free_upgrade ? (
+          <div
+            style={{
+              borderRadius: theme.radius.card,
+              border: `1px solid ${theme.color.accent}`,
+              background: theme.color.accentBg,
+              padding: `${theme.space[4]}px ${theme.space[5]}px`,
+              display: 'flex',
+              alignItems: 'flex-start',
+              gap: theme.space[3],
+            }}
+          >
+            <span
+              aria-hidden
+              style={{
+                flexShrink: 0,
+                width: 36,
+                height: 36,
+                borderRadius: theme.radius.pill,
+                background: theme.color.accent,
+                color: '#fff',
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              <Gift size={18} aria-hidden />
+            </span>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: theme.type.size.md, fontWeight: theme.type.weight.semibold, color: theme.color.accent, letterSpacing: theme.type.tracking.tight }}>
+                Free upgrade — do not collect for the appliance
+              </div>
+              <div style={{ marginTop: 2, fontSize: theme.type.size.sm, color: theme.color.ink, lineHeight: theme.type.leading.snug }}>
+                Booked free of charge. The till will collect £0 for the appliance when the patient arrives.
+                {appt.free_upgrade_reason ? ` Reason: ${appt.free_upgrade_reason}.` : ''}
+              </div>
+            </div>
+          </div>
+        ) : null}
         {bookedItems.length > 0 ? (
           <AppointmentItemsCard items={bookedItems} />
         ) : (
