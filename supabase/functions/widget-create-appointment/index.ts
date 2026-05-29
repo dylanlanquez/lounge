@@ -94,6 +94,15 @@ interface SubmitBody {
   repairVariant?: string | null;
   productKey?: string | null;
   arch?: 'upper' | 'lower' | 'both' | null;
+  /** Quantity of the primary product. Only the Checkpoint booker sends
+   *  this today (the customer widget books a single unit). Persisted to
+   *  lng_appointments.quantity; must be an integer > 0 when present. */
+  quantity?: number | null;
+  /** Shade picked for the primary product (e.g. "BL1" / "A1" / "A2").
+   *  Only meaningful for click_in_veneers, mirroring the arrival
+   *  CataloguePicker. Free-text snapshot persisted to
+   *  lng_appointments.shade. */
+  shade?: string | null;
   upgradeIds?: string[];
   /** Denture-repair line items the patient piled into the cart on
    *  the per-arch repair step. Each line carries the catalogue id +
@@ -648,16 +657,25 @@ Deno.serve(async (req) => {
       service_type: body.serviceType,
       event_type_label: eventLabel,
       appointment_ref: appointmentRef,
-      // Patient-typed widget note lands in customer_note (read-only
-      // on the staff side). The `notes` column is reserved for the
-      // staff customer-service handoff note, edited from the
-      // AppointmentNotesHero — keeping the two separated stops the
-      // floor team mistaking customer requests for internal CS notes.
-      customer_note: body.details.notes?.trim() || null,
+      // customer_note holds a PATIENT-typed note (read-only on the
+      // staff side). Only the customer widget produces those. A note
+      // typed in the Checkpoint booker is written by a staff member on
+      // the patient's behalf, so it is a STAFF note — it must NOT land
+      // in customer_note. For source='checkpoint' we leave customer_note
+      // null here and insert the text into lng_appointment_staff_notes
+      // (attributed to the booking staff member) after the row exists.
+      // The `notes` column stays reserved/empty as before.
+      customer_note: isCheckpointSource ? null : (body.details.notes?.trim() || null),
       notes: null,
       repair_variant: effectiveRepairVariant,
       product_key: body.productKey ?? null,
       arch: body.arch ?? null,
+      // Primary-product enrichment captured by the Checkpoint booker.
+      // Null for the customer widget (single unit, no shade axis).
+      quantity: Number.isInteger(body.quantity) && (body.quantity as number) > 0
+        ? body.quantity
+        : null,
+      shade: typeof body.shade === 'string' && body.shade.trim() ? body.shade.trim() : null,
       // Whitelist guard: the column accepts any text but we only
       // recognise these two values. Anything else (a typo, a
       // future brand the email function hasn't been taught about)
@@ -737,6 +755,36 @@ Deno.serve(async (req) => {
     upgradeIds: body.upgradeIds ?? [],
     repairItems: body.repairItems ?? [],
   });
+
+  // ── Checkpoint staff note ───────────────────────────────────────
+  // A note typed in the Checkpoint booker is a staff note, not a
+  // customer note (see the customer_note comment on the insert above).
+  // Write it to lng_appointment_staff_notes, attributed to the booking
+  // staff member via author_name (Checkpoint users have no accounts
+  // row, so author_account_id stays null — the byline falls back to
+  // author_name). Best-effort + logged: the booking is already
+  // committed, so a note write failure must not fail the request.
+  if (isCheckpointSource) {
+    const staffNoteBody = body.details.notes?.trim() || '';
+    if (staffNoteBody) {
+      const authorName = body.actorName?.trim() || null;
+      const { error: noteErr } = await supabase
+        .from('lng_appointment_staff_notes')
+        .insert({
+          appointment_id: appointmentId,
+          author_account_id: null,
+          author_name: authorName,
+          body: staffNoteBody,
+        });
+      if (noteErr) {
+        await logFailure(
+          'checkpoint_staff_note_insert_failed',
+          { appointmentId, error: noteErr.message },
+          'warning',
+        );
+      }
+    }
+  }
 
   // ── Google Meet (virtual impression only) ──────────────────────
   // Two-step flow mirroring meet-create-space:
@@ -1117,6 +1165,16 @@ function validate(body: SubmitBody): string | null {
     return 'phone_invalid';
   }
   if (body.arch && !['upper', 'lower', 'both'].includes(body.arch)) return 'arch_invalid';
+  if (
+    body.quantity !== undefined &&
+    body.quantity !== null &&
+    (!Number.isInteger(body.quantity) || body.quantity < 1)
+  ) {
+    return 'quantity_invalid';
+  }
+  if (body.shade !== undefined && body.shade !== null && typeof body.shade !== 'string') {
+    return 'shade_invalid';
+  }
   return null;
 }
 

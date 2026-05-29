@@ -322,7 +322,7 @@ function NoteRow({
   onDelete,
 }: NoteRowProps) {
   const isAmending = composer.kind === 'amending' && composer.noteId === note.id;
-  const author = formatAuthor(note.author_first_name, note.author_last_name);
+  const author = formatAuthor(note.author_first_name, note.author_last_name, note.author_name);
   const when = formatRelativeShort(note.created_at);
 
   if (isAmending) {
@@ -651,7 +651,7 @@ function DeleteNoteSheet({
     onClose();
   };
 
-  const author = target ? formatAuthor(target.author_first_name, target.author_last_name) : '';
+  const author = target ? formatAuthor(target.author_first_name, target.author_last_name, target.author_name) : '';
   const bodyPreview = target?.body ?? '';
 
   return (

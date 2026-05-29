@@ -28,6 +28,11 @@ export interface StaffNoteRow {
   author_account_id: string | null;
   author_first_name: string | null;
   author_last_name: string | null;
+  // Free-text display name for an external author (e.g. a Checkpoint
+  // staff member) who has no Lounge accounts row. The byline prefers
+  // the joined account name and falls back to this when
+  // author_account_id is null.
+  author_name: string | null;
   deleted_at: string | null;
   delete_reason: string | null;
   deleted_by_account_id: string | null;
@@ -99,7 +104,7 @@ export function useStaffNotes(appointmentId: string | null): StaffNotesResult {
       const notesQuery = supabase
         .from('lng_appointment_staff_notes')
         .select(
-          'id, appointment_id, body, created_at, updated_at, author_account_id, deleted_at, delete_reason, deleted_by_account_id, author:accounts!author_account_id ( first_name, last_name ), deleter:accounts!deleted_by_account_id ( first_name, last_name )',
+          'id, appointment_id, body, created_at, updated_at, author_account_id, author_name, deleted_at, delete_reason, deleted_by_account_id, author:accounts!author_account_id ( first_name, last_name ), deleter:accounts!deleted_by_account_id ( first_name, last_name )',
         )
         .eq('appointment_id', appointmentId)
         .order('created_at', { ascending: false });
@@ -135,6 +140,7 @@ export function useStaffNotes(appointmentId: string | null): StaffNotesResult {
           created_at: string;
           updated_at: string;
           author_account_id: string | null;
+          author_name: string | null;
           deleted_at: string | null;
           delete_reason: string | null;
           deleted_by_account_id: string | null;
@@ -152,6 +158,7 @@ export function useStaffNotes(appointmentId: string | null): StaffNotesResult {
           author_account_id: raw.author_account_id,
           author_first_name: author?.first_name ?? null,
           author_last_name: author?.last_name ?? null,
+          author_name: raw.author_name ?? null,
           deleted_at: raw.deleted_at,
           delete_reason: raw.delete_reason,
           deleted_by_account_id: raw.deleted_by_account_id,
@@ -362,11 +369,22 @@ export async function deleteStaffNote(input: {
 // name where possible, full name where both halves are present,
 // "Unknown" when nothing's available (backfill rows, deleted
 // accounts).
-export function formatAuthor(first: string | null, last: string | null): string {
+// Byline for a note / event author. Prefers the joined accounts name.
+// `fallbackName` is the free-text display name carried by externally
+// authored rows (e.g. lng_appointment_staff_notes.author_name for a
+// Checkpoint staff member with no accounts row); used only when the
+// account name doesn't resolve, before degrading to "Unknown".
+export function formatAuthor(
+  first: string | null,
+  last: string | null,
+  fallbackName?: string | null,
+): string {
   const f = first?.trim() ?? '';
   const l = last?.trim() ?? '';
   if (f && l) return `${f} ${l}`;
   if (f) return f;
   if (l) return l;
+  const fb = fallbackName?.trim() ?? '';
+  if (fb) return fb;
   return 'Unknown';
 }

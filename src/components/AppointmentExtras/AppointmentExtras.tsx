@@ -1,5 +1,5 @@
 import { type ReactNode } from 'react';
-import { Plus } from 'lucide-react';
+import { Plus, Package } from 'lucide-react';
 import { Card } from '../Card/Card.tsx';
 import { DentureIcon } from '../Icons/DentureIcon.tsx';
 import { theme } from '../../theme/index.ts';
@@ -26,13 +26,26 @@ import { formatPence } from '../../lib/queries/carts.ts';
 export interface AppointmentExtrasProps {
   upgrades: ReadonlyArray<AppointmentUpgradeRow>;
   repairItems: ReadonlyArray<AppointmentRepairItemRow>;
+  /** Primary-product enrichment captured by the Checkpoint booker.
+   *  Surfaced as a "Selected at booking" section so the floor team
+   *  sees the quantity + shade the staff member agreed with the
+   *  customer. Null/absent on customer-widget + legacy rows. */
+  quantity?: number | null;
+  shade?: string | null;
 }
 
 export function AppointmentExtras({
   upgrades,
   repairItems,
+  quantity = null,
+  shade = null,
 }: AppointmentExtrasProps) {
-  if (upgrades.length === 0 && repairItems.length === 0) return null;
+  // Only treat a quantity > 1 as worth surfacing — a single unit is the
+  // implicit default and would just be noise on every booking.
+  const hasQuantity = typeof quantity === 'number' && quantity > 1;
+  const hasShade = typeof shade === 'string' && shade.trim().length > 0;
+  const hasPrimaryDetails = hasQuantity || hasShade;
+  if (upgrades.length === 0 && repairItems.length === 0 && !hasPrimaryDetails) return null;
 
   // Group repair items by arch so the patient's "Upper / Lower / Both"
   // story reads in one place. Order matches the widget's arch tile
@@ -47,7 +60,21 @@ export function AppointmentExtras({
 
   return (
     <Card padding="lg">
+      {hasPrimaryDetails ? (
+        <ExtrasSection
+          icon={<Package size={15} aria-hidden />}
+          title="Selected at booking"
+        >
+          {hasQuantity ? (
+            <ExtrasRow label="Quantity" value={`× ${quantity}`} isFirst />
+          ) : null}
+          {hasShade ? (
+            <ExtrasRow label="Shade" value={(shade as string).trim()} isFirst={!hasQuantity} />
+          ) : null}
+        </ExtrasSection>
+      ) : null}
       {upgrades.length > 0 ? (
+        <div style={{ marginTop: hasPrimaryDetails ? theme.space[5] : 0 }}>
         <ExtrasSection
           icon={<Plus size={15} aria-hidden />}
           title="Upgrades selected at booking"
@@ -61,11 +88,12 @@ export function AppointmentExtras({
             />
           ))}
         </ExtrasSection>
+        </div>
       ) : null}
       {repairItems.length > 0 ? (
         <div
           style={{
-            marginTop: upgrades.length > 0 ? theme.space[5] : 0,
+            marginTop: upgrades.length > 0 || hasPrimaryDetails ? theme.space[5] : 0,
           }}
         >
           <ExtrasSection

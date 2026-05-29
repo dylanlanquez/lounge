@@ -667,6 +667,8 @@ function Loaded({
         <AppointmentExtras
           upgrades={appt.upgrades}
           repairItems={appt.repairItems}
+          quantity={appt.quantity}
+          shade={appt.shade}
         />
         {configFor(appt.service_type, appt.product_key, productConfig).request_smile_photos ? (
           <SmilePhotosCard
