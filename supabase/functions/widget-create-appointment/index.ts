@@ -87,6 +87,20 @@ interface SubmitRepairItemBody {
   lineTotalPence: number;
 }
 
+// One product in a Checkpoint booking's bag. Prices are NOT carried —
+// they're re-resolved server-side against lwo_catalogue so a tampered
+// client can't set its own price. upgradeIds re-resolve against
+// lng_widget_upgrades.
+interface SubmitItem {
+  catalogueId?: string | null;
+  serviceType?: string | null;
+  productKey?: string | null;
+  arch?: 'upper' | 'lower' | 'both' | null;
+  shade?: string | null;
+  quantity?: number | null;
+  upgradeIds?: string[];
+}
+
 interface SubmitBody {
   locationId: string;
   serviceType: string;
@@ -103,6 +117,13 @@ interface SubmitBody {
    *  CataloguePicker. Free-text snapshot persisted to
    *  lng_appointments.shade. */
   shade?: string | null;
+  /** Checkpoint-only multi-item bag. When source='checkpoint' and this
+   *  is present, each item is re-resolved server-side against
+   *  lwo_catalogue / lng_widget_upgrades and written to
+   *  lng_appointment_items (+ lng_appointment_item_upgrades). The
+   *  appointment's primary product_key/arch/quantity/shade are taken
+   *  from the first item. The customer widget never sends this. */
+  items?: SubmitItem[];
   upgradeIds?: string[];
   /** Denture-repair line items the patient piled into the cart on
    *  the per-arch repair step. Each line carries the catalogue id +
@@ -636,6 +657,20 @@ Deno.serve(async (req) => {
   const appointmentRef = typeof refRaw === 'string' ? refRaw : null;
 
   // ── Insert appointment ──────────────────────────────────────────
+  // Primary product axis on the appointment row. The caller sends these
+  // single fields (the customer widget for its one product; Checkpoint
+  // computes them from its bag with the correct per-service rule — e.g.
+  // click-in veneers keep product_key null to match availability config).
+  // The full Checkpoint bag travels separately in body.items and is
+  // written to lng_appointment_items below.
+  const bagItems = isCheckpointSource && Array.isArray(body.items) ? body.items : [];
+  const primaryProductKey = body.productKey ?? null;
+  const primaryArch = body.arch ?? null;
+  const primaryQuantity =
+    Number.isInteger(body.quantity) && (body.quantity as number) > 0 ? body.quantity : null;
+  const primaryShade =
+    typeof body.shade === 'string' && body.shade.trim() ? body.shade.trim() : null;
+
   const eventLabel = labelForService(body.serviceType);
   const { data: appt, error: apptErr } = await supabase
     .from('lng_appointments')
@@ -668,14 +703,13 @@ Deno.serve(async (req) => {
       customer_note: isCheckpointSource ? null : (body.details.notes?.trim() || null),
       notes: null,
       repair_variant: effectiveRepairVariant,
-      product_key: body.productKey ?? null,
-      arch: body.arch ?? null,
-      // Primary-product enrichment captured by the Checkpoint booker.
-      // Null for the customer widget (single unit, no shade axis).
-      quantity: Number.isInteger(body.quantity) && (body.quantity as number) > 0
-        ? body.quantity
-        : null,
-      shade: typeof body.shade === 'string' && body.shade.trim() ? body.shade.trim() : null,
+      product_key: primaryProductKey,
+      arch: primaryArch,
+      // Primary-product enrichment. For a Checkpoint bag these mirror the
+      // first item; the full bag is in lng_appointment_items. Null for the
+      // customer widget (single unit, no shade axis).
+      quantity: primaryQuantity,
+      shade: primaryShade,
       // Whitelist guard: the column accepts any text but we only
       // recognise these two values. Anything else (a typo, a
       // future brand the email function hasn't been taught about)
@@ -755,6 +789,20 @@ Deno.serve(async (req) => {
     upgradeIds: body.upgradeIds ?? [],
     repairItems: body.repairItems ?? [],
   });
+
+  // ── Checkpoint multi-item bag ───────────────────────────────────
+  // Persist the planned product bag to lng_appointment_items so it can
+  // pre-populate the cart when the customer is marked arrived. Prices +
+  // upgrades are re-resolved server-side; the client body is never
+  // trusted. Loud failure per CLAUDE.md — we'd rather fail the booking
+  // than silently drop what the customer agreed to.
+  if (bagItems.length > 0) {
+    await persistAppointmentItems(supabase, {
+      appointmentId,
+      defaultServiceType: body.serviceType,
+      items: bagItems,
+    });
+  }
 
   // ── Checkpoint staff note ───────────────────────────────────────
   // A note typed in the Checkpoint booker is a staff note, not a
@@ -1626,6 +1674,157 @@ async function persistAppointmentExtras(
           error: repairWriteErr.message,
         });
         throw new Error(`Could not write repair items: ${repairWriteErr.message}`);
+      }
+    }
+  }
+}
+
+// persistAppointmentItems — write a Checkpoint booking's product bag to
+// lng_appointment_items (+ lng_appointment_item_upgrades). Every price is
+// re-resolved from lwo_catalogue / lng_widget_upgrades; the client body
+// only supplies which catalogue rows + upgrades, never amounts. This is
+// the data the arrival flow reads back to pre-populate the cart when the
+// customer is marked arrived.
+const PRICED_SERVICE_TYPES = new Set(['same_day_appliance', 'click_in_veneers']);
+
+async function persistAppointmentItems(
+  supabase: SupabaseClient,
+  args: {
+    appointmentId: string;
+    defaultServiceType: string;
+    items: SubmitItem[];
+  },
+) {
+  let sortOrder = 0;
+  for (const item of args.items) {
+    const serviceType = (item.serviceType || args.defaultServiceType || '').trim();
+    if (!serviceType) {
+      await logFailure('appointment_item_no_service_type', {
+        appointmentId: args.appointmentId,
+      }, 'warning');
+      continue;
+    }
+
+    // Resolve the catalogue row server-side. Prefer the explicit
+    // catalogue id; fall back to (service_type, product_key) so an item
+    // booked without an id still resolves to the right row + price.
+    let catQuery = supabase
+      .from('lwo_catalogue')
+      .select('id, name, unit_price, both_arches_price, arch_match, product_key')
+      .eq('active', true);
+    if (item.catalogueId) {
+      catQuery = catQuery.eq('id', item.catalogueId);
+    } else {
+      catQuery = catQuery.eq('service_type', serviceType);
+      if (item.productKey) catQuery = catQuery.eq('product_key', item.productKey);
+      else catQuery = catQuery.is('product_key', null);
+    }
+    const { data: catRows, error: catErr } = await catQuery.limit(1);
+    if (catErr) {
+      await logFailure('appointment_item_catalogue_failed', {
+        appointmentId: args.appointmentId,
+        error: catErr.message,
+      });
+      throw new Error(`Could not resolve item catalogue row: ${catErr.message}`);
+    }
+    const cat = (catRows ?? [])[0] as
+      | { id: string; name: string; unit_price: number; both_arches_price: number | null; arch_match: string; product_key: string | null }
+      | undefined;
+    if (!cat) {
+      await logFailure('appointment_item_unknown_catalogue', {
+        appointmentId: args.appointmentId,
+        catalogueId: item.catalogueId ?? null,
+        serviceType,
+        productKey: item.productKey ?? null,
+      }, 'warning');
+      continue;
+    }
+
+    const arch = item.arch === 'upper' || item.arch === 'lower' || item.arch === 'both' ? item.arch : null;
+    const archIsBoth = arch === 'both';
+    const unitPence = Math.round(Number(cat.unit_price) * 100);
+    const bothPence =
+      cat.both_arches_price === null || cat.both_arches_price === undefined
+        ? null
+        : Math.round(Number(cat.both_arches_price) * 100);
+    // Arch-resolved unit price: a 'single'-arch product priced for both
+    // arches uses the both-arches figure as the per-unit price.
+    const resolvedUnitPence =
+      cat.arch_match === 'single' && archIsBoth && bothPence !== null ? bothPence : unitPence;
+    const quantity = Math.max(1, Math.min(99, Math.round(item.quantity ?? 1)));
+    const priceShown = PRICED_SERVICE_TYPES.has(serviceType);
+    const shade = typeof item.shade === 'string' && item.shade.trim() ? item.shade.trim() : null;
+
+    const { data: insertedItem, error: itemErr } = await supabase
+      .from('lng_appointment_items')
+      .insert({
+        appointment_id: args.appointmentId,
+        catalogue_id: cat.id,
+        service_type: serviceType,
+        product_key: item.productKey ?? cat.product_key ?? null,
+        name: cat.name ?? '',
+        arch,
+        shade,
+        quantity,
+        unit_price_pence: resolvedUnitPence,
+        line_total_pence: resolvedUnitPence * quantity,
+        price_shown: priceShown,
+        sort_order: sortOrder,
+      })
+      .select('id')
+      .single();
+    if (itemErr || !insertedItem) {
+      await logFailure('appointment_item_insert_failed', {
+        appointmentId: args.appointmentId,
+        error: itemErr?.message,
+      });
+      throw new Error(`Could not write appointment item: ${itemErr?.message ?? 'no row'}`);
+    }
+    sortOrder += 1;
+
+    // Per-item upgrades — re-resolve against lng_widget_upgrades.
+    const upgradeIds = Array.isArray(item.upgradeIds) ? item.upgradeIds.filter(Boolean) : [];
+    if (upgradeIds.length > 0) {
+      const { data: upgradeRows, error: upErr } = await supabase
+        .from('lng_widget_upgrades')
+        .select('id, code, name, unit_price, both_arches_price')
+        .in('id', upgradeIds);
+      if (upErr) {
+        await logFailure('appointment_item_upgrade_resolve_failed', {
+          appointmentId: args.appointmentId,
+          upgradeIds,
+          error: upErr.message,
+        });
+        throw new Error(`Could not resolve item upgrades: ${upErr.message}`);
+      }
+      const upgradeInserts = (upgradeRows ?? []).map((r) => {
+        const uUnit = Math.round(Number(r.unit_price) * 100);
+        const uBoth =
+          r.both_arches_price === null || r.both_arches_price === undefined
+            ? null
+            : Math.round(Number(r.both_arches_price) * 100);
+        const resolved = archIsBoth && uBoth !== null ? uBoth : uUnit;
+        return {
+          appointment_item_id: insertedItem.id as string,
+          upgrade_id: r.id as string,
+          upgrade_code: (r.code as string) || (r.id as string),
+          name: (r.name as string) ?? '',
+          unit_price_pence: uUnit,
+          both_arches_price_pence: uBoth,
+          resolved_price_pence: resolved,
+        };
+      });
+      if (upgradeInserts.length > 0) {
+        const { error: upWriteErr } = await supabase
+          .from('lng_appointment_item_upgrades')
+          .insert(upgradeInserts);
+        if (upWriteErr) {
+          await logFailure('appointment_item_upgrade_insert_failed', {
+            appointmentId: args.appointmentId,
+            error: upWriteErr.message,
+          });
+          throw new Error(`Could not write item upgrades: ${upWriteErr.message}`);
+        }
       }
     }
   }

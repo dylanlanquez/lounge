@@ -47,6 +47,8 @@ import {
   type ToastTone,
 } from '../components/index.ts';
 import { SourceGlyph } from '../components/AppointmentCard/AppointmentCard.tsx';
+import { AppointmentItemsCard } from '../components/AppointmentItemsCard/AppointmentItemsCard.tsx';
+import { useAppointmentItems } from '../lib/queries/appointmentItems.ts';
 import { StaffNotesCard } from '../components/StaffNotesCard/StaffNotesCard.tsx';
 import { CustomerNoteHero } from '../components/CustomerNoteHero/CustomerNoteHero.tsx';
 import { VirtualCallReminder } from '../components/VirtualCallReminder/VirtualCallReminder.tsx';
@@ -362,6 +364,10 @@ function Loaded({
   // product whose admin toggle is on shows it. Missing rows fall back
   // to defaults (request_smile_photos=false).
   const { data: productConfig } = useAdminProductConfig();
+  // Checkpoint multi-item bag. When present it's the authoritative basket
+  // for this appointment, so we show it instead of the single-product
+  // upgrades/repair extras card.
+  const { items: bookedItems } = useAppointmentItems(appt.id);
   const [rescheduling, setRescheduling] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [reversingCancellation, setReversingCancellation] = useState(false);
@@ -664,12 +670,16 @@ function Loaded({
           <GenerateMeetLinkCard appointmentId={appt.id} currentHostId={appt.meet_host_id} onCreated={onChanged} />
         ) : null}
         <BookingFactsCard appt={appt} />
-        <AppointmentExtras
-          upgrades={appt.upgrades}
-          repairItems={appt.repairItems}
-          quantity={appt.quantity}
-          shade={appt.shade}
-        />
+        {bookedItems.length > 0 ? (
+          <AppointmentItemsCard items={bookedItems} />
+        ) : (
+          <AppointmentExtras
+            upgrades={appt.upgrades}
+            repairItems={appt.repairItems}
+            quantity={appt.quantity}
+            shade={appt.shade}
+          />
+        )}
         {configFor(appt.service_type, appt.product_key, productConfig).request_smile_photos ? (
           <SmilePhotosCard
             appointmentId={appt.id}
