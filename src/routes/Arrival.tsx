@@ -37,6 +37,7 @@ import { useAuth } from '../lib/auth.tsx';
 import { useCurrentAccount } from '../lib/queries/currentAccount.tsx';
 import { useIsMobile } from '../lib/useIsMobile.ts';
 import { useKeyboardOpen } from '../lib/useKeyboardOpen.ts';
+import { useKeyboardInsets } from '../lib/useKeyboardInsets.ts';
 import { type ParsedAddress } from '../lib/useAddressAutocomplete.ts';
 import { supabase } from '../lib/supabase.ts';
 import {
@@ -75,6 +76,7 @@ import {
   type JbAvailabilityResult,
 } from '../lib/queries/arrivalIntake.ts';
 import { useAppointmentExtras } from '../lib/queries/appointmentExtras.ts';
+import { useAppointmentItems } from '../lib/queries/appointmentItems.ts';
 import { useUpgradeCatalogueIds } from '../lib/queries/upgradeCatalogue.ts';
 import {
   inferServiceTypeFromEventLabel,
@@ -306,6 +308,18 @@ export function Arrival() {
   const { user, loading: authLoading } = useAuth();
   const { account: currentAccount } = useCurrentAccount();
   const isMobile = useIsMobile(640);
+  // Keyboard insets drive the main element's bottom padding. With body
+  // pinned (globalStyles) the scroll container is #root and its height
+  // is the layout viewport — so when the soft keyboard slides up,
+  // #root still extends behind the keyboard. Without compensating
+  // padding the patient can scroll until #root bottoms out and the
+  // last form fields (Allergies textarea, Referral source, the
+  // confirmation banner) sit under the keyboard with no way to lift
+  // them above it. The default 96+safe-area reservation is only
+  // correct when the keyboard is down (it reserves space for the
+  // fixed ActionBar). When the keyboard is up the ActionBar hides, so
+  // we swap that reservation for keyboardHeight + breathing room.
+  const keyboardInsets = useKeyboardInsets();
 
   const path = typeof window !== 'undefined' ? window.location.pathname : '';
   const mode: Mode = path.startsWith('/arrival/walk-in') ? 'walk_in' : 'appointment';
@@ -348,11 +362,17 @@ export function Arrival() {
   // below is what gates the prefill effect now.
   const { map: widgetUpgradeCatalogueIds, loading: upgradeCatalogueLoading } =
     useUpgradeCatalogueIds(widgetUpgrades.map((u) => u.upgradeId));
-  // Widget-side picks are loaded once BOTH the snapshot query and the
-  // upgrade-id → catalogue-id resolver have settled. For walk-ins
-  // (mode !== 'appointment') the hook short-circuits to loading=false
-  // immediately, so this is FALSE the moment the page mounts.
-  const widgetPicksReady = !widgetExtrasLoading && !upgradeCatalogueLoading;
+  // Checkpoint multi-item bag (lng_appointment_items). When present this
+  // IS the authoritative basket for the appointment — it pre-populates
+  // the cart on arrival so the receptionist doesn't re-pick what the
+  // staff member already booked.
+  const { items: checkpointItems, loading: checkpointItemsLoading } =
+    useAppointmentItems(mode === 'appointment' ? (id ?? null) : null);
+  // Widget-side picks are loaded once the snapshot query, the upgrade-id
+  // → catalogue-id resolver, AND the Checkpoint-bag query have settled.
+  // For walk-ins (mode !== 'appointment') every hook short-circuits to
+  // loading=false immediately, so this is FALSE the moment the page mounts.
+  const widgetPicksReady = !widgetExtrasLoading && !upgradeCatalogueLoading && !checkpointItemsLoading;
 
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [stagedItems, setStagedItems] = useState<StagedItem[]>([]);
@@ -663,6 +683,48 @@ export function Arrival() {
 
     prePopulatedRef.current = true;
 
+    // Checkpoint multi-item bag takes precedence for SAME-DAY bookings:
+    // each priced lng_appointment_items row maps directly to a staged
+    // basket line (catalogue row + qty + arch/shade + attached upgrades),
+    // so the whole booked bag flows into the cart on arrival. Items with
+    // price_shown=false are the informational "what is the impression for"
+    // picks on impression / virtual appointments — they are NOT cart
+    // lines (the visit is £0), so we skip them and fall through to the
+    // existing single-row impression prefill below.
+    const pricedItems = checkpointItems.filter((it) => it.priceShown);
+    if (pricedItems.length > 0) {
+      const bagStaged: StagedItem[] = [];
+      for (const it of pricedItems) {
+        const cat = catalogueRows.find((c) => c.id === it.catalogueId && c.active);
+        if (!cat) {
+          // Catalogue row gone (soft-deleted since booking) — skip rather
+          // than stage a line with no price/source. Rare; the booked
+          // snapshot still shows on AppointmentDetail.
+          continue;
+        }
+        const attachedUpgrades: AppliedUpgrade[] = it.upgrades.map((u) => ({
+          upgrade_id: u.upgradeId,
+          code: u.upgradeCode,
+          name: u.name,
+          price_pence: u.resolvedPricePence,
+        }));
+        bagStaged.push({
+          key: `${it.id}-checkpoint`,
+          catalogue: cat,
+          qty: it.quantity,
+          options: {
+            arch: it.arch,
+            ...(it.shade ? { shade: it.shade } : {}),
+            ...(attachedUpgrades.length > 0 ? { upgrades: attachedUpgrades } : {}),
+          },
+        });
+      }
+      if (bagStaged.length > 0) {
+        setStagedItems(bagStaged);
+        return;
+      }
+    }
+
     if (appointment.service_type) {
       // Native / widget booking — axis pins are authoritative. Use
       // findMatches so the specificity scorer picks the best row.
@@ -832,7 +894,7 @@ export function Arrival() {
         setStagedItems([{ key: `${sole.id}-prefill`, catalogue: sole, qty: 1, options: { arch } }]);
       }
     }
-  }, [mode, appointment, catalogueRows, eventTypeLabel, answerMapByQA, stagedItems.length, widgetUpgrades, widgetRepairItems, widgetUpgradeCatalogueIds, widgetPicksReady]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [mode, appointment, catalogueRows, eventTypeLabel, answerMapByQA, stagedItems.length, widgetUpgrades, widgetRepairItems, widgetUpgradeCatalogueIds, checkpointItems, widgetPicksReady]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (authLoading) return null;
   if (!user) return <Navigate to="/sign-in" replace />;
@@ -1128,10 +1190,15 @@ export function Arrival() {
         minHeight: '100dvh',
         background: theme.color.bg,
         // Reserve space below the always-visible KioskStatusBar so the
-        // stepper isn't clipped under it. Bottom space mirrors the
-        // sticky action bar height + iOS safe area.
+        // stepper isn't clipped under it. Bottom space normally mirrors
+        // the sticky action bar height + iOS safe area; when the soft
+        // keyboard is up the ActionBar hides itself, and we instead
+        // reserve enough room to lift the last form field above the
+        // keyboard (see keyboardInsets above for the why).
         paddingTop: `calc(${KIOSK_STATUS_BAR_HEIGHT}px + env(safe-area-inset-top, 0px))`,
-        paddingBottom: 'calc(96px + env(safe-area-inset-bottom, 0px))',
+        paddingBottom: keyboardInsets.open
+          ? `${keyboardInsets.height + 24}px`
+          : 'calc(96px + env(safe-area-inset-bottom, 0px))',
         position: 'relative',
       }}
     >
