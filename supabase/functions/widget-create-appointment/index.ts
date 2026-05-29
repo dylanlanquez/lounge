@@ -1102,6 +1102,11 @@ Deno.serve(async (req) => {
     event_type: 'appointment_booked',
     payload: {
       source: isCheckpointSource ? 'checkpoint' : 'widget',
+      // Display name of the Checkpoint staff member who booked this, so
+      // the notification attributes the STAFF ("X booked Y in for …")
+      // rather than crediting the patient. Null for the customer widget
+      // (a genuine self-serve booking).
+      actor_name: isCheckpointSource ? (body.actorName?.trim() || null) : null,
       appointment_id: appointmentId,
       appointment_ref: appointmentRef,
       service_type: body.serviceType,

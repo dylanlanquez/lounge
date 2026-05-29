@@ -781,7 +781,20 @@ function mapEventToRow(
     const payloadSource = typeof payload.source === 'string' ? payload.source : null;
     const apptSource = apptRow?.source ?? null;
     const apptCancelReason = apptRow?.cancel_reason ?? null;
-    if (type === 'appointment_booked' && (payloadSource === 'widget' || apptSource === 'native' || apptSource === 'calendly')) {
+    if (type === 'appointment_booked' && payloadSource === 'checkpoint') {
+      // Booked by a staff member through Checkpoint on the patient's
+      // behalf — attribute the staff, never the patient. Checkpoint
+      // users have no Lounge account, so the name rides in the event
+      // payload (actor_account_id is null). If the name is missing the
+      // sentence falls back to passive voice — still never "patient
+      // booked". NB: this branch MUST precede the apptSource==='native'
+      // check below, since Checkpoint bookings also write source='native'.
+      actorRole = 'staff';
+      actorName =
+        typeof payload.actor_name === 'string' && payload.actor_name.trim()
+          ? payload.actor_name.trim()
+          : null;
+    } else if (type === 'appointment_booked' && (payloadSource === 'widget' || apptSource === 'native' || apptSource === 'calendly')) {
       actorRole = 'customer';
     } else if (type === 'appointment_rescheduled' && (payloadSource === 'widget_self_serve' || apptCancelReason === 'patient_self_serve_reschedule')) {
       actorRole = 'customer';
