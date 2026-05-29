@@ -920,33 +920,18 @@ function composePaymentStatusBlock(apt: AppointmentRow): string {
   const pence = apt.deposit_pence ?? 0;
   const paidInFull = apt.paid_in_full_at_booking === true;
   const depositPaid = apt.deposit_status === 'paid' && pence > 0;
-  // Same-day upgrade booked from Checkpoint: a paid Shopify order is
-  // attached and covers the appointment. The order's presence is the
-  // canonical "settled" signal — wins over the deposit / full-pay
-  // states because the operator suppressed the Stripe deposit
-  // (paymentMode='on_the_day') trusting the order to act as proof of
-  // payment. Without this branch, the patient would see "Paying on
-  // the day" on an appointment they've already paid for.
-  //
-  // Gated on same-day service_type. The "your existing order covers
-  // this appointment" copy only makes sense for an appointment that
-  // has an in-clinic bill the order credits against. Virtual /
-  // in-person impression bookings can ALSO carry a shopify_order_id
-  // (the public widget attaches the order the customer paid through
-  // venneir.com), but the credit semantics don't apply there — the
-  // customer paid for the impression itself, there's no tilled bill.
-  // Surfacing the order for non-same-day services would tell the
-  // patient something untrue.
+
+  // Same-day upgrades: no payment-status block at all. The attached
+  // Shopify order is only a CREDIT against a larger in-clinic bill (e.g.
+  // a £14.95 impression-kit order credits £14.95 off a £199 retainer,
+  // leaving £184.05 to collect), so any "paid / covered / nothing to
+  // settle" claim is untrue — the balance is settled at the till on the
+  // day and the exact amount is a manual judgment the floor team makes.
+  // We therefore assert no payment state for these bookings.
   const isSameDayUpgrade =
     apt.service_type === 'same_day_appliance' ||
     apt.service_type === 'click_in_veneers';
-  const shopifyName = (apt.shopify_order_name ?? '').trim();
-  const shopifyPence = apt.shopify_order_total_pence ?? 0;
-  const shopifyApplied =
-    isSameDayUpgrade &&
-    !!apt.shopify_order_id &&
-    shopifyName.length > 0 &&
-    shopifyPence > 0;
+  if (isSameDayUpgrade) return '';
 
   type State = {
     title: string;
@@ -958,18 +943,7 @@ function composePaymentStatusBlock(apt: AppointmentRow): string {
   };
 
   let state: State;
-  if (shopifyApplied) {
-    const orderCur = apt.shopify_order_currency ?? cur;
-    state = {
-      title: `Paid via order ${shopifyName} · ${formatCurrencyForEmail(shopifyPence, orderCur)}`,
-      detail:
-        "Your existing order covers this appointment. Nothing extra to settle in clinic.",
-      bg: '#E8F5EC',
-      border: '#B8DCC1',
-      titleColor: '#13502B',
-      detailColor: '#3D5C48',
-    };
-  } else if (paidInFull && pence > 0) {
+  if (paidInFull && pence > 0) {
     state = {
       title: `Paid in full · ${formatCurrencyForEmail(pence, cur)}`,
       detail:

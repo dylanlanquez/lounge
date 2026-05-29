@@ -918,22 +918,14 @@ function composePaymentStatusBlock(apt: AppointmentRow): string {
   const pence = apt.deposit_pence ?? 0;
   const paidInFull = apt.paid_in_full_at_booking === true;
   const depositPaid = apt.deposit_status === 'paid' && pence > 0;
-  // Same gate as send-appointment-confirmation: the "covers this
-  // appointment" copy only applies when the appointment has an
-  // in-clinic bill for the order to credit against. Non-same-day
-  // bookings can carry a shopify_order_id (audit trail from the
-  // public widget) but should never surface as "Paid via order" in
-  // the reminder.
+  // Same-day upgrades: no payment-status block (mirrors
+  // send-appointment-confirmation). The attached Shopify order is only a
+  // CREDIT against a larger in-clinic bill, so any "paid / covered"
+  // claim is untrue — the balance is settled at the till on the day.
   const isSameDayUpgrade =
     apt.service_type === 'same_day_appliance' ||
     apt.service_type === 'click_in_veneers';
-  const shopifyName = (apt.shopify_order_name ?? '').trim();
-  const shopifyPence = apt.shopify_order_total_pence ?? 0;
-  const shopifyApplied =
-    isSameDayUpgrade &&
-    !!apt.shopify_order_id &&
-    shopifyName.length > 0 &&
-    shopifyPence > 0;
+  if (isSameDayUpgrade) return '';
 
   type State = {
     title: string;
@@ -945,18 +937,7 @@ function composePaymentStatusBlock(apt: AppointmentRow): string {
   };
 
   let state: State;
-  if (shopifyApplied) {
-    const orderCur = apt.shopify_order_currency ?? cur;
-    state = {
-      title: `Paid via order ${shopifyName} · ${formatCurrencyForEmailReminder(shopifyPence, orderCur)}`,
-      detail:
-        "Your existing order covers this appointment. Nothing extra to settle in clinic.",
-      bg: '#E8F5EC',
-      border: '#B8DCC1',
-      titleColor: '#13502B',
-      detailColor: '#3D5C48',
-    };
-  } else if (paidInFull && pence > 0) {
+  if (paidInFull && pence > 0) {
     state = {
       title: `Paid in full · ${formatCurrencyForEmailReminder(pence, cur)}`,
       detail:
