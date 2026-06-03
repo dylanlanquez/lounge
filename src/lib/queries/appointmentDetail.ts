@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '../supabase.ts';
 import { logFailure } from '../failureLog.ts';
 import { useRealtimeRefresh } from '../useRealtimeRefresh.ts';
@@ -582,6 +582,20 @@ export function useAppointmentDetail(appointmentId: string | undefined | null): 
     };
   }, [appointmentId, tick]);
 
+  // Stable across renders so consumers can safely list `refresh` in
+  // their own effect dependency arrays without re-running on every
+  // render. setTick (the useState setter) is itself stable; the only
+  // thing that changed identity before was the wrapping arrow. Mirrors
+  // the useCallback pattern in useMeetHosts / useMeetAttendance.
+  //
+  // This stability is load-bearing: AppointmentDetail's Meet-attendance
+  // auto-fetch effect depends on this function. When it was recreated
+  // every render the effect re-ran every render, and because the fetch
+  // writes back to lng_appointments (which this hook then re-reads via
+  // realtime), the page span into a fetch -> write -> refetch -> render
+  // loop, flickering ~1x/second.
+  const refresh = useCallback(() => setTick((t) => t + 1), []);
+
   // Auto-refresh when the appointment row changes (e.g. meet-fetch-
   // attendance writes conference_started_at / conference_ended_at, or
   // status flips from another tab). Same pattern as appointmentTimeline.
@@ -589,10 +603,10 @@ export function useAppointmentDetail(appointmentId: string | undefined | null): 
     appointmentId
       ? [{ table: 'lng_appointments', filter: `id=eq.${appointmentId}` }]
       : [],
-    () => setTick((t) => t + 1),
+    refresh,
   );
 
-  return { result, refresh: () => setTick((t) => t + 1) };
+  return { result, refresh };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

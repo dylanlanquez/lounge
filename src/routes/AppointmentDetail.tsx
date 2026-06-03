@@ -413,6 +413,11 @@ function Loaded({
   // page-load auto-fetch was skipped for ~7 hours.
   useEffect(() => {
     if (!appt.meet_meeting_code || !appt.meet_host_id) return;
+    // Cancelled / rescheduled bookings never hold their meeting, so
+    // there is no attendance to pull. Skipping them avoids burning a
+    // meet-fetch-attendance invoke on every page open for a call that
+    // will never happen (and was a source of the LAP-00540 flicker).
+    if (appt.status === 'cancelled' || appt.status === 'rescheduled') return;
     const endMs = new Date(appt.end_at).getTime();
     if (Date.now() < endMs) return;
     if (appt.conference_ended_at && Date.now() - endMs > 60 * 60_000) return;
@@ -421,11 +426,16 @@ function Loaded({
       try {
         const result = await fetchMeetAttendance(appt.id);
         if (cancelled) return;
-        // Only refresh the appointment row if Google actually produced
-        // a conference record this round — otherwise we'd re-trigger
-        // this same effect on the next render with no new data, just
-        // burning a function invoke per visit.
-        if (result.ok && !result.waitingForMeeting) {
+        // Only refresh the appointment row when Google actually wrote
+        // NEW attendance data this round (upserts > 0). The previous
+        // `!result.waitingForMeeting` check was true on every successful
+        // fetch of an ended meeting, so it called onChanged() each time;
+        // onChanged() refetches the row, which re-renders the page and
+        // re-ran this effect, fetching again — a ~1x/second loop. Gating
+        // on upserts matches the comment's original intent ("only if
+        // Google produced a record this round") and lets the page settle
+        // once the data is stable.
+        if (result.ok && (result.upserts ?? 0) > 0) {
           onChanged();
         }
       } catch {
@@ -437,7 +447,7 @@ function Loaded({
     return () => {
       cancelled = true;
     };
-  }, [appt.id, appt.meet_meeting_code, appt.meet_host_id, appt.conference_ended_at, appt.end_at, onChanged]);
+  }, [appt.id, appt.status, appt.meet_meeting_code, appt.meet_host_id, appt.conference_ended_at, appt.end_at, onChanged]);
 
   const fullName = patientFullDisplayName({
     patient_first_name: appt.patient.first_name,
