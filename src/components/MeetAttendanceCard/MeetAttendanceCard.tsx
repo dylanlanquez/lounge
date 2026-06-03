@@ -145,8 +145,16 @@ export function MeetAttendanceCard({
 
   const grouped = useMemo(() => groupByPerson(rows), [rows]);
   const verdict = useMemo(
-    () => deriveVerdict({ rows, grouped, conferenceStartedAt, meetingHasEnded }),
-    [rows, grouped, conferenceStartedAt, meetingHasEnded],
+    () =>
+      deriveVerdict({
+        rows,
+        grouped,
+        conferenceStartedAt,
+        meetingHasEnded,
+        patientFirstName,
+        patientLastName,
+      }),
+    [rows, grouped, conferenceStartedAt, meetingHasEnded, patientFirstName, patientLastName],
   );
 
   return (
@@ -239,6 +247,15 @@ type VerdictKind =
   | 'only_host'
   | 'only_patient'
   | 'both'
+  // Someone other than a registered host joined, but their Meet display
+  // name does not match the patient on file — so we cannot assert it was
+  // the patient (could be spectating staff, a family member, or the
+  // patient under a different account). We surface the doubt rather than
+  // over-claiming "Both attended". `host_unconfirmed` = a host plus an
+  // unconfirmed joiner; `unconfirmed_only` = an unconfirmed joiner and no
+  // host on record.
+  | 'host_unconfirmed'
+  | 'unconfirmed_only'
   // Mid-meeting verdicts (end_at hasn't passed but evidence has
   // landed). Present-tense copy; participant cards render alongside
   // these the same way the final verdicts do.
@@ -254,13 +271,15 @@ interface Verdict {
   tone: 'success' | 'warn' | 'alert' | 'muted';
 }
 
-function deriveVerdict(args: {
+export function deriveVerdict(args: {
   rows: MeetAttendanceRow[];
   grouped: GroupedParticipant[];
   conferenceStartedAt: string | null;
   meetingHasEnded: boolean;
+  patientFirstName: string | null;
+  patientLastName: string | null;
 }): Verdict {
-  const { rows, grouped, conferenceStartedAt, meetingHasEnded } = args;
+  const { rows, grouped, conferenceStartedAt, meetingHasEnded, patientFirstName, patientLastName } = args;
 
   // Three-way gate, in priority order:
   //   1. Genuinely nothing on file (no rows AND no conferenceStartedAt) →
@@ -279,7 +298,24 @@ function deriveVerdict(args: {
   //      never_opened) computed from the participant durations.
 
   const hostJoined = grouped.some((p) => p.isHost && p.totalSeconds > 0);
-  const patientJoined = grouped.some((p) => !p.isHost && p.totalSeconds > 0);
+  // A non-host participant only counts as THE PATIENT when their Meet
+  // display name plausibly matches the patient on file. matchesPatientName
+  // returns 'match' when there is no name to compare, so rows without a
+  // patient name still count as the patient (we can't doubt what we can't
+  // check). Non-hosts whose names DON'T match are "unconfirmed": they
+  // joined, but we can't assert they were the patient. This is what stops
+  // a spectating staff member (e.g. Heidi A.) from being read as the
+  // customer and flipping the card to a false "Both attended".
+  const nonHostPresent = grouped.filter((p) => !p.isHost && p.totalSeconds > 0);
+  const isLikelyPatient = (p: GroupedParticipant) =>
+    matchesPatientName(p.displayName, patientFirstName, patientLastName) === 'match';
+  const patientJoined = nonHostPresent.some(isLikelyPatient);
+  const unconfirmedJoined = nonHostPresent.some((p) => !isLikelyPatient(p));
+  const patientLabel =
+    [patientFirstName, patientLastName]
+      .map((s) => s?.trim())
+      .filter(Boolean)
+      .join(' ') || 'the patient';
   const haveAnyEvidence = rows.length > 0 || !!conferenceStartedAt;
 
   // 1. Nothing landed yet, in either state.
@@ -351,6 +387,17 @@ function deriveVerdict(args: {
       tone: 'success',
     };
   }
+  // Host connected, but the only other participant's name does not match
+  // the patient. Surface the doubt instead of claiming the patient
+  // attended — they may be spectating staff or a different account.
+  if (hostJoined && unconfirmedJoined) {
+    return {
+      kind: 'host_unconfirmed',
+      title: 'Patient attendance unconfirmed',
+      detail: `Host connected. Another participant joined, but their name does not match ${patientLabel}, so we cannot confirm the patient attended.`,
+      tone: 'warn',
+    };
+  }
   if (hostJoined && !patientJoined) {
     return {
       kind: 'only_host',
@@ -365,6 +412,16 @@ function deriveVerdict(args: {
       title: 'Host did not join',
       detail: 'Patient has a recorded session; host has none.',
       tone: 'alert',
+    };
+  }
+  // Someone joined, but no host is on record and the participant's name
+  // does not match the patient — we can't say who attended.
+  if (!hostJoined && unconfirmedJoined) {
+    return {
+      kind: 'unconfirmed_only',
+      title: 'Attendance unconfirmed',
+      detail: `A participant joined, but their name does not match ${patientLabel} and no host is on record.`,
+      tone: 'warn',
     };
   }
   // Fallback: rows exist but nobody had > 0 seconds. Treat as never-opened.
@@ -598,7 +655,7 @@ interface SessionDetail {
   durationSeconds: number;
 }
 
-interface GroupedParticipant {
+export interface GroupedParticipant {
   key: string;
   displayName: string;
   isHost: boolean;
