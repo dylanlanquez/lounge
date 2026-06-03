@@ -421,33 +421,25 @@ function Loaded({
     const endMs = new Date(appt.end_at).getTime();
     if (Date.now() < endMs) return;
     if (appt.conference_ended_at && Date.now() - endMs > 60 * 60_000) return;
-    let cancelled = false;
-    void (async () => {
-      try {
-        const result = await fetchMeetAttendance(appt.id);
-        if (cancelled) return;
-        // Only refresh the appointment row when Google actually wrote
-        // NEW attendance data this round (upserts > 0). The previous
-        // `!result.waitingForMeeting` check was true on every successful
-        // fetch of an ended meeting, so it called onChanged() each time;
-        // onChanged() refetches the row, which re-renders the page and
-        // re-ran this effect, fetching again — a ~1x/second loop. Gating
-        // on upserts matches the comment's original intent ("only if
-        // Google produced a record this round") and lets the page settle
-        // once the data is stable.
-        if (result.ok && (result.upserts ?? 0) > 0) {
-          onChanged();
-        }
-      } catch {
-        // Auto-fetch is best-effort. The Refresh button stays available
-        // for an operator-initiated retry; we don't want a transient
-        // 5xx to throw a toast on every page open.
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [appt.id, appt.status, appt.meet_meeting_code, appt.meet_host_id, appt.conference_ended_at, appt.end_at, onChanged]);
+    // Fire-and-forget: pull Google attendance once for this mount. We do
+    // NOT call onChanged() afterwards. meet-fetch-attendance writes any
+    // conference data to lng_appointments and any sessions to
+    // lng_meet_attendance, and BOTH tables carry realtime subscriptions
+    // (useAppointmentDetail + useMeetAttendance), so the UI refreshes
+    // itself when there is genuinely something new — with no manual
+    // trigger to spin on.
+    //
+    // The earlier onChanged() call here was the loop's accelerant: the
+    // edge function's `upserts` counts participant sessions TOUCHED (not
+    // rows changed), so it is > 0 on every fetch of a meeting that
+    // happened. onChanged() therefore fired every time, refetching the
+    // appointment, which (before the stale-while-revalidate fix in
+    // useAppointmentDetail) remounted this component and re-ran this very
+    // effect — a ~1/second fetch/remount loop.
+    void fetchMeetAttendance(appt.id).catch(() => {
+      // Best-effort; the Refresh button covers operator-initiated retries.
+    });
+  }, [appt.id, appt.status, appt.meet_meeting_code, appt.meet_host_id, appt.conference_ended_at, appt.end_at]);
 
   const fullName = patientFullDisplayName({
     patient_first_name: appt.patient.first_name,

@@ -297,7 +297,25 @@ export function useAppointmentDetail(appointmentId: string | undefined | null): 
       setResult({ state: 'not_found', data: null, error: null });
       return;
     }
-    setResult({ state: 'loading', data: null, error: null });
+    // Stale-while-revalidate. Show the full-page skeleton ONLY on the
+    // first load for this appointment id. Background refreshes (a tick++
+    // from the realtime subscription or a child onChanged) keep the
+    // current data on screen and swap it in place when the new data lands.
+    //
+    // Flipping to 'loading' on every refetch was catastrophic: it
+    // unmounted the whole <Loaded> subtree (replaced by <SkeletonView>),
+    // then remounted it when the fetch returned. That remount re-ran every
+    // child hook (the duplicate REST storm) AND re-ran the Meet attendance
+    // auto-fetch from scratch; the auto-fetch writes to lng_appointments,
+    // which fires this hook's realtime subscription, which ticked again —
+    // an unbounded fetch/remount loop (the ~1/second flicker on completed
+    // virtual appointments). Honors the project's "no load-time flicker"
+    // rule: never let loaded content drop back to a skeleton.
+    setResult((prev) =>
+      prev.state === 'loaded' && prev.data.id === appointmentId
+        ? prev
+        : { state: 'loading', data: null, error: null },
+    );
 
     (async () => {
       try {
@@ -317,7 +335,13 @@ export function useAppointmentDetail(appointmentId: string | undefined | null): 
             message: apptErr.message,
             context: { appointmentId },
           });
-          setResult({ state: 'error', data: null, error: apptErr.message });
+          // Keep showing stale data if a background refresh fails; only
+          // surface the error screen when there's nothing loaded yet.
+          setResult((prev) =>
+            prev.state === 'loaded'
+              ? prev
+              : { state: 'error', data: null, error: apptErr.message },
+          );
           return;
         }
         if (!rawAppt) {
@@ -573,7 +597,10 @@ export function useAppointmentDetail(appointmentId: string | undefined | null): 
           message,
           context: { appointmentId },
         });
-        setResult({ state: 'error', data: null, error: message });
+        // Same stale-while-revalidate guard as the apptErr path above.
+        setResult((prev) =>
+          prev.state === 'loaded' ? prev : { state: 'error', data: null, error: message },
+        );
       }
     })();
 
