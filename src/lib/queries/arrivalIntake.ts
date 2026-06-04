@@ -1,5 +1,7 @@
 import { supabase } from '../supabase.ts';
 import { callEdgeFunction } from '../edgeFunction.ts';
+import { findPatientByEmailAtLocation } from './patients.ts';
+import { logFailure } from '../failureLog.ts';
 
 // Arrival intake — persisting the data captured by the
 // ArrivalIntakeSheet before staff actually flip the appointment to
@@ -121,6 +123,9 @@ export interface ArrivalIntakeInput {
   // intake submit using the appointment_ref this returns.
   appointmentId?: string;
   patientId: string;
+  // Location of the patient row, used to look up the conflicting owner
+  // when an email fill-blank trips patients_email_per_location_unique.
+  patientLocationId?: string | null;
   patient: ArrivalIntakePatientInput;
   jbRef: string | null; // digits-only, '33' not 'JB33'. NULL when not applicable.
   // Patient-row keys the receptionist or patient explicitly edited via
@@ -132,6 +137,15 @@ export interface ArrivalIntakeInput {
 
 export interface ArrivalIntakeResult {
   appointment_ref: string;
+  // Set when the entered email already belonged to a different patient
+  // at this clinic, so it could not be filled onto this row (the two
+  // are likely the same person and need merging). The email is skipped,
+  // arrival still proceeds, and the caller surfaces this to staff.
+  emailConflict?: {
+    email: string;
+    ownerName: string | null;
+    ownerRef: string | null;
+  } | null;
 }
 
 export async function submitArrivalIntake(
@@ -176,13 +190,65 @@ export async function submitArrivalIntake(
   stage('allergies', input.patient.allergies);
   stage('referred_by', input.patient.referred_by);
 
+  let emailConflict: ArrivalIntakeResult['emailConflict'] = null;
   if (Object.keys(writes).length > 0) {
     const { error: patientErr } = await supabase
       .from('patients')
       .update(writes)
       .eq('id', input.patientId);
     if (patientErr) {
-      throw new Error(`Could not save patient details: ${patientErr.message}`);
+      const isEmailDup =
+        'email' in writes &&
+        /patients_email_per_location_unique/i.test(patientErr.message);
+      if (!isEmailDup) {
+        throw new Error(`Could not save patient details: ${patientErr.message}`);
+      }
+      // The fill-blank email already belongs to another patient at this
+      // clinic, i.e. this arrival is a likely duplicate of an existing
+      // record. Hard-blocking here strands a patient who is physically
+      // present (the original "Could not start appointment" failure), so
+      // instead: drop the email from the fill-blank set, persist the
+      // rest, and surface the collision loudly (lng_system_failures via
+      // logFailure, plus the returned emailConflict the caller banners)
+      // so an admin can merge the two records. See docs/06 §2.5 + §3.
+      const conflictEmail = writes.email;
+      // isEmailDup already guarantees 'email' is in writes; this keeps
+      // the type honest under noUncheckedIndexedAccess.
+      if (conflictEmail === undefined) {
+        throw new Error(`Could not save patient details: ${patientErr.message}`);
+      }
+      delete writes.email;
+      if (Object.keys(writes).length > 0) {
+        const { error: retryErr } = await supabase
+          .from('patients')
+          .update(writes)
+          .eq('id', input.patientId);
+        if (retryErr) {
+          throw new Error(`Could not save patient details: ${retryErr.message}`);
+        }
+      }
+      const owner = input.patientLocationId
+        ? await findPatientByEmailAtLocation({
+            email: conflictEmail,
+            locationId: input.patientLocationId,
+            excludePatientId: input.patientId,
+          })
+        : null;
+      const ownerName = owner ? `${owner.first_name} ${owner.last_name}`.trim() || null : null;
+      const ownerRef = owner ? owner.lwo_ref ?? owner.internal_ref : null;
+      emailConflict = { email: conflictEmail, ownerName, ownerRef };
+      await logFailure({
+        source: 'submitArrivalIntake',
+        severity: 'warning',
+        message: `Email fill-blank skipped at arrival: "${conflictEmail}" already belongs to another patient at this clinic (likely duplicate)`,
+        context: {
+          patient_id: input.patientId,
+          appointment_id: input.appointmentId ?? null,
+          conflict_email: conflictEmail,
+          existing_owner_id: owner?.id ?? null,
+          existing_owner_ref: ownerRef,
+        },
+      });
     }
   }
 
@@ -232,7 +298,7 @@ export async function submitArrivalIntake(
     }
   }
 
-  return { appointment_ref: appointmentRef };
+  return { appointment_ref: appointmentRef, emailConflict };
 }
 
 // Unified job-box conflict check via the checkpoint-jb-check edge

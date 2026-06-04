@@ -55,7 +55,12 @@ import { useMeetHosts } from '../../lib/queries/meetHosts.ts';
 import { useCatalogueActive } from '../../lib/queries/catalogue.ts';
 import { lookupShopifyOrder, type ShopifyOrderLookup } from '../../lib/queries/shopifyOrderLookup.ts';
 import { formatPence } from '../../lib/queries/carts.ts';
-import { type PatientRow, patientFullName } from '../../lib/queries/patients.ts';
+import {
+  type PatientRow,
+  type PatientNameMatch,
+  patientFullName,
+  findPatientsByNameAtLocation,
+} from '../../lib/queries/patients.ts';
 import { supabase } from '../../lib/supabase.ts';
 
 // NewBookingSheet — bottom-sheet UI for creating a brand-new
@@ -117,6 +122,55 @@ export function NewBookingSheet({
   const [patientCreate, setPatientCreate] = useState<NewPatientDraft | null>(null);
   const [creatingPatient, setCreatingPatient] = useState(false);
   const [createPatientError, setCreatePatientError] = useState<string | null>(null);
+  // Same-name patients already at this clinic, surfaced before we mint
+  // a new row (docs/06 §2.5). Null = not checked yet; non-empty = show
+  // the "did you mean…?" candidates and require an explicit override.
+  const [dupCandidates, setDupCandidates] = useState<PatientNameMatch[] | null>(null);
+
+  // Create the inline patient, with the §2.5 duplicate guard. Unless
+  // `force` is set, we first look for an existing same-name patient at
+  // this clinic; if found, we surface them and stop so the receptionist
+  // picks the existing record instead of minting a duplicate. A failed
+  // lookup must never block a booking, so it falls through to create.
+  const runCreatePatient = async ({ force }: { force: boolean }) => {
+    if (!patientCreate) return;
+    setCreatePatientError(null);
+    if (!force) {
+      setCreatingPatient(true);
+      let matches: PatientNameMatch[] = [];
+      try {
+        matches = await findPatientsByNameAtLocation({
+          locationId,
+          first_name: patientCreate.first_name,
+          last_name: patientCreate.last_name,
+        });
+      } catch {
+        matches = [];
+      }
+      if (matches.length > 0) {
+        setDupCandidates(matches);
+        setCreatingPatient(false);
+        return;
+      }
+    }
+    setCreatingPatient(true);
+    try {
+      const created = await createPatient({
+        locationId,
+        first_name: patientCreate.first_name,
+        last_name: patientCreate.last_name,
+        email: patientCreate.email,
+        phone: patientCreate.phone,
+      });
+      setPatient(created);
+      setPatientCreate(null);
+      setDupCandidates(null);
+    } catch (e) {
+      setCreatePatientError(e instanceof Error ? e.message : 'Could not create patient');
+    } finally {
+      setCreatingPatient(false);
+    }
+  };
   const [serviceType, setServiceType] = useState<BookingServiceType | ''>('');
   // Axis pins for the picked service (e.g. denture variant, product key,
   // arch). Order is fixed per service via SERVICE_AXES; values are kept
@@ -900,35 +954,29 @@ export function NewBookingSheet({
             ) : patientCreate ? (
               <NewPatientForm
                 draft={patientCreate}
-                onChange={setPatientCreate}
+                onChange={(next) => {
+                  setPatientCreate(next);
+                  // Editing the name invalidates a prior duplicate check —
+                  // re-check on the next "Create" press.
+                  if (dupCandidates) setDupCandidates(null);
+                }}
                 seedTerm={patientCreate.seedTerm}
                 busy={creatingPatient}
                 error={createPatientError}
+                candidates={dupCandidates}
+                onUseCandidate={(c) => {
+                  setPatient(c);
+                  setPatientCreate(null);
+                  setDupCandidates(null);
+                  setCreatePatientError(null);
+                }}
                 onCancel={() => {
                   setPatientCreate(null);
+                  setDupCandidates(null);
                   setCreatePatientError(null);
                 }}
-                onSave={async () => {
-                  setCreatePatientError(null);
-                  setCreatingPatient(true);
-                  try {
-                    const created = await createPatient({
-                      locationId,
-                      first_name: patientCreate.first_name,
-                      last_name: patientCreate.last_name,
-                      email: patientCreate.email,
-                      phone: patientCreate.phone,
-                    });
-                    setPatient(created);
-                    setPatientCreate(null);
-                  } catch (e) {
-                    setCreatePatientError(
-                      e instanceof Error ? e.message : 'Could not create patient',
-                    );
-                  } finally {
-                    setCreatingPatient(false);
-                  }
-                }}
+                onSave={() => runCreatePatient({ force: false })}
+                onCreateAnyway={() => runCreatePatient({ force: true })}
               />
             ) : (
               <PatientSearch
@@ -1408,17 +1456,27 @@ function NewPatientForm({
   seedTerm,
   busy,
   error,
+  candidates,
+  onUseCandidate,
   onCancel,
   onSave,
+  onCreateAnyway,
 }: {
   draft: NewPatientDraft;
   onChange: (next: NewPatientDraft) => void;
   seedTerm: string;
   busy: boolean;
   error: string | null;
+  // Same-name patients already at this clinic. Null until the first
+  // create attempt runs the check; non-empty means show the warning
+  // and require an explicit "Create new anyway".
+  candidates: PatientNameMatch[] | null;
+  onUseCandidate: (patient: PatientNameMatch) => void;
   onCancel: () => void;
   onSave: () => void;
+  onCreateAnyway: () => void;
 }) {
+  const hasCandidates = !!candidates && candidates.length > 0;
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
       {seedTerm ? (
@@ -1470,13 +1528,91 @@ function NewPatientForm({
           {error}
         </StatusBanner>
       ) : null}
+      {hasCandidates ? (
+        <StatusBanner
+          tone="warning"
+          title={
+            candidates!.length === 1
+              ? 'A patient with this name is already at this clinic'
+              : 'Patients with this name are already at this clinic'
+          }
+        >
+          <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
+            <p style={{ margin: 0 }}>
+              Use the existing record so their history stays on one patient. Only create a
+              new one if this is genuinely a different person.
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
+              {candidates!.map((c) => (
+                <div
+                  key={c.id}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: theme.space[3],
+                    padding: `${theme.space[2]}px ${theme.space[3]}px`,
+                    borderRadius: theme.radius.input,
+                    background: theme.color.surface,
+                    border: `1px solid ${theme.color.border}`,
+                  }}
+                >
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <p
+                      style={{
+                        margin: 0,
+                        fontSize: theme.type.size.sm,
+                        fontWeight: theme.type.weight.semibold,
+                        color: theme.color.ink,
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {patientFullName(c)}
+                    </p>
+                    <p
+                      style={{
+                        margin: '2px 0 0',
+                        fontSize: theme.type.size.xs,
+                        color: theme.color.inkMuted,
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {[c.lwo_ref ?? c.internal_ref, c.email ?? c.phone ?? null]
+                        .filter(Boolean)
+                        .join(' · ')}
+                    </p>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => onUseCandidate(c)}
+                    disabled={busy}
+                  >
+                    Use this patient
+                  </Button>
+                </div>
+              ))}
+            </div>
+          </div>
+        </StatusBanner>
+      ) : null}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: theme.space[2] }}>
         <Button type="button" variant="tertiary" onClick={onCancel} disabled={busy}>
           Back to search
         </Button>
-        <Button type="button" variant="primary" onClick={onSave} loading={busy} disabled={busy}>
-          {busy ? 'Creating…' : 'Create patient'}
-        </Button>
+        {hasCandidates ? (
+          <Button type="button" variant="primary" onClick={onCreateAnyway} loading={busy} disabled={busy}>
+            {busy ? 'Creating…' : 'Create new anyway'}
+          </Button>
+        ) : (
+          <Button type="button" variant="primary" onClick={onSave} loading={busy} disabled={busy}>
+            {busy ? 'Creating…' : 'Create patient'}
+          </Button>
+        )}
       </div>
     </div>
   );

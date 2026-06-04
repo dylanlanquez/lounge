@@ -291,6 +291,41 @@ export async function findPatientByEmailAtLocation(args: {
   } | null) ?? null;
 }
 
+// Near-match disambiguation for the staff "create new patient" flow.
+// Returns up to 5 patients at the location whose first AND last name
+// match the proposed new patient (case-insensitive, trimmed; `ilike`
+// with no wildcards is an exact case-insensitive compare).
+//
+// docs/06-patient-identity.md §2.5: name is "suggestive, never
+// decisive" — so we never auto-merge on it. Instead the booking sheet
+// surfaces these candidates as "did you mean…?" before minting a new
+// row. This is the guard that was missing when a staff booking created
+// a second "Neil Sutherland" (a typo'd phone + no email meant the
+// search missed the existing record), which then collided on
+// patients_email_per_location_unique at arrival.
+export type PatientNameMatch = PatientRow & { lwo_ref: string | null };
+
+export async function findPatientsByNameAtLocation(args: {
+  locationId: string;
+  first_name: string;
+  last_name: string;
+}): Promise<PatientNameMatch[]> {
+  const first = args.first_name.trim();
+  const last = args.last_name.trim();
+  if (!first || !last) return [];
+  const { data, error } = await supabase
+    .from('patients')
+    .select(
+      'id, location_id, internal_ref, first_name, last_name, email, phone, date_of_birth, shopify_customer_id, lwo_ref',
+    )
+    .eq('location_id', args.locationId)
+    .ilike('first_name', first)
+    .ilike('last_name', last)
+    .limit(5);
+  if (error) throw new Error(error.message);
+  return (data as PatientNameMatch[] | null) ?? [];
+}
+
 // Apply phone-first / multi-word patient search filters to a Supabase
 // query builder. Single source-of-truth shared between the picker
 // (usePatientSearch) and the Patients page list (usePatientList) so a

@@ -415,6 +415,17 @@ export function Arrival() {
   // call before any await.
   const submittingRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
+  // Set when the visit was started but the patient's email could not be
+  // filled because another patient at this clinic already owns it (a
+  // likely duplicate). The visit exists; we hold navigation behind a
+  // sticky notice so staff see the duplicate before moving on.
+  const [conflictNotice, setConflictNotice] = useState<{
+    visitId: string;
+    visitOpenedAt: string;
+    email: string;
+    ownerName: string | null;
+    ownerRef: string | null;
+  } | null>(null);
   // Waiver step is driven from the persistent footer instead of an
   // inline button. We mirror the WaiverInline's readiness + busy
   // state into Arrival so ActionBar can render "Sign and continue"
@@ -1049,6 +1060,25 @@ export function Arrival() {
   const shopifyCreditPence = appointment?.shopify_order_total_pence ?? 0;
   const shopifyOrderName = appointment?.shopify_order_name ?? null;
 
+  // Route to the freshly opened visit. Passes opened_at and the
+  // patient's name through router state so VisitDetail's breadcrumb
+  // renders the full "Schedule › Ewa Deb › Appointment, 29 Apr, 17:41"
+  // trail on first paint, with no shimmer for either crumb. 'from'
+  // maps to the user's origin before arrival: appointment arrivals came
+  // from /schedule, walk-ins came from /in-clinic.
+  const goToVisit = (visitId: string, visitOpenedAt: string) => {
+    navigate(`/visit/${visitId}`, {
+      state: {
+        from: mode === 'appointment' ? 'schedule' : 'in_clinic',
+        patientName: patientFullName({
+          first_name: form.first_name,
+          last_name: form.last_name,
+        }),
+        visitOpenedAt,
+      },
+    });
+  };
+
   const handleStartAppointment = async () => {
     if (!patient) return;
     if (mode === 'appointment' && !appointment) return;
@@ -1085,6 +1115,7 @@ export function Arrival() {
       const intakeResult = await submitArrivalIntake({
         appointmentId: mode === 'appointment' ? appointment!.id : undefined,
         patientId: patient.id,
+        patientLocationId: patient.location_id ?? null,
         patient: {
           first_name: form.first_name,
           last_name: form.last_name,
@@ -1153,22 +1184,24 @@ export function Arrival() {
         try { sessionStorage.removeItem(draftStorageKey); } catch { /* ignore */ }
       }
 
-      // Pass the visit's opened_at and the patient's name through
-      // router state so VisitDetail's breadcrumb renders the full
-      // "Schedule › Ewa Deb › Appointment, 29 Apr, 17:41" trail on
-      // first paint, with no shimmer transition for either crumb.
-      // 'from' maps to the user's *origin* before arrival: appointment
-      // arrivals came from /schedule, walk-ins came from /in-clinic.
-      navigate(`/visit/${visitId}`, {
-        state: {
-          from: mode === 'appointment' ? 'schedule' : 'in_clinic',
-          patientName: patientFullName({
-            first_name: form.first_name,
-            last_name: form.last_name,
-          }),
+      // An email collision means the visit started but the patient's
+      // email could not be filled (another record here owns it). Hold
+      // navigation behind a sticky notice so staff see the likely
+      // duplicate; the visit already exists, so "Continue" just routes.
+      if (intakeResult.emailConflict) {
+        setConflictNotice({
+          visitId,
           visitOpenedAt,
-        },
-      });
+          email: intakeResult.emailConflict.email,
+          ownerName: intakeResult.emailConflict.ownerName,
+          ownerRef: intakeResult.emailConflict.ownerRef,
+        });
+        submittingRef.current = false;
+        setSubmitting(false);
+        return;
+      }
+
+      goToVisit(visitId, visitOpenedAt);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not start appointment');
       submittingRef.current = false;
@@ -1408,6 +1441,47 @@ export function Arrival() {
       {error ? (
         <div style={{ position: 'fixed', bottom: 120, left: '50%', transform: 'translateX(-50%)', zIndex: 100 }}>
           <Toast tone="error" title="Could not start appointment" description={error} duration={6000} onDismiss={() => setError(null)} />
+        </div>
+      ) : null}
+
+      {conflictNotice ? (
+        <div
+          style={{
+            position: 'fixed',
+            bottom: 120,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            zIndex: 100,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'stretch',
+            gap: theme.space[3],
+            width: 460,
+            maxWidth: '92vw',
+          }}
+        >
+          <Toast
+            tone="warning"
+            title="Started, but check for a duplicate"
+            description={
+              `This patient's email (${conflictNotice.email}) already belongs to ` +
+              `${conflictNotice.ownerName ?? 'another patient'}` +
+              `${conflictNotice.ownerRef ? ` (${conflictNotice.ownerRef})` : ''}` +
+              ` at this clinic, so it was not saved onto this record. They may be the same ` +
+              `person. Ask an admin to merge the two records.`
+            }
+            duration={0}
+          />
+          <Button
+            variant="primary"
+            onClick={() => {
+              const n = conflictNotice;
+              setConflictNotice(null);
+              goToVisit(n.visitId, n.visitOpenedAt);
+            }}
+          >
+            Continue to visit
+          </Button>
         </div>
       ) : null}
 
