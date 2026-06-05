@@ -118,6 +118,26 @@ describe('parseFormatting', () => {
     expect(out.match(/<a /g)?.length).toBe(1);
   });
 
+  it('drops a button with an empty URL instead of leaking the raw markup', () => {
+    // Mirrors the manager_notification template when a refund is logged
+    // against no visit: {{visitUrl}} resolves to '' -> "[button:Open visit]()".
+    const out = parseFormatting('Before\n\n[button:Open visit]()\n\nAfter');
+    expect(out).not.toContain('[button:');
+    expect(out).not.toContain('Open visit'); // label goes with the dead button
+    expect(out).toContain('Before');
+    expect(out).toContain('After');
+    // No ghost paragraph where the button was.
+    expect(out).not.toMatch(/<p[^>]*>\s*<\/p>/);
+  });
+
+  it('drops an empty-URL button in the plain-text body too', () => {
+    const out = bodyToText('Before\n\n[button:Open visit]()\n\nAfter');
+    expect(out).not.toContain('[button:');
+    expect(out).not.toContain('Open visit');
+    expect(out).toContain('Before');
+    expect(out).toContain('After');
+  });
+
   it('renders bullet list rows with bullet characters', () => {
     const out = parseFormatting('- one\n- two');
     expect(out).toContain('•');

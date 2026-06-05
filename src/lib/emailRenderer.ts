@@ -170,7 +170,10 @@ export function parseFormatting(syntax: string): string {
 
   const flushBuffer = () => {
     if (buffer.length === 0) return;
-    blocks.push(`<p style="${STYLE_PARA}">${applyInlines(buffer.join('<br>'))}</p>`);
+    // A paragraph that renders to nothing after inline processing (e.g. a
+    // lone dropped empty-URL button) must not leave a ghost <p> behind.
+    const html = applyInlines(buffer.join('<br>'));
+    if (html.trim() !== '') blocks.push(`<p style="${STYLE_PARA}">${html}</p>`);
     buffer = [];
   };
   const flushList = () => {
@@ -282,6 +285,11 @@ export function parseFormatting(syntax: string): string {
  *  first. */
 function applyInlines(text: string): string {
   let out = text;
+  // Drop a button whose URL is empty (e.g. an optional CTA whose link
+  // variable resolved to nothing) rather than leak literal
+  // "[button:Label]()" markup. The with-URL button rule below requires
+  // >=1 URL char and so never matches the empty-parens form.
+  out = out.replace(/\[button:[^\]]*\]\(\s*\)/g, '');
   out = out.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
   out = out.replace(/(?<!\*)\*([^*]+?)\*(?!\*)/g, '<em>$1</em>');
   out = out.replace(
@@ -359,6 +367,7 @@ export function bodyToText(syntax: string): string {
     .replace(/\{color:[^}]+\}([^{]+)\{\/color\}/g, '$1')
     .replace(/\{w:[^}]+\}([^{]+)\{\/w\}/g, '$1')
     .replace(/!\[([^\]]*)\]\((.+?)\)/g, '[image: $1 — $2]')
+    .replace(/\[button:[^\]]*\]\(\s*\)/g, '')
     .replace(
       /\[button:([^|\]]+)(?:\|[^\]]*)?\]\((.+?)\)/g,
       '$1: $2',
