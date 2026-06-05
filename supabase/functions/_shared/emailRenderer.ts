@@ -85,6 +85,12 @@ const _STYLE_BUL = 'position:absolute;left:0;top:0;color:#0E1414';
 
 function _applyInlines(text: string): string {
   let out = text;
+  // Drop a button whose URL is empty (e.g. an optional CTA whose link
+  // variable resolved to nothing, like a refund logged against no visit)
+  // rather than leak literal "[button:Label]()" markup into the email.
+  // Runs before the with-URL button rule, whose regex requires >=1 URL
+  // char and so never matches the empty-parens form.
+  out = out.replace(/\[button:[^\]]*\]\(\s*\)/g, '');
   out = out.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
   out = out.replace(/(?<!\*)\*([^*]+?)\*(?!\*)/g, '<em>$1</em>');
   out = out.replace(/\{color:([^}]+)\}(.+?)\{\/color\}/g, '<span style="color:$1">$2</span>');
@@ -140,7 +146,10 @@ export function parseFormatting(syntax: string): string {
   let emptyStreak = 0;
   const flushBuffer = () => {
     if (buffer.length === 0) return;
-    blocks.push(`<p style="${_STYLE_PARA}">${_applyInlines(buffer.join('<br>'))}</p>`);
+    // A paragraph that renders to nothing after inline processing (e.g. a
+    // lone dropped empty-URL button) must not leave a ghost <p> behind.
+    const html = _applyInlines(buffer.join('<br>'));
+    if (html.trim() !== '') blocks.push(`<p style="${_STYLE_PARA}">${html}</p>`);
     buffer = [];
   };
   const flushList = () => {
@@ -249,6 +258,7 @@ export function bodyToText(syntax: string): string {
     .replace(/\{color:[^}]+\}([^{]+)\{\/color\}/g, '$1')
     .replace(/\{w:[^}]+\}([^{]+)\{\/w\}/g, '$1')
     .replace(/!\[([^\]]*)\]\((.+?)\)/g, '[image: $1 — $2]')
+    .replace(/\[button:[^\]]*\]\(\s*\)/g, '')
     .replace(/\[button:([^|\]]+)(?:\|[^\]]*)?\]\((.+?)\)/g, '$1: $2')
     .replace(/\[(.+?)\]\((.+?)\)/g, '$1 ($2)')
     .replace(/^---$/gm, '────────────')
