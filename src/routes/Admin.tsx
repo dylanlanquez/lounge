@@ -147,6 +147,7 @@ import { AdminEmailTemplatesTab } from './AdminEmailTemplatesTab.tsx';
 import { AdminSmsTemplatesTab } from './AdminSmsTemplatesTab.tsx';
 import { AdminBrandingTab } from './AdminBrandingTab.tsx';
 import { AdminWidgetTab } from './AdminWidgetTab.tsx';
+import { AdminSystemHealthTab } from './AdminSystemHealthTab.tsx';
 import {
   DndContext,
   closestCenter,
@@ -165,7 +166,7 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 
-type Tab = 'devices' | 'failures' | 'reports' | 'calendly' | 'services' | 'products' | 'booking_types' | 'conflicts' | 'emails' | 'sms' | 'branding' | 'widget' | 'receipts' | 'testing' | 'waivers' | 'staff' | 'payments';
+type Tab = 'devices' | 'failures' | 'reports' | 'calendly' | 'services' | 'products' | 'booking_types' | 'conflicts' | 'emails' | 'sms' | 'branding' | 'widget' | 'receipts' | 'testing' | 'waivers' | 'staff' | 'payments' | 'system_health';
 
 // Canonical list of every Admin tab. Drives the SegmentedControl in
 // the Admin header, the per-staff "Admin pages" toggle list in the
@@ -197,6 +198,7 @@ const ADMIN_TABS: { key: Tab; label: string; description: string }[] = [
   { key: 'devices', label: 'Devices', description: 'Stripe Terminal readers + location pairing.' },
   { key: 'payments', label: 'Payments', description: 'Stripe payment log, reconciliation, retries.' },
   { key: 'staff', label: 'Staff', description: 'Add, deactivate, permissions, and account actions for Lounge staff.' },
+  { key: 'system_health', label: 'System health', description: 'Live status of the scheduled background jobs, watched so a stopped sweep surfaces in minutes.' },
   { key: 'failures', label: 'Failures', description: 'Unresolved system failures captured by lng_system_failures.' },
   { key: 'testing', label: 'Testing', description: 'Dev-only resets and test-harness shortcuts.' },
 ];
@@ -341,6 +343,8 @@ export function Admin() {
           <StaffTab />
         ) : tab === 'testing' ? (
           <TestingTab />
+        ) : tab === 'system_health' ? (
+          <AdminSystemHealthTab />
         ) : (
           <FailuresTab />
         )}
