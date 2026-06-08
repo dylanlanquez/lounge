@@ -26,16 +26,30 @@ export function GoogleMeetCallback() {
 
   useEffect(() => {
     if (authLoading) return;
-    if (!user) {
+    const code = params.get('code');
+    const state = params.get('state');
+    const oauthError = params.get('error');
+
+    // A remote self-connect carries a token in the state and needs NO
+    // Lounge session — the token authorises it. Only the admin-initiated
+    // flow requires sign-in.
+    let isTokenFlow = false;
+    if (state) {
+      try {
+        const decoded = JSON.parse(atob(state)) as { token?: string };
+        isTokenFlow = !!(decoded.token && decoded.token.trim());
+      } catch {
+        isTokenFlow = false;
+      }
+    }
+
+    if (!user && !isTokenFlow) {
       // Not signed in — bounce to sign-in carrying the callback url
       // so the user lands back here after auth.
       const next = `/auth/google/callback${window.location.search}`;
       window.location.replace(`/sign-in?next=${encodeURIComponent(next)}`);
       return;
     }
-    const code = params.get('code');
-    const state = params.get('state');
-    const oauthError = params.get('error');
     if (oauthError) {
       setStatus('error');
       setMessage(`Google declined the request: ${oauthError}`);
@@ -53,8 +67,11 @@ export function GoogleMeetCallback() {
       if (result.ok) {
         setStatus('success');
         setMessage(`Connected ${result.host?.display_name ?? 'host'} (${result.host?.google_email ?? ''})`);
-        // Brief celebration window, then route back to Admin > Services.
-        setTimeout(() => setRedirectTo('/admin?tab=services&meet_connected=1'), 1100);
+        // Admin flow returns to Services. A remote host has no admin area
+        // to return to, so the success screen is the end of their journey.
+        if (!isTokenFlow) {
+          setTimeout(() => setRedirectTo('/admin?tab=services&meet_connected=1'), 1100);
+        }
       } else {
         setStatus('error');
         setMessage(result.error ?? 'Could not complete Google connection.');

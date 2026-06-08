@@ -125,19 +125,51 @@ export async function listMeetOAuthClients(): Promise<MeetOAuthClient[]> {
 // caller replaces window.location with it. The returnTo string lets
 // the callback page route back to the right admin tab on success.
 // client selects which workspace's OAuth app to connect through; null
-// uses the server default (venneir).
+// uses the server default (venneir). token is for the remote
+// self-connect path: when present the call needs no Lounge session and
+// the token determines the workspace (client is ignored server-side).
 export async function startMeetHostOAuth(
   returnTo: string | null = null,
   client: string | null = null,
+  token: string | null = null,
 ): Promise<{ ok: boolean; url?: string; error?: string }> {
   const { data, error } = await supabase.functions.invoke<{ ok: boolean; url?: string; error?: string }>(
     'meet-auth-init',
-    { body: { return_to: returnTo, client: client ?? undefined } },
+    { body: { return_to: returnTo, client: client ?? undefined, token: token ?? undefined } },
   );
   if (error) return { ok: false, error: error.message };
   const payload = (data ?? {}) as { ok?: boolean; url?: string; error?: string };
   if (!payload.ok || !payload.url) return { ok: false, error: payload.error ?? 'OAuth init failed' };
   return { ok: true, url: payload.url };
+}
+
+// Admin: mint a one-time connect link to send to a remote host. client
+// picks the workspace; label is a free-text "who this is for".
+export async function createMeetHostInvite(args: {
+  client: string;
+  label: string | null;
+}): Promise<{ ok: boolean; url?: string; expiresAt?: string; error?: string }> {
+  const { data, error } = await supabase.functions.invoke<unknown>('meet-host-invite', {
+    body: { client: args.client, label: args.label ?? undefined },
+  });
+  if (error) return { ok: false, error: error.message };
+  const payload = (data ?? {}) as { ok?: boolean; url?: string; expiresAt?: string; error?: string };
+  if (!payload.ok || !payload.url) return { ok: false, error: payload.error ?? 'Could not create the link' };
+  return { ok: true, url: payload.url, expiresAt: payload.expiresAt };
+}
+
+// Public (no auth): validate a connect token so the connect page can
+// show who it's for and reject expired / used links up front.
+export async function validateMeetHostInvite(
+  token: string,
+): Promise<{ ok: boolean; label?: string | null; workspaceLabel?: string; error?: string }> {
+  const { data, error } = await supabase.functions.invoke<unknown>('meet-host-invite', {
+    body: { action: 'validate', token },
+  });
+  if (error) return { ok: false, error: error.message };
+  const payload = (data ?? {}) as { ok?: boolean; label?: string | null; workspaceLabel?: string; error?: string };
+  if (!payload.ok) return { ok: false, error: payload.error ?? 'This link is not valid.' };
+  return { ok: true, label: payload.label ?? null, workspaceLabel: payload.workspaceLabel };
 }
 
 // Finishes the OAuth round-trip. Called by /auth/google/callback

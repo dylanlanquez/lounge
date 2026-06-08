@@ -1,6 +1,6 @@
 import { type CSSProperties, Fragment, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, useNavigate, useParams } from 'react-router-dom';
-import { AlertTriangle, ArchiveRestore, ArrowDown, ArrowUp, BarChart3, Briefcase, CalendarCheck, CalendarClock, Check, ChevronUp, Clock, CreditCard, FileSignature, FlaskConical, GripVertical, Image as ImageIcon, KeyRound, Layers, Mail, Package, Pencil, Plus, RefreshCw, Rocket, RotateCcw, Settings, ShieldAlert, ShieldCheck, Trash2, UserPlus, Users, Video, Wallet, X } from 'lucide-react';
+import { AlertTriangle, ArchiveRestore, ArrowDown, ArrowUp, BarChart3, Briefcase, CalendarCheck, CalendarClock, Check, ChevronUp, Clock, CreditCard, FileSignature, FlaskConical, GripVertical, Image as ImageIcon, KeyRound, Layers, Mail, Package, Pencil, Plus, RefreshCw, Rocket, RotateCcw, Settings, Link2, ShieldAlert, ShieldCheck, Trash2, UserPlus, Users, Video, Wallet, X } from 'lucide-react';
 import {
   Button,
   Card,
@@ -116,6 +116,7 @@ import {
 } from '../lib/queries/catalogue.ts';
 import {
   addStaffMeetHost,
+  createMeetHostInvite,
   deleteMeetHost,
   listMeetOAuthClients,
   type MeetOAuthClient,
@@ -4853,6 +4854,37 @@ function MeetHostsCard() {
   // one is set up the Connect control offers a choice; otherwise it's a
   // single button using the default workspace.
   const [oauthClients, setOauthClients] = useState<MeetOAuthClient[]>([]);
+  // "Send a connect link" flow for remote hosts.
+  const [inviteClient, setInviteClient] = useState('');
+  const [inviteLabel, setInviteLabel] = useState('');
+  const [busyInvite, setBusyInvite] = useState(false);
+  const [inviteUrl, setInviteUrl] = useState<string | null>(null);
+
+  const onGenerateInvite = async () => {
+    const client = inviteClient || oauthClients[0]?.key || 'venneir';
+    setBusyInvite(true);
+    setInviteUrl(null);
+    try {
+      const res = await createMeetHostInvite({ client, label: inviteLabel.trim() || null });
+      if (res.ok && res.url) {
+        setInviteUrl(res.url);
+      } else {
+        setToast({ tone: 'error', title: 'Could not create connect link', description: res.error });
+      }
+    } finally {
+      setBusyInvite(false);
+    }
+  };
+
+  const onCopyInvite = async () => {
+    if (!inviteUrl) return;
+    try {
+      await navigator.clipboard.writeText(inviteUrl);
+      setToast({ tone: 'success', title: 'Connect link copied' });
+    } catch {
+      setToast({ tone: 'error', title: 'Could not copy', description: 'Select the link and copy it manually.' });
+    }
+  };
   const [selectedStaffId, setSelectedStaffId] = useState('');
   const [busyAddStaff, setBusyAddStaff] = useState(false);
   const [toast, setToast] = useState<{ tone: 'success' | 'error'; title: string; description?: string } | null>(null);
@@ -5224,6 +5256,112 @@ function MeetHostsCard() {
           <p style={{ margin: 0, color: theme.color.alert, fontSize: theme.type.size.sm }}>
             Could not load staff: {staff.error}
           </p>
+        ) : null}
+      </div>
+
+      <div
+        style={{
+          marginTop: theme.space[5],
+          paddingTop: theme.space[4],
+          borderTop: `1px solid ${theme.color.border}`,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: theme.space[3],
+        }}
+      >
+        <div>
+          <h3 style={{ margin: 0, fontSize: theme.type.size.base, fontWeight: theme.type.weight.semibold }}>
+            Invite a remote host
+          </h3>
+          <p
+            style={{
+              margin: `${theme.space[1]}px 0 0`,
+              color: theme.color.inkMuted,
+              fontSize: theme.type.size.sm,
+              maxWidth: 620,
+            }}
+          >
+            Generate a one time link to send to someone who runs virtual appointments but is not at the clinic. They open it on their own device, sign into their Google, and connect themselves. No Lounge login needed, and the link expires after seven days.
+          </p>
+        </div>
+        <div style={{ display: 'flex', gap: theme.space[2], flexWrap: 'wrap', alignItems: 'center' }}>
+          {oauthClients.length > 1 ? (
+            <select
+              value={inviteClient}
+              onChange={(e) => setInviteClient(e.target.value)}
+              disabled={busyInvite}
+              style={{
+                appearance: 'none',
+                padding: `${theme.space[2]}px ${theme.space[3]}px`,
+                borderRadius: theme.radius.input,
+                border: `1px solid ${theme.color.border}`,
+                background: theme.color.surface,
+                color: theme.color.ink,
+                fontFamily: 'inherit',
+                fontSize: theme.type.size.sm,
+                cursor: 'pointer',
+              }}
+            >
+              <option value="" disabled>
+                Pick a workspace
+              </option>
+              {oauthClients.map((c) => (
+                <option key={c.key} value={c.key}>
+                  {c.label}
+                </option>
+              ))}
+            </select>
+          ) : null}
+          <input
+            value={inviteLabel}
+            onChange={(e) => setInviteLabel(e.target.value)}
+            placeholder="Who is this for? (optional)"
+            disabled={busyInvite}
+            style={{
+              flex: 1,
+              minWidth: 200,
+              padding: `${theme.space[2]}px ${theme.space[3]}px`,
+              borderRadius: theme.radius.input,
+              border: `1px solid ${theme.color.border}`,
+              background: theme.color.surface,
+              color: theme.color.ink,
+              fontFamily: 'inherit',
+              fontSize: theme.type.size.sm,
+            }}
+          />
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={onGenerateInvite}
+            disabled={busyInvite || (oauthClients.length > 1 && !inviteClient)}
+          >
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
+              <Link2 size={16} /> {busyInvite ? 'Generating…' : 'Generate link'}
+            </span>
+          </Button>
+        </div>
+        {inviteUrl ? (
+          <div style={{ display: 'flex', gap: theme.space[2], alignItems: 'center', flexWrap: 'wrap' }}>
+            <input
+              readOnly
+              value={inviteUrl}
+              onFocus={(e) => e.currentTarget.select()}
+              style={{
+                flex: 1,
+                minWidth: 240,
+                padding: `${theme.space[2]}px ${theme.space[3]}px`,
+                borderRadius: theme.radius.input,
+                border: `1px solid ${theme.color.border}`,
+                background: theme.color.bg,
+                color: theme.color.ink,
+                fontFamily: 'inherit',
+                fontSize: theme.type.size.sm,
+              }}
+            />
+            <Button variant="secondary" size="sm" onClick={onCopyInvite}>
+              Copy link
+            </Button>
+          </div>
         ) : null}
       </div>
 

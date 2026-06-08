@@ -40,6 +40,7 @@ const CashCounts = lazyWithRetry(() => import('./routes/CashCounts.tsx').then((m
 // bundle no longer needs the customer widget code at all.
 const Arrival = lazyWithRetry(() => import('./routes/Arrival.tsx').then((m) => ({ default: m.Arrival })), 'Arrival');
 const GoogleMeetCallback = lazyWithRetry(() => import('./routes/GoogleMeetCallback.tsx').then((m) => ({ default: m.GoogleMeetCallback })), 'GoogleMeetCallback');
+const ConnectMeetHost = lazyWithRetry(() => import('./routes/ConnectMeetHost.tsx').then((m) => ({ default: m.ConnectMeetHost })), 'ConnectMeetHost');
 const NotFound = lazyWithRetry(() => import('./routes/NotFound.tsx').then((m) => ({ default: m.NotFound })), 'NotFound');
 
 function RouteFallback() {
@@ -323,6 +324,9 @@ function RoutedErrorBoundary() {
               bookmarks and existing TopBar shortcuts still land. */}
           <Route path="/financials" element={<Navigate to="/reports" replace />} />
           <Route path="/auth/google/callback" element={<GoogleMeetCallback />} />
+          {/* Public, no RequireStaff: a remote person opens this from a
+              connect link an admin sent them, with no Lounge account. */}
+          <Route path="/connect-meet-host" element={<ConnectMeetHost />} />
           <Route path="/arrival/appointment/:id" element={<RequireStaff><Arrival /></RequireStaff>} />
           <Route path="/arrival/walk-in/:id" element={<RequireStaff><Arrival /></RequireStaff>} />
           {/* old aliases */}
