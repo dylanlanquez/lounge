@@ -23,6 +23,7 @@
 // operator path or the cron path.
 
 import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.50.0';
+import { staffHostNameExact, staffHostNameMatches } from './hostNameMatch.ts';
 
 export interface MeetAppointmentRow {
   id: string;
@@ -49,29 +50,53 @@ export interface ProcessAttendanceResult {
   error?: string;
 }
 
-// Pre-load every active host's stable Google user ID + display name.
-// Host detection prefers user-id match (un-forgeable) and falls back
-// to display name only when no user_id is on file (legacy hosts).
-// Both callers (sweep + fetch) share the same active host set, so we
-// hoist the read here.
-export async function loadKnownHosts(
-  admin: SupabaseClient,
-): Promise<{ userIds: Set<string>; fallbackNames: Set<string> }> {
+// A name-recognition (kind = 'staff') host: matched by display name,
+// with an optional captured Google user id once we've bound one.
+export interface StaffRecognitionHost {
+  id: string;
+  displayName: string;
+  googleUserId: string | null;
+}
+
+// The active host set, pre-loaded once per fetch/sweep run.
+export interface KnownHosts {
+  // 'users/<id>' for every host (oauth or staff) that has a captured
+  // Google user id. Un-forgeable primary match.
+  userIds: Set<string>;
+  // kind = 'staff' hosts, for the always-on display-name match + the
+  // first-sighting auto-bind of their google_user_id.
+  staffHosts: StaffRecognitionHost[];
+  // Legacy: oauth hosts with NO captured user id, matched by exact
+  // display name only when NO host has a user id at all. Preserves the
+  // original pre-staff-recognition behaviour for old connections.
+  legacyFallbackNames: Set<string>;
+}
+
+// Pre-load every active host. Detection prefers the un-forgeable user-id
+// match; staff hosts add an always-on display-name match; the legacy
+// name fallback only fires when no host has a user id at all. Both
+// callers (sweep + fetch) share the same active host set, so we hoist
+// the read here.
+export async function loadKnownHosts(admin: SupabaseClient): Promise<KnownHosts> {
   const { data } = await admin
     .from('lng_meet_hosts')
-    .select('display_name, google_user_id')
+    .select('id, display_name, google_user_id, kind')
     .eq('is_active', true);
   const userIds = new Set<string>();
-  const fallbackNames = new Set<string>();
-  for (const h of ((data as Array<{ display_name: string | null; google_user_id: string | null }> | null) ?? [])) {
-    if (h.google_user_id) {
-      userIds.add(`users/${h.google_user_id}`);
-    } else if (h.display_name) {
+  const staffHosts: StaffRecognitionHost[] = [];
+  const legacyFallbackNames = new Set<string>();
+  for (const h of ((data as Array<{ id: string; display_name: string | null; google_user_id: string | null; kind: string | null }> | null) ?? [])) {
+    if (h.google_user_id) userIds.add(`users/${h.google_user_id}`);
+    if (h.kind === 'staff') {
+      if (h.display_name) {
+        staffHosts.push({ id: h.id, displayName: h.display_name, googleUserId: h.google_user_id });
+      }
+    } else if (!h.google_user_id && h.display_name) {
       const lc = h.display_name.trim().toLowerCase();
-      if (lc) fallbackNames.add(lc);
+      if (lc) legacyFallbackNames.add(lc);
     }
   }
-  return { userIds, fallbackNames };
+  return { userIds, staffHosts, legacyFallbackNames };
 }
 
 export async function processAppointmentAttendance(args: {
@@ -79,11 +104,10 @@ export async function processAppointmentAttendance(args: {
   appt: MeetAppointmentRow;
   accessToken: string;
   hostEmail: string;
-  knownHostUserIds: Set<string>;
-  fallbackHostNames: Set<string>;
+  knownHosts: KnownHosts;
   source: MeetAttendanceSource;
 }): Promise<ProcessAttendanceResult> {
-  const { admin, appt, accessToken, hostEmail, knownHostUserIds, fallbackHostNames, source } = args;
+  const { admin, appt, accessToken, hostEmail, knownHosts, source } = args;
 
   // 1. List EVERY conferenceRecord for this space (one space can host
   //    multiple conferences — test blips, follow-up rejoins). Filter by
@@ -229,13 +253,64 @@ export async function processAppointmentAttendance(args: {
         ?? 'Guest';
 
       const meetUserId = participant.signedinUser?.user ?? null;
-      // Two-tier host detection: user-id match preferred, display-name
-      // match as fallback only when no host has a user_id on file.
+      // Host detection, in priority order:
+      //   1. user-id match (un-forgeable) against any host with a
+      //      captured google_user_id (oauth + bound staff).
+      //   2. display-name match against a kind='staff' recognition host
+      //      (always consulted, since the owner host carries a user_id
+      //      which would otherwise switch the legacy fallback off).
+      //   3. legacy exact display-name fallback for oauth hosts with no
+      //      user_id, only when NO host has a user_id at all.
       let isHost = false;
-      if (meetUserId && knownHostUserIds.has(meetUserId)) {
+      let bindStaffHostId: string | null = null;
+      if (meetUserId && knownHosts.userIds.has(meetUserId)) {
         isHost = true;
-      } else if (knownHostUserIds.size === 0 && fallbackHostNames.has(displayName.trim().toLowerCase())) {
-        isHost = true;
+      } else {
+        const staffMatch = knownHosts.staffHosts.find((h) =>
+          staffHostNameMatches(h.displayName, displayName),
+        );
+        if (staffMatch) {
+          isHost = true;
+          // First sighting: capture this staff member's stable Google
+          // user id so future meetings match on the un-forgeable id.
+          // Only on an EXACT name match, so a loose label match can
+          // never persist the wrong person's id onto the staff record.
+          if (meetUserId && !staffMatch.googleUserId && staffHostNameExact(staffMatch.displayName, displayName)) {
+            bindStaffHostId = staffMatch.id;
+          }
+        } else if (
+          knownHosts.userIds.size === 0 &&
+          knownHosts.legacyFallbackNames.has(displayName.trim().toLowerCase())
+        ) {
+          isHost = true;
+        }
+      }
+
+      if (bindStaffHostId && meetUserId) {
+        const bareId = meetUserId.replace(/^users\//, '');
+        const { error: bindErr } = await admin
+          .from('lng_meet_hosts')
+          .update({ google_user_id: bareId })
+          .eq('id', bindStaffHostId)
+          .is('google_user_id', null);
+        if (bindErr) {
+          await admin.from('lng_system_failures').insert({
+            source,
+            severity: 'warning',
+            message: 'staff host google_user_id auto-bind failed',
+            context: {
+              appointment_id: appt.id,
+              staff_host_id: bindStaffHostId,
+              error: bindErr.message,
+            },
+          });
+        } else {
+          // Reflect locally so later participants in this same run match
+          // by id and we never re-bind within the run.
+          knownHosts.userIds.add(meetUserId);
+          const sh = knownHosts.staffHosts.find((h) => h.id === bindStaffHostId);
+          if (sh) sh.googleUserId = bareId;
+        }
       }
 
       const sessRes = await fetch(

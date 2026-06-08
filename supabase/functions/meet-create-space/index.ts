@@ -168,7 +168,7 @@ async function handle(req: Request): Promise<Response> {
   // 2. Load the host + refresh tokens if needed.
   const { data: hostRow } = await admin
     .from('lng_meet_hosts')
-    .select('id, display_name, google_email, access_token, refresh_token, token_expiry, is_active')
+    .select('id, display_name, google_email, access_token, refresh_token, token_expiry, is_active, oauth_client')
     .eq('id', body.host_id)
     .maybeSingle();
   const host = hostRow as MeetHostRow | null;

@@ -84,7 +84,7 @@ Deno.serve(async (req) => {
 
   const { data: hostRow } = await admin
     .from('lng_meet_hosts')
-    .select('id, display_name, google_email, access_token, refresh_token, token_expiry, is_active')
+    .select('id, display_name, google_email, access_token, refresh_token, token_expiry, is_active, oauth_client')
     .eq('id', appt.meet_host_id)
     .maybeSingle();
   const host = hostRow as MeetHostRow | null;
@@ -94,8 +94,7 @@ Deno.serve(async (req) => {
   if (!tokenResult.ok) return json(200, { ok: false, error: tokenResult.error });
   const accessToken = tokenResult.accessToken;
 
-  const { userIds: knownHostUserIds, fallbackNames: fallbackHostNames } =
-    await loadKnownHosts(admin);
+  const knownHosts = await loadKnownHosts(admin);
 
   const filter = `space.meeting_code=\"${appt.meet_meeting_code}\"`;
   const result = await processAppointmentAttendance({
@@ -108,8 +107,7 @@ Deno.serve(async (req) => {
     },
     accessToken,
     hostEmail: host.google_email,
-    knownHostUserIds,
-    fallbackHostNames,
+    knownHosts,
     source: 'meet-fetch-attendance',
   });
 

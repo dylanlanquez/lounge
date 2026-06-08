@@ -193,7 +193,7 @@ export function NewBookingSheet({
   // when meetHostId is set; otherwise it falls back to the legacy
   // service-account flow (used by Calendly imports).
   const [meetHostId, setMeetHostId] = useState<string | null>(null);
-  const { hosts: meetHosts, loading: meetHostsLoading } = useMeetHosts({ activeOnly: true });
+  const { hosts: meetHosts, loading: meetHostsLoading } = useMeetHosts({ activeOnly: true, ownersOnly: true });
 
   // Shopify-paid services (admin flag on lwo_catalogue.sold_on_shopify
   // makes the opt-in available). Most customers walking into a sold-

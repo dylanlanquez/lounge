@@ -6,15 +6,30 @@ import { useRealtimeRefresh } from '../useRealtimeRefresh.ts';
 // Public-facing slice of lng_meet_hosts. The token columns
 // (access_token, refresh_token, token_expiry) are intentionally NEVER
 // read from the client — they live in edge functions running as
-// service-role only. Front-end consumers see display_name +
-// google_email + is_active so the dropdown can render and the admin
-// list can show "Connected" / "Inactive".
+// service-role only, and a DB-level column grant revoke now blocks
+// client reads of them outright. Front-end consumers see the
+// non-secret columns so the dropdown can render and the admin list can
+// show "Connected" / "Inactive".
+//
+// kind:
+//   'oauth' — Google-connected host that owns Meet spaces and whose
+//             grant the attendance fetch runs through. Has google_email.
+//   'staff' — name-recognition only host (no Google tokens). Represents
+//             a staff member who runs calls but doesn't connect their
+//             own Google account. google_email is null; the attendance
+//             pipeline matches them by display name and auto-binds their
+//             google_user_id on first exact match.
 export interface MeetHostPublic {
   id: string;
   display_name: string;
-  google_email: string;
+  google_email: string | null;
   is_active: boolean;
   created_at: string;
+  kind: 'oauth' | 'staff';
+  staff_member_id: string | null;
+  // Captured stable Google id. For staff hosts, non-null means the
+  // pipeline has locked onto them once and now matches by id, not name.
+  google_user_id: string | null;
 }
 
 // Sort priority: karly.innes@venneir.com first, lab@venneir.com
@@ -29,8 +44,8 @@ const HOST_SORT_PRIORITY: Record<string, number> = {
 
 function sortHosts(rows: MeetHostPublic[]): MeetHostPublic[] {
   return [...rows].sort((a, b) => {
-    const ap = HOST_SORT_PRIORITY[a.google_email.toLowerCase()] ?? 100;
-    const bp = HOST_SORT_PRIORITY[b.google_email.toLowerCase()] ?? 100;
+    const ap = HOST_SORT_PRIORITY[(a.google_email ?? '').toLowerCase()] ?? 100;
+    const bp = HOST_SORT_PRIORITY[(b.google_email ?? '').toLowerCase()] ?? 100;
     if (ap !== bp) return ap - bp;
     return a.display_name.localeCompare(b.display_name, 'en-GB');
   });
@@ -43,8 +58,13 @@ interface UseMeetHostsResult {
   refresh: () => void;
 }
 
-export function useMeetHosts(opts: { activeOnly?: boolean } = {}): UseMeetHostsResult {
+// ownersOnly: restrict to kind = 'oauth' hosts. The booking + appointment
+// flows need a host that can actually OWN the Meet space (only OAuth
+// hosts have a Google grant), so they pass ownersOnly. The admin manager
+// leaves it off to see staff recognition hosts too.
+export function useMeetHosts(opts: { activeOnly?: boolean; ownersOnly?: boolean } = {}): UseMeetHostsResult {
   const activeOnly = opts.activeOnly ?? false;
+  const ownersOnly = opts.ownersOnly ?? false;
   const [hosts, setHosts] = useState<MeetHostPublic[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
@@ -56,8 +76,9 @@ export function useMeetHosts(opts: { activeOnly?: boolean } = {}): UseMeetHostsR
     (async () => {
       let q = supabase
         .from('lng_meet_hosts')
-        .select('id, display_name, google_email, is_active, created_at');
+        .select('id, display_name, google_email, is_active, created_at, kind, staff_member_id, google_user_id');
       if (activeOnly) q = q.eq('is_active', true);
+      if (ownersOnly) q = q.eq('kind', 'oauth');
       const { data, error: err } = await q;
       if (cancelled) return;
       if (err) {
@@ -72,20 +93,46 @@ export function useMeetHosts(opts: { activeOnly?: boolean } = {}): UseMeetHostsR
     return () => {
       cancelled = true;
     };
-  }, [activeOnly, tick, settle]);
+  }, [activeOnly, ownersOnly, tick, settle]);
 
   useRealtimeRefresh([{ table: 'lng_meet_hosts' }], refresh);
 
   return { hosts, loading, error, refresh };
 }
 
+// A connectable workspace (Google OAuth app). The admin picks which one
+// to connect a host through when more than one is configured.
+export interface MeetOAuthClient {
+  key: string;
+  label: string;
+}
+
+// Lists the workspaces whose OAuth secrets are configured server-side,
+// so the Connect control only offers apps that can actually complete a
+// grant. Returns [] on error (the Connect button then falls back to the
+// default workspace).
+export async function listMeetOAuthClients(): Promise<MeetOAuthClient[]> {
+  const { data, error } = await supabase.functions.invoke<{ ok: boolean; clients?: MeetOAuthClient[] }>(
+    'meet-auth-init',
+    { body: { list: true } },
+  );
+  if (error) return [];
+  const payload = (data ?? {}) as { ok?: boolean; clients?: MeetOAuthClient[] };
+  return payload.ok && Array.isArray(payload.clients) ? payload.clients : [];
+}
+
 // Kicks off the OAuth flow. Edge function returns the consent URL,
 // caller replaces window.location with it. The returnTo string lets
 // the callback page route back to the right admin tab on success.
-export async function startMeetHostOAuth(returnTo: string | null = null): Promise<{ ok: boolean; url?: string; error?: string }> {
+// client selects which workspace's OAuth app to connect through; null
+// uses the server default (venneir).
+export async function startMeetHostOAuth(
+  returnTo: string | null = null,
+  client: string | null = null,
+): Promise<{ ok: boolean; url?: string; error?: string }> {
   const { data, error } = await supabase.functions.invoke<{ ok: boolean; url?: string; error?: string }>(
     'meet-auth-init',
-    { body: { return_to: returnTo } },
+    { body: { return_to: returnTo, client: client ?? undefined } },
   );
   if (error) return { ok: false, error: error.message };
   const payload = (data ?? {}) as { ok?: boolean; url?: string; error?: string };
@@ -108,6 +155,26 @@ export async function completeMeetHostOAuth(args: {
   const payload = (data ?? {}) as { ok?: boolean; host?: MeetHostPublic; error?: string };
   if (!payload.ok) return { ok: false, error: payload.error ?? 'OAuth completion failed' };
   return { ok: true, host: payload.host };
+}
+
+// Register a staff member as a name-recognition Meet host. No Google
+// OAuth involved: the row carries kind = 'staff' + the staff member's
+// display name, and the attendance pipeline matches them by name (then
+// auto-binds their stable Google id on first exact sighting). Used for
+// staff who run virtual appointments but don't connect their own Google
+// account. Insert is gated to admins by RLS.
+export async function addStaffMeetHost(args: {
+  staffMemberId: string;
+  displayName: string;
+}): Promise<void> {
+  const displayName = args.displayName.trim();
+  if (!displayName) throw new Error('Staff member has no name to match against');
+  const { error } = await supabase.from('lng_meet_hosts').insert({
+    kind: 'staff',
+    staff_member_id: args.staffMemberId,
+    display_name: displayName,
+  });
+  if (error) throw new Error(error.message);
 }
 
 // Soft-disable a host. Keeps the row + tokens so a future
