@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { Navigate, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   AlertTriangle,
@@ -10,7 +10,6 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
-  List,
   Mail,
   Monitor,
 
@@ -30,21 +29,13 @@ import {
   Input,
   NewBookingSheet,
   RescheduleSheet,
-  SegmentedControl,
   Skeleton,
   StatusPill,
   Toast,
   WeekStrip,
   WEEK_STRIP_WINDOW_RADIUS_DAYS,
 } from '../components/index.ts';
-import {
-  CalendarGrid,
-  layoutAppointments,
-  offsetForTime,
-  heightForDuration,
-} from '../components/CalendarGrid/CalendarGrid.tsx';
-import { AppointmentCard, SourceGlyph } from '../components/AppointmentCard/AppointmentCard.tsx';
-import { ClusterCard } from '../components/ClusterCard/ClusterCard.tsx';
+import { SourceGlyph } from '../components/AppointmentCard/AppointmentCard.tsx';
 import { ScheduleListRow, ScheduleListView } from '../components/ScheduleListView/ScheduleListView.tsx';
 import { BOTTOM_NAV_HEIGHT } from '../components/BottomNav/BottomNav.tsx';
 import { KIOSK_STATUS_BAR_HEIGHT } from '../components/KioskStatusBar/KioskStatusBar.tsx';
@@ -65,11 +56,9 @@ import {
 } from '../lib/calendarMonth.ts';
 import {
   type AppointmentRow,
-  eventTypeCategory,
   formatAppointmentSummary,
   formatLateDuration,
   humaniseStatus,
-  isAppointmentDimmed,
   isBookingLate,
   minutesPastStart,
   patientDisplayName,
@@ -97,8 +86,6 @@ import { cancelAppointment } from '../lib/queries/cancelAppointment.ts';
 import { useCurrentLocation } from '../lib/queries/locations.ts';
 import googleMeetIcon from '../assets/google-meet.png';
 
-type Layout = 'calendar' | 'list';
-const LAYOUT_KEY = 'lounge.scheduleLayout';
 
 export function Schedule() {
   const { user, loading: authLoading } = useAuth();
@@ -151,12 +138,6 @@ export function Schedule() {
     },
     [setSearchParams, todayIso],
   );
-  const [layout, setLayout] = useState<Layout>(() => {
-    if (typeof window === 'undefined') return 'calendar';
-    const saved = window.localStorage.getItem(LAYOUT_KEY);
-    return saved === 'list' || saved === 'calendar' ? saved : 'calendar';
-  });
-
   const [selected, setSelected] = useState<AppointmentRow | null>(null);
   const [clusterRows, setClusterRows] = useState<AppointmentRow[] | null>(null);
   const [busy, setBusy] = useState(false);
@@ -269,22 +250,6 @@ export function Schedule() {
     return summariseWaiverFlag(required, patientSignatures);
   })();
 
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      window.localStorage.setItem(LAYOUT_KEY, layout);
-    }
-  }, [layout]);
-
-  // Auto-switch to list when the selected day is dense and the user
-  // hasn't expressed a preference yet.
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const saved = window.localStorage.getItem(LAYOUT_KEY);
-    if (!saved && day.data.length > 8) {
-      setLayout('list');
-    }
-  }, [day.data.length]);
-
   if (authLoading) return null;
   if (!user) return <Navigate to="/sign-in" replace />;
 
@@ -326,31 +291,17 @@ export function Schedule() {
   const selectedMonth = Number(selectedDate.slice(5, 7)) - 1;
   const toolbarLabel = monthLabel(selectedYear, selectedMonth);
 
-  // Calendar grid expands to cover whatever's actually scheduled.
-  // Default 8 am → 7 pm; if any appointment starts before 8 or ends
-  // after 7 pm, the bounds extend so cards never orphan below the
-  // grid (the bug shown in the 29 Apr screenshot where 7:54 pm and
-  // 8:45 pm walk-ins fell outside the visible range).
-  const { startHour, endHour } = (() => {
+  // Default new-booking time uses the earliest scheduled hour (min 8 am),
+  // computed in clinic time so it's stable across viewer timezones.
+  const startHour = (() => {
     let s = 8;
-    let e = 19;
     for (const r of day.data) {
       const start = new Date(r.start_at);
-      const end = new Date(r.end_at);
       if (!Number.isNaN(start.getTime())) {
-        // Grid bounds use clinic-time hours so a UK booking near the
-        // edge of a day always falls inside the rendered range, even
-        // when the viewer's device is set to a different timezone.
-        const sh = londonHourMinute(r.start_at).hour;
-        s = Math.min(s, sh);
-      }
-      if (!Number.isNaN(end.getTime())) {
-        const eParts = londonHourMinute(r.end_at);
-        const endH = eParts.hour + (eParts.minute > 0 ? 1 : 0);
-        e = Math.max(e, endH);
+        s = Math.min(s, londonHourMinute(r.start_at).hour);
       }
     }
-    return { startHour: Math.max(0, s), endHour: Math.min(24, e) };
+    return Math.max(0, s);
   })();
 
   return (
@@ -598,22 +549,6 @@ export function Schedule() {
                 New booking
               </button>
             ) : null}
-            <SegmentedControl<Layout>
-              ariaLabel="Day view layout"
-              value={layout}
-              onChange={setLayout}
-              size="sm"
-              options={[
-                {
-                  value: 'calendar',
-                  label: <CalendarDays size={16} aria-label="Calendar view" />,
-                },
-                {
-                  value: 'list',
-                  label: <List size={16} aria-label="List view" />,
-                },
-              ]}
-            />
           </div>
         </div>
 
@@ -668,69 +603,8 @@ export function Schedule() {
                 ) : undefined
               }
             />
-          ) : layout === 'list' ? (
-            <ScheduleListView rows={day.data} onPick={setSelected} />
           ) : (
-            <div style={{ paddingTop: theme.space[2] }}>
-              <CalendarGrid
-                showNowIndicator={onToday}
-                startHour={startHour}
-                endHour={endHour}
-                isoDate={selectedDate}
-                // Tap-an-empty-slot creates a booking. CS staff can't
-                // book here, so disable the tap handler entirely
-                // rather than letting the sheet open and then trip
-                // on permissions.
-                onEmptyTap={
-                  !isCsOnly
-                    ? (iso) => tryOpenNewBooking(iso)
-                    : undefined
-                }
-              >
-                {layoutAppointments(day.data).map((item) =>
-                  item.kind === 'card' ? (
-                    <AppointmentCard
-                      key={item.data.id}
-                      patientName={patientDisplayName(item.data)}
-                      startAt={item.data.start_at}
-                      endAt={item.data.end_at}
-                      status={item.data.status}
-                      staffName={staffDisplayName(item.data)}
-                      serviceLabel={formatAppointmentSummary(item.data) || undefined}
-                      isVirtual={!!item.data.join_url}
-                      top={offsetForTime(item.data.start_at, startHour, 80)}
-                      height={heightForDuration(item.data.start_at, item.data.end_at, 80)}
-                      lane={item.lane}
-                      lanesInGroup={item.lanesInGroup}
-                      barColor={theme.category[eventTypeCategory(item.data.event_type_label)]}
-                      source={item.data.source}
-                      lateMinutes={
-                        onToday &&
-                        item.data.status === 'booked' &&
-                        new Date(item.data.end_at).getTime() > now.getTime() &&
-                        isBookingLate(item.data.start_at, now)
-                          ? minutesPastStart(item.data.start_at, now)
-                          : null
-                      }
-                      dimmed={isAppointmentDimmed(item.data, now)}
-                      phases={item.data.phases}
-                      onClick={() => setSelected(item.data)}
-                    />
-                  ) : (
-                    <ClusterCard
-                      key={item.key}
-                      count={item.rows.length}
-                      startAt={item.startAt}
-                      endAt={item.endAt}
-                      firstNames={item.rows.map((r) => firstNameOf(patientDisplayName(r)))}
-                      top={offsetForTime(item.startAt, startHour, 80)}
-                      height={heightForDuration(item.startAt, item.endAt, 80)}
-                      onClick={() => setClusterRows(item.rows)}
-                    />
-                  )
-                )}
-              </CalendarGrid>
-            </div>
+            <ScheduleListView rows={day.data} onPick={setSelected} isToday={onToday} />
           )}
             </DayReloadingWrapper>
           )}
@@ -1547,12 +1421,6 @@ function IconNavButton({
       {children}
     </button>
   );
-}
-
-function firstNameOf(fullName: string): string {
-  const trimmed = fullName.trim();
-  const space = trimmed.indexOf(' ');
-  return space === -1 ? trimmed : trimmed.slice(0, space);
 }
 
 // Holds the previous day's content visible (dimmed) while a refetch is
