@@ -54,7 +54,7 @@ export function VirtualCallReminder({
         <SmsHeroHeader patientFirstName={properFirstName} />
         <div style={{ marginTop: theme.space[4] }}>
           <StatusRow
-            phone={formattedPhone || '+44000000000'}
+            phone={formattedPhone}
             onOpen={() => setOpen(true)}
             phoneOk={phoneOk}
           />
@@ -190,7 +190,7 @@ function StatusRow({
               lineHeight: 1.4,
             }}
           >
-            {phone}
+            {phoneOk ? phone : 'No mobile number on file'}
           </span>
         </div>
       </div>

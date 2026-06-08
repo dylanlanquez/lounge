@@ -30,23 +30,16 @@ export interface MeetHostPublic {
   // Captured stable Google id. For staff hosts, non-null means the
   // pipeline has locked onto them once and now matches by id, not name.
   google_user_id: string | null;
+  // Admin-controlled display order (lower = earlier).
+  sort_order: number;
 }
 
-// Sort priority: karly.innes@venneir.com first, lab@venneir.com
-// second, then alphabetical by display_name. Mirrors the brief —
-// receptionists pick the same host 95% of the time and the
-// preferred host should land at the top regardless of when it was
-// connected.
-const HOST_SORT_PRIORITY: Record<string, number> = {
-  'karly.innes@venneir.com': 0,
-  'lab@venneir.com': 1,
-};
-
+// Display order is admin-controlled via sort_order (set by the reorder
+// arrows in Admin > Services). Lower = earlier; ties fall back to
+// display name so the list is always stable.
 function sortHosts(rows: MeetHostPublic[]): MeetHostPublic[] {
   return [...rows].sort((a, b) => {
-    const ap = HOST_SORT_PRIORITY[(a.google_email ?? '').toLowerCase()] ?? 100;
-    const bp = HOST_SORT_PRIORITY[(b.google_email ?? '').toLowerCase()] ?? 100;
-    if (ap !== bp) return ap - bp;
+    if (a.sort_order !== b.sort_order) return a.sort_order - b.sort_order;
     return a.display_name.localeCompare(b.display_name, 'en-GB');
   });
 }
@@ -76,7 +69,7 @@ export function useMeetHosts(opts: { activeOnly?: boolean; ownersOnly?: boolean 
     (async () => {
       let q = supabase
         .from('lng_meet_hosts')
-        .select('id, display_name, google_email, is_active, created_at, kind, staff_member_id, google_user_id');
+        .select('id, display_name, google_email, is_active, created_at, kind, staff_member_id, google_user_id, sort_order');
       if (activeOnly) q = q.eq('is_active', true);
       if (ownersOnly) q = q.eq('kind', 'oauth');
       const { data, error: err } = await q;
@@ -222,6 +215,25 @@ export async function setMeetHostActive(id: string, active: boolean): Promise<vo
 export async function deleteMeetHost(id: string): Promise<void> {
   const { error } = await supabase.from('lng_meet_hosts').delete().eq('id', id);
   if (error) throw new Error(error.message);
+}
+
+// Persist a reordered host list. Each id gets sort_order = its new index
+// × 10 (spacing so a later insertion doesn't force a full rewrite).
+// Admin-gated by RLS. Mirrors the catalogue batchUpdateSortOrders helper.
+export async function batchUpdateMeetHostSortOrders(
+  updates: Array<{ id: string; sort_order: number }>,
+): Promise<void> {
+  await Promise.all(
+    updates.map(({ id, sort_order }) =>
+      supabase
+        .from('lng_meet_hosts')
+        .update({ sort_order })
+        .eq('id', id)
+        .then(({ error }) => {
+          if (error) throw new Error(error.message);
+        }),
+    ),
+  );
 }
 
 // Booking-flow caller: invoke the space-creation edge function once
