@@ -1,3 +1,4 @@
+import { Fragment } from 'react';
 import { AlertTriangle, ChevronRight } from 'lucide-react';
 import googleMeetIcon from '../../assets/google-meet.png';
 import { SourceGlyph } from '../AppointmentCard/AppointmentCard.tsx';
@@ -21,9 +22,13 @@ import { fmtTzAbbr } from '../../lib/dateFormat.ts';
 export interface ScheduleListViewProps {
   rows: AppointmentRow[];
   onPick: (row: AppointmentRow) => void;
+  // When true (the selected day is today) a live "now" marker is drawn
+  // between the appointments that have already started and those still
+  // to come, and re-positions itself as time passes.
+  isToday?: boolean;
 }
 
-export function ScheduleListView({ rows, onPick }: ScheduleListViewProps) {
+export function ScheduleListView({ rows, onPick, isToday = false }: ScheduleListViewProps) {
   const now = useNow();
   const sorted = [...rows].sort((a, b) =>
     a.start_at < b.start_at ? -1 : a.start_at > b.start_at ? 1 : 0
@@ -34,10 +39,39 @@ export function ScheduleListView({ rows, onPick }: ScheduleListViewProps) {
   const morning = sorted.filter((r) => londonHour(r.start_at) < 12);
   const afternoon = sorted.filter((r) => londonHour(r.start_at) >= 12);
 
+  // Global index where the now-marker sits: the count of appointments
+  // that have already started, so it lands just before the first one
+  // still to come. -1 disables it (not today, or no appointments).
+  const showNow = isToday && sorted.length > 0;
+  const nowAt = showNow
+    ? sorted.filter((r) => new Date(r.start_at).getTime() <= now.getTime()).length
+    : -1;
+  const hasAfternoon = afternoon.length > 0;
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[5] }}>
-      {morning.length > 0 ? <Section label="Morning" rows={morning} onPick={onPick} now={now} /> : null}
-      {afternoon.length > 0 ? <Section label="Afternoon" rows={afternoon} onPick={onPick} now={now} /> : null}
+      {morning.length > 0 ? (
+        <Section
+          label="Morning"
+          rows={morning}
+          onPick={onPick}
+          now={now}
+          startIndex={0}
+          nowAt={nowAt}
+          isLast={!hasAfternoon}
+        />
+      ) : null}
+      {hasAfternoon ? (
+        <Section
+          label="Afternoon"
+          rows={afternoon}
+          onPick={onPick}
+          now={now}
+          startIndex={morning.length}
+          nowAt={nowAt}
+          isLast
+        />
+      ) : null}
     </div>
   );
 }
@@ -47,11 +81,19 @@ function Section({
   rows,
   onPick,
   now,
+  startIndex,
+  nowAt,
+  isLast,
 }: {
   label: string;
   rows: AppointmentRow[];
   onPick: (r: AppointmentRow) => void;
   now: Date;
+  // Index of this section's first row in the full sorted day, so the
+  // now-marker can be placed by a single global index.
+  startIndex: number;
+  nowAt: number;
+  isLast: boolean;
 }) {
   return (
     <div>
@@ -68,12 +110,58 @@ function Section({
         {label}
       </p>
       <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
-        {rows.map((r) => (
-          <ScheduleListRow key={r.id} row={r} onPick={() => onPick(r)} now={now} />
+        {rows.map((r, i) => (
+          <Fragment key={r.id}>
+            {nowAt === startIndex + i ? <NowMarker now={now} /> : null}
+            <ScheduleListRow row={r} onPick={() => onPick(r)} now={now} />
+          </Fragment>
         ))}
+        {/* Now is past every appointment in the day: marker at the foot
+            of the last section. */}
+        {isLast && nowAt === startIndex + rows.length ? <NowMarker now={now} /> : null}
       </ul>
     </div>
   );
+}
+
+// Live current-time line drawn inside the list on today's view. A small
+// dot + clock label on the left, a hairline rule filling the rest.
+function NowMarker({ now }: { now: Date }) {
+  return (
+    <li
+      aria-label={`Current time, ${formatClock(now)}`}
+      style={{ listStyle: 'none', display: 'flex', alignItems: 'center', gap: theme.space[2], padding: `${theme.space[1]}px 0` }}
+    >
+      <span
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 6,
+          fontSize: theme.type.size.xs,
+          fontWeight: theme.type.weight.semibold,
+          color: theme.color.accent,
+          fontVariantNumeric: 'tabular-nums',
+          whiteSpace: 'nowrap',
+        }}
+      >
+        <span style={{ width: 7, height: 7, borderRadius: '50%', background: theme.color.accent }} aria-hidden />
+        {formatClock(now)}
+      </span>
+      <span style={{ flex: 1, height: 2, background: theme.color.accent, borderRadius: 1 }} aria-hidden />
+    </li>
+  );
+}
+
+function formatClock(d: Date): string {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/London',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  }).formatToParts(d);
+  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? '';
+  const period = (parts.find((p) => p.type === 'dayPeriod')?.value ?? '').toLowerCase();
+  return `${get('hour')}:${get('minute')} ${period}`.trim();
 }
 
 // Shared list-row used by ScheduleListView and the cluster BottomSheet so
