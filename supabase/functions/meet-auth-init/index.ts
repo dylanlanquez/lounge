@@ -18,6 +18,11 @@
 // shouldn't be able to spin up new OAuth grants for the org.
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.50.0';
+import {
+  DEFAULT_OAUTH_CLIENT,
+  listConfiguredOAuthClients,
+  resolveOAuthClient,
+} from '../_shared/meetOAuthClients.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!;
@@ -72,30 +77,51 @@ async function handle(req: Request): Promise<Response> {
     return json(200, { ok: false, error: 'Admin access required to connect a Meet host.' });
   }
 
-  const clientId = Deno.env.get('GOOGLE_CLIENT_ID') ?? '';
+  let body: { return_to?: string; client?: string; list?: boolean };
+  try {
+    body = (await req.json()) as { return_to?: string; client?: string; list?: boolean };
+  } catch {
+    body = {};
+  }
+
+  // List mode: the admin UI asks which workspaces are configured so it
+  // can offer a chooser. Admin-gated like the connect path.
+  if (body.list) {
+    return json(200, { ok: true, clients: listConfiguredOAuthClients() });
+  }
+
+  // Which OAuth app (workspace) to connect through. Defaults to the
+  // original venneir app so the existing button keeps working.
+  const clientKey = body.client && body.client.trim() ? body.client.trim() : DEFAULT_OAUTH_CLIENT;
+  const client = resolveOAuthClient(clientKey);
   const redirectUri = Deno.env.get('GOOGLE_REDIRECT_URI') ?? '';
-  if (!clientId || !redirectUri) {
+  if (!client) {
     return json(200, {
       ok: false,
-      error: 'GOOGLE_CLIENT_ID or GOOGLE_REDIRECT_URI is not set in Supabase secrets. Add both in Dashboard, Edge Functions, Secrets and try again.',
+      error: `The '${clientKey}' workspace OAuth app is not configured. Add its GOOGLE_CLIENT_ID_* and GOOGLE_CLIENT_SECRET_* secrets in Supabase and try again.`,
+    });
+  }
+  if (!redirectUri) {
+    return json(200, {
+      ok: false,
+      error: 'GOOGLE_REDIRECT_URI is not set in Supabase secrets. Add it in Dashboard, Edge Functions, Secrets and try again.',
     });
   }
 
-  // Pass the admin's account id through OAuth state so the callback
-  // can attribute the connection. Google round-trips state verbatim
-  // and we verify it server-side before persisting tokens.
-  let state: string;
-  try {
-    const body = (await req.json()) as { return_to?: string };
-    state = encodeState({ adminAuthUserId: who.user.id, returnTo: body.return_to ?? null });
-  } catch {
-    state = encodeState({ adminAuthUserId: who.user.id, returnTo: null });
-  }
+  // Pass the admin's account id + the chosen client through OAuth state
+  // so the callback can attribute the connection and exchange the code
+  // with the SAME app's secret. Google round-trips state verbatim and
+  // we verify it server-side before persisting tokens.
+  const state = encodeState({
+    adminAuthUserId: who.user.id,
+    returnTo: body.return_to ?? null,
+    client: clientKey,
+  });
 
   const url =
     'https://accounts.google.com/o/oauth2/v2/auth?' +
     new URLSearchParams({
-      client_id: clientId,
+      client_id: client.clientId,
       redirect_uri: redirectUri,
       response_type: 'code',
       scope: SCOPES,

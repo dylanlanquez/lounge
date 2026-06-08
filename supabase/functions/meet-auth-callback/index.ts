@@ -12,6 +12,7 @@
 // Google account settings).
 
 import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.50.0';
+import { DEFAULT_OAUTH_CLIENT, resolveOAuthClient } from '../_shared/meetOAuthClients.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -54,25 +55,28 @@ Deno.serve(async (req) => {
 
   // Decode + verify the state we issued in meet-auth-init. If the
   // admin who clicked Connect isn't the same person Google redirected
-  // back, reject — protects against an external callback hijack.
+  // back, reject — protects against an external callback hijack. The
+  // state also carries which OAuth app (workspace) started the flow, so
+  // we exchange the code with the SAME app's secret.
+  let clientKey = DEFAULT_OAUTH_CLIENT;
   if (body.state) {
     try {
-      const decoded = JSON.parse(atob(body.state)) as { adminAuthUserId?: string };
+      const decoded = JSON.parse(atob(body.state)) as { adminAuthUserId?: string; client?: string };
       if (decoded.adminAuthUserId && decoded.adminAuthUserId !== who.user.id) {
         return json(200, { ok: false, error: 'OAuth round-trip was started by a different signed-in user. Retry from Admin, Services.' });
       }
+      if (decoded.client && decoded.client.trim()) clientKey = decoded.client.trim();
     } catch {
       return json(200, { ok: false, error: 'OAuth state could not be read. Retry from Admin, Services.' });
     }
   }
 
-  const clientId = Deno.env.get('GOOGLE_CLIENT_ID') ?? '';
-  const clientSecret = Deno.env.get('GOOGLE_CLIENT_SECRET') ?? '';
+  const client = resolveOAuthClient(clientKey);
   const redirectUri = Deno.env.get('GOOGLE_REDIRECT_URI') ?? '';
-  if (!clientId || !clientSecret || !redirectUri) {
+  if (!client || !redirectUri) {
     return json(200, {
       ok: false,
-      error: 'GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET or GOOGLE_REDIRECT_URI is not set in Supabase secrets.',
+      error: `OAuth app '${clientKey}' or GOOGLE_REDIRECT_URI is not configured in Supabase secrets.`,
     });
   }
 
@@ -82,8 +86,8 @@ Deno.serve(async (req) => {
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
       code,
-      client_id: clientId,
-      client_secret: clientSecret,
+      client_id: client.clientId,
+      client_secret: client.clientSecret,
       redirect_uri: redirectUri,
       grant_type: 'authorization_code',
     }),
@@ -151,6 +155,12 @@ Deno.serve(async (req) => {
     token_expiry: tokenExpiry,
     is_active: true,
     connected_by_account_id: accountRow?.id ?? null,
+    // Remember which app issued these tokens so refresh uses the same
+    // client_id/secret. An oauth host is always kind = 'oauth'; set it
+    // explicitly so a re-grant of a row that was somehow a staff stub
+    // converts cleanly.
+    kind: 'oauth',
+    oauth_client: clientKey,
   };
   const { data: saved, error: upsertErr } = await admin
     .from('lng_meet_hosts')

@@ -117,6 +117,8 @@ import {
 import {
   addStaffMeetHost,
   deleteMeetHost,
+  listMeetOAuthClients,
+  type MeetOAuthClient,
   setMeetHostActive,
   startMeetHostOAuth,
   useMeetHosts,
@@ -4847,6 +4849,10 @@ function MeetHostsCard() {
   const { hosts, loading, error, refresh } = useMeetHosts({ activeOnly: false });
   const staff = useStaff();
   const [busyConnect, setBusyConnect] = useState(false);
+  // Configured OAuth workspaces (Venneir, Lanquez, ...). When more than
+  // one is set up the Connect control offers a choice; otherwise it's a
+  // single button using the default workspace.
+  const [oauthClients, setOauthClients] = useState<MeetOAuthClient[]>([]);
   const [selectedStaffId, setSelectedStaffId] = useState('');
   const [busyAddStaff, setBusyAddStaff] = useState(false);
   const [toast, setToast] = useState<{ tone: 'success' | 'error'; title: string; description?: string } | null>(null);
@@ -4898,10 +4904,24 @@ function MeetHostsCard() {
     }
   }, [navigate]);
 
-  const onConnect = async () => {
+  // Load which workspaces are connectable so the Connect control can
+  // offer a choice. Best-effort: on failure we fall back to a single
+  // default Connect button.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const clients = await listMeetOAuthClients();
+      if (!cancelled) setOauthClients(clients);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const onConnect = async (client: string | null) => {
     setBusyConnect(true);
     try {
-      const result = await startMeetHostOAuth(window.location.pathname + window.location.search);
+      const result = await startMeetHostOAuth(window.location.pathname + window.location.search, client);
       if (!result.ok || !result.url) {
         setToast({
           tone: 'error',
@@ -4981,11 +5001,28 @@ function MeetHostsCard() {
             Google accounts authorised to host virtual appointments. The booking form lets the receptionist pick which host owns each Meet, and attendance is pulled back to the appointment detail page after the meeting ends. You can also add a staff member as a recognised host, so when they run a call under a connected account's Meet they are marked as the host rather than mistaken for the patient.
           </p>
         </div>
-        <Button variant="secondary" size="sm" onClick={onConnect} disabled={busyConnect}>
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
-            <Video size={16} /> {busyConnect ? 'Opening Google…' : 'Connect Google account'}
-          </span>
-        </Button>
+        {oauthClients.length > 1 ? (
+          <div style={{ display: 'flex', gap: theme.space[2], flexWrap: 'wrap' }}>
+            {oauthClients.map((c) => (
+              <Button key={c.key} variant="secondary" size="sm" onClick={() => onConnect(c.key)} disabled={busyConnect}>
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
+                  <Video size={16} /> {busyConnect ? 'Opening Google…' : `Connect ${c.label}`}
+                </span>
+              </Button>
+            ))}
+          </div>
+        ) : (
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => onConnect(oauthClients.length === 1 ? oauthClients[0]!.key : null)}
+            disabled={busyConnect}
+          >
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
+              <Video size={16} /> {busyConnect ? 'Opening Google…' : 'Connect Google account'}
+            </span>
+          </Button>
+        )}
       </div>
 
       {error ? (

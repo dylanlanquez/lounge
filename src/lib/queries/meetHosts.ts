@@ -100,13 +100,39 @@ export function useMeetHosts(opts: { activeOnly?: boolean; ownersOnly?: boolean 
   return { hosts, loading, error, refresh };
 }
 
+// A connectable workspace (Google OAuth app). The admin picks which one
+// to connect a host through when more than one is configured.
+export interface MeetOAuthClient {
+  key: string;
+  label: string;
+}
+
+// Lists the workspaces whose OAuth secrets are configured server-side,
+// so the Connect control only offers apps that can actually complete a
+// grant. Returns [] on error (the Connect button then falls back to the
+// default workspace).
+export async function listMeetOAuthClients(): Promise<MeetOAuthClient[]> {
+  const { data, error } = await supabase.functions.invoke<{ ok: boolean; clients?: MeetOAuthClient[] }>(
+    'meet-auth-init',
+    { body: { list: true } },
+  );
+  if (error) return [];
+  const payload = (data ?? {}) as { ok?: boolean; clients?: MeetOAuthClient[] };
+  return payload.ok && Array.isArray(payload.clients) ? payload.clients : [];
+}
+
 // Kicks off the OAuth flow. Edge function returns the consent URL,
 // caller replaces window.location with it. The returnTo string lets
 // the callback page route back to the right admin tab on success.
-export async function startMeetHostOAuth(returnTo: string | null = null): Promise<{ ok: boolean; url?: string; error?: string }> {
+// client selects which workspace's OAuth app to connect through; null
+// uses the server default (venneir).
+export async function startMeetHostOAuth(
+  returnTo: string | null = null,
+  client: string | null = null,
+): Promise<{ ok: boolean; url?: string; error?: string }> {
   const { data, error } = await supabase.functions.invoke<{ ok: boolean; url?: string; error?: string }>(
     'meet-auth-init',
-    { body: { return_to: returnTo } },
+    { body: { return_to: returnTo, client: client ?? undefined } },
   );
   if (error) return { ok: false, error: error.message };
   const payload = (data ?? {}) as { ok?: boolean; url?: string; error?: string };

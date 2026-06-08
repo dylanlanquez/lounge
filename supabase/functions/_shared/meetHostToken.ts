@@ -11,15 +11,20 @@
 // needs to reconnect via the OAuth flow.
 
 import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.50.0';
+import { DEFAULT_OAUTH_CLIENT, resolveOAuthClient } from './meetOAuthClients.ts';
 
 export interface MeetHostRow {
   id: string;
   display_name: string;
-  google_email: string;
+  google_email: string | null;
   access_token: string | null;
   refresh_token: string | null;
   token_expiry: string | null;
   is_active: boolean;
+  // Which OAuth app minted this host's tokens. Drives which
+  // client_id/secret the refresh below uses. Defaults to venneir for
+  // rows that predate the column.
+  oauth_client: string | null;
 }
 
 export type HostTokenResult =
@@ -42,18 +47,21 @@ export async function getValidAccessToken(
     }
   }
 
-  const clientId = Deno.env.get('GOOGLE_CLIENT_ID') ?? '';
-  const clientSecret = Deno.env.get('GOOGLE_CLIENT_SECRET') ?? '';
-  if (!clientId || !clientSecret) {
-    return { ok: false, error: 'GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET secrets unset' };
+  const clientKey = host.oauth_client ?? DEFAULT_OAUTH_CLIENT;
+  const client = resolveOAuthClient(clientKey);
+  if (!client) {
+    return {
+      ok: false,
+      error: `OAuth client '${clientKey}' is not configured (its GOOGLE_CLIENT_ID*/SECRET* secrets are unset).`,
+    };
   }
 
   const res = await fetch('https://oauth2.googleapis.com/token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
-      client_id: clientId,
-      client_secret: clientSecret,
+      client_id: client.clientId,
+      client_secret: client.clientSecret,
       refresh_token: host.refresh_token,
       grant_type: 'refresh_token',
     }),
