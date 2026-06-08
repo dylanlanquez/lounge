@@ -13,6 +13,7 @@
 
 import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.50.0';
 import { DEFAULT_OAUTH_CLIENT, resolveOAuthClient } from '../_shared/meetOAuthClients.ts';
+import { consumeInvite, validateInviteToken } from '../_shared/meetHostInvite.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -25,25 +26,6 @@ Deno.serve(async (req) => {
   // Same posture as meet-auth-init: expected failures return 200 with
   // { ok:false, error } so the callback page renders a clear message
   // instead of a generic "non-2xx" wrapper from supabase-js.
-  const userJwt = req.headers.get('authorization') ?? '';
-  if (!userJwt.startsWith('Bearer ')) return json(200, { ok: false, error: 'Not signed in. Sign in and try again.' });
-  const userClient = createClient(SUPABASE_URL, ANON_KEY, {
-    global: { headers: { Authorization: userJwt } },
-  });
-  const { data: who } = await userClient.auth.getUser();
-  if (!who?.user) return json(200, { ok: false, error: 'Not signed in. Sign in and try again.' });
-
-  const { data: account } = await userClient
-    .from('accounts')
-    .select('id, account_types')
-    .eq('auth_user_id', who.user.id)
-    .maybeSingle();
-  const accountRow = account as { id: string; account_types: string[] | null } | null;
-  const types = accountRow?.account_types ?? [];
-  if (!types.some((t) => t === 'admin' || t === 'lng_admin' || t === 'super_admin')) {
-    return json(200, { ok: false, error: 'Admin access required to finish connecting a Meet host.' });
-  }
-
   let body: { code?: string; state?: string };
   try {
     body = await req.json();
@@ -51,24 +33,60 @@ Deno.serve(async (req) => {
     body = {};
   }
   const code = body.code;
-  if (!code) return json(200, { ok: false, error: 'Google did not return an authorisation code. Retry from Admin, Services.' });
+  if (!code) return json(200, { ok: false, error: 'Google did not return an authorisation code. Retry.' });
 
-  // Decode + verify the state we issued in meet-auth-init. If the
-  // admin who clicked Connect isn't the same person Google redirected
-  // back, reject — protects against an external callback hijack. The
-  // state also carries which OAuth app (workspace) started the flow, so
-  // we exchange the code with the SAME app's secret.
-  let clientKey = DEFAULT_OAUTH_CLIENT;
+  // Decode the state we issued in meet-auth-init. It carries EITHER an
+  // admin-initiated grant (adminAuthUserId) or a remote self-connect via
+  // a one-time invite token. The two paths authorise differently. The
+  // state also names which OAuth app (workspace) started the flow, so we
+  // exchange the code with the SAME app's secret.
+  let decoded: { adminAuthUserId?: string; client?: string; token?: string } = {};
   if (body.state) {
     try {
-      const decoded = JSON.parse(atob(body.state)) as { adminAuthUserId?: string; client?: string };
-      if (decoded.adminAuthUserId && decoded.adminAuthUserId !== who.user.id) {
-        return json(200, { ok: false, error: 'OAuth round-trip was started by a different signed-in user. Retry from Admin, Services.' });
-      }
-      if (decoded.client && decoded.client.trim()) clientKey = decoded.client.trim();
+      decoded = JSON.parse(atob(body.state)) as { adminAuthUserId?: string; client?: string; token?: string };
     } catch {
-      return json(200, { ok: false, error: 'OAuth state could not be read. Retry from Admin, Services.' });
+      return json(200, { ok: false, error: 'OAuth state could not be read. Retry.' });
     }
+  }
+
+  const admin: SupabaseClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+
+  let clientKey = DEFAULT_OAUTH_CLIENT;
+  let connectedByAccountId: string | null = null;
+  let inviteId: string | null = null;
+
+  if (decoded.token && decoded.token.trim()) {
+    // ---- Remote self-connect: the one-time invite token IS the
+    // authorisation. No Lounge session required. ----
+    const check = await validateInviteToken(admin, decoded.token.trim());
+    if (!check.ok) return json(200, { ok: false, error: check.error });
+    inviteId = check.invite.id;
+    clientKey = check.invite.oauthClient;
+  } else {
+    // ---- Admin-initiated: require a signed-in admin whose id matches
+    // the one that started the flow. ----
+    const userJwt = req.headers.get('authorization') ?? '';
+    if (!userJwt.startsWith('Bearer ')) return json(200, { ok: false, error: 'Not signed in. Sign in and try again.' });
+    const userClient = createClient(SUPABASE_URL, ANON_KEY, {
+      global: { headers: { Authorization: userJwt } },
+    });
+    const { data: who } = await userClient.auth.getUser();
+    if (!who?.user) return json(200, { ok: false, error: 'Not signed in. Sign in and try again.' });
+    const { data: account } = await userClient
+      .from('accounts')
+      .select('id, account_types')
+      .eq('auth_user_id', who.user.id)
+      .maybeSingle();
+    const accountRow = account as { id: string; account_types: string[] | null } | null;
+    const types = accountRow?.account_types ?? [];
+    if (!types.some((t) => t === 'admin' || t === 'lng_admin' || t === 'super_admin')) {
+      return json(200, { ok: false, error: 'Admin access required to finish connecting a Meet host.' });
+    }
+    if (decoded.adminAuthUserId && decoded.adminAuthUserId !== who.user.id) {
+      return json(200, { ok: false, error: 'OAuth round-trip was started by a different signed-in user. Retry from Admin, Services.' });
+    }
+    connectedByAccountId = accountRow?.id ?? null;
+    if (decoded.client && decoded.client.trim()) clientKey = decoded.client.trim();
   }
 
   const client = resolveOAuthClient(clientKey);
@@ -145,7 +163,6 @@ Deno.serve(async (req) => {
   }
 
   // 3. Upsert the host. Service role bypasses RLS.
-  const admin: SupabaseClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
   const upsertPayload = {
     google_email: profile.email,
     google_user_id: profile.id,
@@ -154,7 +171,7 @@ Deno.serve(async (req) => {
     refresh_token: tokens.refresh_token,
     token_expiry: tokenExpiry,
     is_active: true,
-    connected_by_account_id: accountRow?.id ?? null,
+    connected_by_account_id: connectedByAccountId,
     // Remember which app issued these tokens so refresh uses the same
     // client_id/secret. An oauth host is always kind = 'oauth'; set it
     // explicitly so a re-grant of a row that was somehow a staff stub
@@ -172,6 +189,13 @@ Deno.serve(async (req) => {
       ok: false,
       error: `Could not save host: ${upsertErr?.message ?? 'unknown error'}`,
     });
+  }
+
+  // Remote self-connect: burn the one-time invite now that the host
+  // exists. Best-effort; the host is already saved, so a failed consume
+  // only risks the link being reusable until it expires.
+  if (inviteId) {
+    await consumeInvite(admin, inviteId, (saved as { id: string }).id, new Date().toISOString());
   }
 
   return json(200, { ok: true, host: saved });

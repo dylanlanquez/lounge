@@ -23,8 +23,10 @@ import {
   listConfiguredOAuthClients,
   resolveOAuthClient,
 } from '../_shared/meetOAuthClients.ts';
+import { validateInviteToken } from '../_shared/meetHostInvite.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
+const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!;
 
 const SCOPES = [
@@ -59,6 +61,35 @@ async function handle(req: Request): Promise<Response> {
   // error: '<reason>' } so the supabase-js client receives the real
   // message in payload.error instead of a generic "non-2xx" wrapper.
   // Only unhandled exceptions land as non-2xx via the try/catch.
+  let body: { return_to?: string; client?: string; list?: boolean; token?: string };
+  try {
+    body = (await req.json()) as { return_to?: string; client?: string; list?: boolean; token?: string };
+  } catch {
+    body = {};
+  }
+
+  const redirectUri = Deno.env.get('GOOGLE_REDIRECT_URI') ?? '';
+
+  // ---- Remote self-connect path -------------------------------------
+  // Authorised by a one-time invite token instead of a Lounge admin
+  // session, so a host with no Lounge login can connect themselves. The
+  // token determines the workspace; we never trust a client field here.
+  if (body.token && body.token.trim()) {
+    const adminDb = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+    const check = await validateInviteToken(adminDb, body.token.trim());
+    if (!check.ok) return json(200, { ok: false, error: check.error });
+    const client = resolveOAuthClient(check.invite.oauthClient);
+    if (!client) {
+      return json(200, { ok: false, error: `The '${check.invite.oauthClient}' workspace OAuth app is not configured.` });
+    }
+    if (!redirectUri) {
+      return json(200, { ok: false, error: 'GOOGLE_REDIRECT_URI is not set in Supabase secrets.' });
+    }
+    const state = encodeState({ token: body.token.trim(), client: check.invite.oauthClient });
+    return json(200, { ok: true, url: buildConsentUrl(client.clientId, redirectUri, state) });
+  }
+
+  // ---- Admin-gated path (in-app Connect button + list mode) ----------
   const userJwt = req.headers.get('authorization') ?? '';
   if (!userJwt.startsWith('Bearer ')) return json(200, { ok: false, error: 'Not signed in. Sign in and try again.' });
   const userClient = createClient(SUPABASE_URL, ANON_KEY, {
@@ -77,15 +108,8 @@ async function handle(req: Request): Promise<Response> {
     return json(200, { ok: false, error: 'Admin access required to connect a Meet host.' });
   }
 
-  let body: { return_to?: string; client?: string; list?: boolean };
-  try {
-    body = (await req.json()) as { return_to?: string; client?: string; list?: boolean };
-  } catch {
-    body = {};
-  }
-
   // List mode: the admin UI asks which workspaces are configured so it
-  // can offer a chooser. Admin-gated like the connect path.
+  // can offer a chooser.
   if (body.list) {
     return json(200, { ok: true, clients: listConfiguredOAuthClients() });
   }
@@ -94,7 +118,6 @@ async function handle(req: Request): Promise<Response> {
   // original venneir app so the existing button keeps working.
   const clientKey = body.client && body.client.trim() ? body.client.trim() : DEFAULT_OAUTH_CLIENT;
   const client = resolveOAuthClient(clientKey);
-  const redirectUri = Deno.env.get('GOOGLE_REDIRECT_URI') ?? '';
   if (!client) {
     return json(200, {
       ok: false,
@@ -117,25 +140,27 @@ async function handle(req: Request): Promise<Response> {
     returnTo: body.return_to ?? null,
     client: clientKey,
   });
+  return json(200, { ok: true, url: buildConsentUrl(client.clientId, redirectUri, state) });
+}
 
-  const url =
+// Build the Google consent URL. prompt=consent forces Google to
+// re-issue a refresh_token even if the host has authorised before;
+// without it a repeat grant returns only an access_token and we lose
+// the ability to refresh.
+function buildConsentUrl(clientId: string, redirectUri: string, state: string): string {
+  return (
     'https://accounts.google.com/o/oauth2/v2/auth?' +
     new URLSearchParams({
-      client_id: client.clientId,
+      client_id: clientId,
       redirect_uri: redirectUri,
       response_type: 'code',
       scope: SCOPES,
       access_type: 'offline',
-      // prompt=consent forces Google to re-issue a refresh_token even
-      // if the host has previously authorised — without this, a
-      // second auth attempt by the same Google account returns only
-      // an access_token and we lose the ability to refresh.
       prompt: 'consent',
       include_granted_scopes: 'true',
       state,
-    }).toString();
-
-  return json(200, { ok: true, url });
+    }).toString()
+  );
 }
 
 function encodeState(payload: Record<string, unknown>): string {
