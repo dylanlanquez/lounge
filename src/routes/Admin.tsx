@@ -116,6 +116,7 @@ import {
 } from '../lib/queries/catalogue.ts';
 import {
   addStaffMeetHost,
+  batchUpdateMeetHostSortOrders,
   createMeetHostInvite,
   deleteMeetHost,
   listMeetOAuthClients,
@@ -4885,6 +4886,32 @@ function MeetHostsCard() {
       setToast({ tone: 'error', title: 'Could not copy', description: 'Select the link and copy it manually.' });
     }
   };
+  const [reordering, setReordering] = useState(false);
+  // Move a host up/down in the display order. Reorders the local list and
+  // persists sort_order = new index × 10. The list drives both the admin
+  // list and the booking host dropdown.
+  const onMoveHost = async (index: number, dir: -1 | 1) => {
+    const next = index + dir;
+    if (next < 0 || next >= hosts.length) return;
+    const moved = hosts[index];
+    if (!moved) return;
+    const arr = [...hosts];
+    arr.splice(index, 1);
+    arr.splice(next, 0, moved);
+    setReordering(true);
+    try {
+      await batchUpdateMeetHostSortOrders(arr.map((h, i) => ({ id: h.id, sort_order: i * 10 })));
+      refresh();
+    } catch (e) {
+      setToast({
+        tone: 'error',
+        title: 'Could not reorder hosts',
+        description: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setReordering(false);
+    }
+  };
   const [selectedStaffId, setSelectedStaffId] = useState('');
   const [busyAddStaff, setBusyAddStaff] = useState(false);
   const [toast, setToast] = useState<{ tone: 'success' | 'error'; title: string; description?: string } | null>(null);
@@ -5078,7 +5105,7 @@ function MeetHostsCard() {
             gap: theme.space[2],
           }}
         >
-          {hosts.map((host) => (
+          {hosts.map((host, idx) => (
             <li
               key={host.id}
               style={{
@@ -5143,6 +5170,54 @@ function MeetHostsCard() {
                 </div>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[2] }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                  <button
+                    type="button"
+                    onClick={() => onMoveHost(idx, -1)}
+                    disabled={idx === 0 || reordering}
+                    aria-label={`Move ${host.display_name} up`}
+                    style={{
+                      appearance: 'none',
+                      border: `1px solid ${theme.color.border}`,
+                      background: theme.color.surface,
+                      color: idx === 0 ? theme.color.inkSubtle : theme.color.ink,
+                      cursor: idx === 0 || reordering ? 'not-allowed' : 'pointer',
+                      borderRadius: 8,
+                      width: 26,
+                      height: 22,
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      opacity: idx === 0 ? 0.4 : 1,
+                      fontFamily: 'inherit',
+                    }}
+                  >
+                    <ArrowUp size={13} aria-hidden />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onMoveHost(idx, 1)}
+                    disabled={idx === hosts.length - 1 || reordering}
+                    aria-label={`Move ${host.display_name} down`}
+                    style={{
+                      appearance: 'none',
+                      border: `1px solid ${theme.color.border}`,
+                      background: theme.color.surface,
+                      color: idx === hosts.length - 1 ? theme.color.inkSubtle : theme.color.ink,
+                      cursor: idx === hosts.length - 1 || reordering ? 'not-allowed' : 'pointer',
+                      borderRadius: 8,
+                      width: 26,
+                      height: 22,
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      opacity: idx === hosts.length - 1 ? 0.4 : 1,
+                      fontFamily: 'inherit',
+                    }}
+                  >
+                    <ArrowDown size={13} aria-hidden />
+                  </button>
+                </div>
                 <button
                   type="button"
                   onClick={() => onToggleActive(host.id, !host.is_active)}
