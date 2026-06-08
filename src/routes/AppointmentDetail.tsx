@@ -1817,7 +1817,7 @@ function GenerateMeetLinkCard({
   currentHostId: string | null;
   onCreated: () => void;
 }) {
-  const { hosts, loading: hostsLoading } = useMeetHosts({ activeOnly: true });
+  const { hosts, loading: hostsLoading } = useMeetHosts({ activeOnly: true, ownersOnly: true });
   const [hostId, setHostId] = useState<string | null>(currentHostId);
   const [busy, setBusy] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);

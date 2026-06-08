@@ -94,8 +94,7 @@ Deno.serve(async (req) => {
   if (!tokenResult.ok) return json(200, { ok: false, error: tokenResult.error });
   const accessToken = tokenResult.accessToken;
 
-  const { userIds: knownHostUserIds, fallbackNames: fallbackHostNames } =
-    await loadKnownHosts(admin);
+  const knownHosts = await loadKnownHosts(admin);
 
   const filter = `space.meeting_code=\"${appt.meet_meeting_code}\"`;
   const result = await processAppointmentAttendance({
@@ -108,8 +107,7 @@ Deno.serve(async (req) => {
     },
     accessToken,
     hostEmail: host.google_email,
-    knownHostUserIds,
-    fallbackHostNames,
+    knownHosts,
     source: 'meet-fetch-attendance',
   });
 

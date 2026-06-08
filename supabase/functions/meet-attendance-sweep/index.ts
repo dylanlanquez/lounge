@@ -166,8 +166,7 @@ async function handle(req: Request): Promise<Response> {
   }
 
   // Hosts are shared across appointments. Hoist once outside the loop.
-  const { userIds: knownHostUserIds, fallbackNames: fallbackHostNames } =
-    await loadKnownHosts(admin);
+  const knownHosts = await loadKnownHosts(admin);
 
   let processed = 0;
   let upsertsTotal = 0;
@@ -226,8 +225,7 @@ async function handle(req: Request): Promise<Response> {
         appt: apptRow,
         accessToken: tokenResult.accessToken,
         hostEmail: host.google_email,
-        knownHostUserIds,
-        fallbackHostNames,
+        knownHosts,
         source: 'meet-attendance-sweep',
       });
 

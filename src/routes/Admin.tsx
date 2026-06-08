@@ -1,6 +1,6 @@
 import { type CSSProperties, Fragment, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, useNavigate, useParams } from 'react-router-dom';
-import { AlertTriangle, ArchiveRestore, ArrowDown, ArrowUp, BarChart3, Briefcase, CalendarCheck, CalendarClock, Check, ChevronUp, Clock, CreditCard, FileSignature, FlaskConical, GripVertical, Image as ImageIcon, KeyRound, Layers, Mail, Package, Pencil, Plus, RefreshCw, Rocket, RotateCcw, Settings, ShieldAlert, ShieldCheck, Trash2, Users, Video, Wallet, X } from 'lucide-react';
+import { AlertTriangle, ArchiveRestore, ArrowDown, ArrowUp, BarChart3, Briefcase, CalendarCheck, CalendarClock, Check, ChevronUp, Clock, CreditCard, FileSignature, FlaskConical, GripVertical, Image as ImageIcon, KeyRound, Layers, Mail, Package, Pencil, Plus, RefreshCw, Rocket, RotateCcw, Settings, ShieldAlert, ShieldCheck, Trash2, UserPlus, Users, Video, Wallet, X } from 'lucide-react';
 import {
   Button,
   Card,
@@ -115,6 +115,7 @@ import {
   type ArchMatch,
 } from '../lib/queries/catalogue.ts';
 import {
+  addStaffMeetHost,
   deleteMeetHost,
   setMeetHostActive,
   startMeetHostOAuth,
@@ -4844,15 +4845,46 @@ function CatalogueTab({ mode }: { mode: CatalogueMode }) {
 // retired.
 function MeetHostsCard() {
   const { hosts, loading, error, refresh } = useMeetHosts({ activeOnly: false });
+  const staff = useStaff();
   const [busyConnect, setBusyConnect] = useState(false);
+  const [selectedStaffId, setSelectedStaffId] = useState('');
+  const [busyAddStaff, setBusyAddStaff] = useState(false);
   const [toast, setToast] = useState<{ tone: 'success' | 'error'; title: string; description?: string } | null>(null);
   // BottomSheet-driven removal flow. window.confirm would have
   // launched the OS-native modal which violates the no-system-UI rule
   // and breaks the May 2026 visual language. State holds the host
   // we're about to remove so the sheet can render its label.
-  const [removeTarget, setRemoveTarget] = useState<{ id: string; name: string; email: string } | null>(null);
+  const [removeTarget, setRemoveTarget] = useState<{ id: string; name: string; email: string | null; isStaff: boolean } | null>(null);
   const [removeBusy, setRemoveBusy] = useState(false);
   const navigate = useNavigate();
+
+  // Staff members not already registered as a recognition host, active
+  // only. Drives the "add a staff member" picker.
+  const existingStaffHostIds = new Set(
+    hosts.filter((h) => h.kind === 'staff' && h.staff_member_id).map((h) => h.staff_member_id as string),
+  );
+  const addableStaff = staff.data
+    .filter((s) => s.status === 'active' && !existingStaffHostIds.has(s.staff_member_id));
+
+  const onAddStaffHost = async () => {
+    const member = staff.data.find((s) => s.staff_member_id === selectedStaffId);
+    if (!member) return;
+    setBusyAddStaff(true);
+    try {
+      await addStaffMeetHost({ staffMemberId: member.staff_member_id, displayName: member.display_name });
+      setSelectedStaffId('');
+      refresh();
+      setToast({ tone: 'success', title: `${member.display_name} added as a recognised host` });
+    } catch (e) {
+      setToast({
+        tone: 'error',
+        title: 'Could not add staff host',
+        description: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setBusyAddStaff(false);
+    }
+  };
 
   // Surface a success toast after the /auth/google/callback page
   // routes back with ?meet_connected=1. Pull the flag once and strip
@@ -4946,7 +4978,7 @@ function MeetHostsCard() {
               maxWidth: 620,
             }}
           >
-            Google accounts authorised to host virtual appointments. The booking form lets the receptionist pick which host owns each Meet, and attendance is pulled back to the appointment detail page after the meeting ends.
+            Google accounts authorised to host virtual appointments. The booking form lets the receptionist pick which host owns each Meet, and attendance is pulled back to the appointment detail page after the meeting ends. You can also add a staff member as a recognised host, so when they run a call under a connected account's Meet they are marked as the host rather than mistaken for the patient.
           </p>
         </div>
         <Button variant="secondary" size="sm" onClick={onConnect} disabled={busyConnect}>
@@ -5006,7 +5038,7 @@ function MeetHostsCard() {
                   }}
                   aria-hidden
                 >
-                  <Video size={16} />
+                  {host.kind === 'staff' ? <Users size={16} /> : <Video size={16} />}
                 </span>
                 <div style={{ minWidth: 0 }}>
                   <p
@@ -5032,7 +5064,11 @@ function MeetHostsCard() {
                       whiteSpace: 'nowrap',
                     }}
                   >
-                    {host.google_email}
+                    {host.kind === 'staff'
+                      ? host.google_user_id
+                        ? 'Staff. Recognised by Google ID.'
+                        : 'Staff. Recognised by name.'
+                      : host.google_email}
                     {host.is_active ? null : <span style={{ marginLeft: 8 }}>· Inactive</span>}
                   </p>
                 </div>
@@ -5058,7 +5094,7 @@ function MeetHostsCard() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => setRemoveTarget({ id: host.id, name: host.display_name, email: host.google_email })}
+                  onClick={() => setRemoveTarget({ id: host.id, name: host.display_name, email: host.google_email, isStaff: host.kind === 'staff' })}
                   aria-label={`Remove ${host.display_name}`}
                   style={{
                     appearance: 'none',
@@ -5083,6 +5119,77 @@ function MeetHostsCard() {
           ))}
         </ul>
       )}
+
+      <div
+        style={{
+          marginTop: theme.space[5],
+          paddingTop: theme.space[4],
+          borderTop: `1px solid ${theme.color.border}`,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: theme.space[3],
+        }}
+      >
+        <div>
+          <h3 style={{ margin: 0, fontSize: theme.type.size.base, fontWeight: theme.type.weight.semibold }}>
+            Add a staff member as a recognised host
+          </h3>
+          <p
+            style={{
+              margin: `${theme.space[1]}px 0 0`,
+              color: theme.color.inkMuted,
+              fontSize: theme.type.size.sm,
+              maxWidth: 620,
+            }}
+          >
+            For staff who run virtual appointments without connecting their own Google account. They are matched by the name shown on their Google Meet profile, then locked to their Google ID the first time they join.
+          </p>
+        </div>
+        <div style={{ display: 'flex', gap: theme.space[2], flexWrap: 'wrap', alignItems: 'center' }}>
+          <select
+            value={selectedStaffId}
+            onChange={(e) => setSelectedStaffId(e.target.value)}
+            disabled={staff.loading || addableStaff.length === 0 || busyAddStaff}
+            style={{
+              appearance: 'none',
+              minWidth: 240,
+              padding: `${theme.space[2]}px ${theme.space[3]}px`,
+              borderRadius: theme.radius.input,
+              border: `1px solid ${theme.color.border}`,
+              background: theme.color.surface,
+              color: theme.color.ink,
+              fontFamily: 'inherit',
+              fontSize: theme.type.size.sm,
+              cursor: staff.loading || addableStaff.length === 0 ? 'not-allowed' : 'pointer',
+            }}
+          >
+            <option value="" disabled>
+              {staff.loading
+                ? 'Loading staff…'
+                : addableStaff.length === 0
+                  ? 'All active staff already added'
+                  : 'Pick a staff member'}
+            </option>
+            {addableStaff.map((s) => (
+              <option key={s.staff_member_id} value={s.staff_member_id}>
+                {s.display_name}
+                {s.role_name ? ` (${s.role_name})` : ''}
+              </option>
+            ))}
+          </select>
+          <Button variant="secondary" size="sm" onClick={onAddStaffHost} disabled={!selectedStaffId || busyAddStaff}>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
+              <UserPlus size={16} /> {busyAddStaff ? 'Adding…' : 'Add host'}
+            </span>
+          </Button>
+        </div>
+        {staff.error ? (
+          <p style={{ margin: 0, color: theme.color.alert, fontSize: theme.type.size.sm }}>
+            Could not load staff: {staff.error}
+          </p>
+        ) : null}
+      </div>
+
       {toast ? (
         <div style={{ position: 'fixed', bottom: theme.space[6], left: '50%', transform: 'translateX(-50%)', zIndex: 100 }}>
           <Toast tone={toast.tone} title={toast.title} description={toast.description} duration={4000} onDismiss={() => setToast(null)} />
@@ -5124,13 +5231,16 @@ function MeetHostsCard() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[4] }}>
             <p style={{ margin: 0, fontSize: theme.type.size.base, color: theme.color.ink, lineHeight: 1.5 }}>
               You are about to remove{' '}
-              <strong>{removeTarget.name}</strong> ({removeTarget.email}) as a Meet host.
+              <strong>{removeTarget.name}</strong>
+              {removeTarget.email ? ` (${removeTarget.email})` : ''} as a Meet host.
             </p>
             <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkMuted, lineHeight: 1.5 }}>
-              Their stored Google credentials will be deleted. Any future appointment that lists them as the meeting host will need a fresh selection on the booking form. Existing past appointments keep their recorded host name for the audit trail.
+              {removeTarget.isStaff
+                ? 'This staff member will no longer be recognised as a host when they join a Meet. Existing past appointments keep their recorded attendance for the audit trail.'
+                : 'Their stored Google credentials will be deleted. Any future appointment that lists them as the meeting host will need a fresh selection on the booking form. Existing past appointments keep their recorded host name for the audit trail.'}
             </p>
             <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkMuted, lineHeight: 1.5 }}>
-              If you only want to stop using this host without losing the connection, tap Deactivate instead.
+              If you only want to stop using this host for now, tap Deactivate instead.
             </p>
           </div>
         ) : null}
