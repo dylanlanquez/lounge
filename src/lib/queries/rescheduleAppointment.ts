@@ -447,14 +447,16 @@ export async function rescheduleAppointment(input: {
     if (!hostId) {
       // Fallback host lookup. Prefer is_active=true rows that have
       // refresh_token set (the host's OAuth grant is the only way the
-      // server can later mint a token to read attendance). Stable
-      // order by created_at so the same host is picked across
-      // reschedules.
+      // server can later mint a token to read attendance). Pick the
+      // preferred host by sort_order (matching the NewBookingSheet
+      // picker default), with created_at as a stable tiebreak so the
+      // same host is picked across reschedules.
       const { data: fallbackRaw } = await supabase
         .from('lng_meet_hosts')
         .select('id')
         .eq('is_active', true)
         .not('refresh_token', 'is', null)
+        .order('sort_order', { ascending: true })
         .order('created_at', { ascending: true })
         .limit(1)
         .maybeSingle();

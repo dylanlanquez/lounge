@@ -373,6 +373,32 @@ Deno.serve(async (req) => {
     return jsonResponse(409, { error: 'slot_unavailable', conflicts: conflictRows });
   }
 
+  // ── Virtual clinician availability gate ─────────────────────────
+  // For virtual impressions, a slot is only bookable when a self-serve
+  // clinician is on shift AND free for it. The slot scanner already
+  // enforces this in the picker; this is the same defence-in-depth as
+  // the conflict check above, for a crafted request or a race. Special
+  // / temp clinicians (self_serve=false) are reserved for explicit
+  // staff placement in the in-app booking sheet, so both the public
+  // widget and Checkpoint auto-assign draw only from self-serve
+  // clinicians (p_self_serve_only=true) here.
+  if (body.serviceType === 'virtual_impression_appointment') {
+    const { data: availRows, error: availErr } = await supabase.rpc('lng_meet_hosts_available', {
+      p_start_at: startAt.toISOString(),
+      p_end_at: endAt.toISOString(),
+      p_self_serve_only: true,
+      p_exclude_appointment_id: null,
+      p_host_id: null,
+    });
+    if (availErr) {
+      await logFailure('meet_hosts_available_failed', { error: availErr.message, body });
+      return jsonResponse(500, { error: 'availability_check_failed' });
+    }
+    if (!Array.isArray(availRows) || availRows.length === 0) {
+      return jsonResponse(409, { error: 'no_clinician_available' });
+    }
+  }
+
   // ── Shopify order verification ─────────────────────────────────
   // Single path: when the caller wants to attach a Shopify order to
   // the booking, it POSTs the live order snapshot in
@@ -868,13 +894,39 @@ Deno.serve(async (req) => {
   // fails; the failure logs to lng_system_failures.
   if (body.serviceType === 'virtual_impression_appointment') {
     let meetCreated = false;
-    const { data: hostRows } = await supabase
-      .from('lng_meet_hosts')
-      .select('id, display_name, google_email, access_token, refresh_token, token_expiry, is_active')
-      .eq('is_active', true)
-      .not('refresh_token', 'is', null)
-      .order('created_at', { ascending: true });
-    const candidateHosts = (hostRows ?? []) as MeetHostRow[];
+    // Candidate hosts = clinicians on shift AND free for this exact slot
+    // (lng_meet_hosts_available), self-serve only, ordered by the
+    // admin-set sort_order. Only these can take a virtual call now — the
+    // previous behaviour ("first active host") could assign a clinician
+    // who isn't working or is already on another call. We re-query here
+    // (rather than reuse the gate above) so availability is fresh at
+    // Meet-creation time. The helper returns no token columns, so fetch
+    // the full rows for the available ids and preserve the helper order;
+    // hosts without a refresh_token can't mint a space and drop out.
+    const { data: availRows } = await supabase.rpc('lng_meet_hosts_available', {
+      p_start_at: startAt.toISOString(),
+      p_end_at: endAt.toISOString(),
+      p_self_serve_only: true,
+      p_exclude_appointment_id: null,
+      p_host_id: null,
+    });
+    const availableIds = (Array.isArray(availRows) ? availRows : []).map(
+      (r: { host_id: string }) => r.host_id,
+    );
+    let candidateHosts: MeetHostRow[] = [];
+    if (availableIds.length > 0) {
+      const { data: hostRows } = await supabase
+        .from('lng_meet_hosts')
+        .select('id, display_name, google_email, access_token, refresh_token, token_expiry, is_active, sort_order')
+        .in('id', availableIds)
+        .not('refresh_token', 'is', null);
+      const byId = new Map(
+        ((hostRows ?? []) as MeetHostRow[]).map((h) => [h.id, h] as const),
+      );
+      candidateHosts = availableIds
+        .map((id) => byId.get(id))
+        .filter((h): h is MeetHostRow => Boolean(h));
+    }
 
     // Patient name + email for the calendar invite. The Meet space
     // alone doesn't carry attendee info; the Calendar event is what

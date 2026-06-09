@@ -4494,7 +4494,6 @@ function FreeUpgradeBanner({ reason }: { reason: string | null }) {
     <div
       style={{
         borderRadius: theme.radius.card,
-        border: `1px solid ${theme.color.accent}`,
         background: theme.color.accentBg,
         padding: `${theme.space[4]}px ${theme.space[5]}px`,
         display: 'flex',
@@ -4506,26 +4505,45 @@ function FreeUpgradeBanner({ reason }: { reason: string | null }) {
         aria-hidden
         style={{
           flexShrink: 0,
-          width: 36,
-          height: 36,
+          width: 30,
+          height: 30,
           borderRadius: theme.radius.pill,
-          background: theme.color.accent,
-          color: '#fff',
+          background: 'rgba(255, 255, 255, 0.6)',
+          color: theme.color.accent,
           display: 'inline-flex',
           alignItems: 'center',
           justifyContent: 'center',
         }}
       >
-        <Gift size={18} aria-hidden />
+        <Gift size={16} aria-hidden />
       </span>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: theme.type.size.md, fontWeight: theme.type.weight.semibold, color: theme.color.accent, letterSpacing: theme.type.tracking.tight }}>
-          Free upgrade — do not collect for the appliance
+          Free upgrade. Do not collect for the appliance.
         </div>
         <div style={{ marginTop: 2, fontSize: theme.type.size.sm, color: theme.color.ink, lineHeight: theme.type.leading.snug }}>
           This same-day upgrade was booked free of charge. The till total below is £0.
-          {reason ? ` Reason: ${reason}.` : ''}
         </div>
+        {reason ? (
+          <div
+            style={{
+              marginTop: theme.space[3],
+              padding: `${theme.space[3]}px ${theme.space[4]}px`,
+              background: 'rgba(255, 255, 255, 0.55)',
+              borderRadius: theme.radius.input,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 2,
+            }}
+          >
+            <span style={{ fontSize: theme.type.size.xs, fontWeight: theme.type.weight.semibold, color: theme.color.accent, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+              Reason
+            </span>
+            <span style={{ fontSize: theme.type.size.sm, fontWeight: theme.type.weight.medium, color: theme.color.ink }}>
+              {reason}
+            </span>
+          </div>
+        ) : null}
       </div>
     </div>
   );

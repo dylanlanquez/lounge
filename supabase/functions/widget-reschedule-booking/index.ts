@@ -198,6 +198,36 @@ Deno.serve(async (req) => {
     return jsonResponse(409, { error: 'slot_unavailable' });
   }
 
+  // ── Virtual clinician availability gate + host pick list ────
+  // Self-serve reschedule of a virtual impression must land on a
+  // self-serve clinician who is on shift AND free at the new time
+  // (lng_meet_hosts_available, p_self_serve_only=true, excluding the
+  // original row). Special/temp clinicians (self_serve=false) are not
+  // in this list, so a booking originally placed with one moves to a
+  // general clinician here — the agreed behaviour for a customer
+  // self-rescheduling a special-clinician appointment. An empty list
+  // means no clinician is free; refuse with a dedicated code.
+  let availableHostIds: string[] = [];
+  if (existing.service_type === 'virtual_impression_appointment') {
+    const { data: availRows, error: availErr } = await supabase.rpc('lng_meet_hosts_available', {
+      p_start_at: newStart.toISOString(),
+      p_end_at: newEnd.toISOString(),
+      p_self_serve_only: true,
+      p_exclude_appointment_id: existing.id,
+      p_host_id: null,
+    });
+    if (availErr) {
+      await logFailure('meet_hosts_available_failed', { error: availErr.message });
+      return jsonResponse(500, { error: 'availability_check_failed' });
+    }
+    availableHostIds = (Array.isArray(availRows) ? availRows : []).map(
+      (r: { host_id: string }) => r.host_id,
+    );
+    if (availableHostIds.length === 0) {
+      return jsonResponse(409, { error: 'no_clinician_available' });
+    }
+  }
+
   // ── Generate fresh appointment_ref for the new row ──────────
   const { data: refRaw, error: refErr } = await supabase.rpc('generate_appointment_ref');
   if (refErr) {
@@ -207,24 +237,20 @@ Deno.serve(async (req) => {
   const newRef = typeof refRaw === 'string' ? refRaw : null;
 
   // ── Pick the Meet host for the new row (virtual_impression only) ─
-  // Carry the original booking's host forward so meet-fetch-attendance
-  // (which authenticates as the host) can later read attendance from
-  // the new event. When the original booking had no host attached
-  // (Calendly source, or legacy bookings created before per-host
-  // routing), fall back to the first active host with a refresh
-  // token. Order is stable so the same default is picked every time.
+  // Keep the original host only when they are in the available
+  // self-serve list (on shift + free at the new time) — that preserves
+  // continuity so meet-fetch-attendance still reads under the same
+  // account. Otherwise assign the preferred available clinician
+  // (availableHostIds is sort_order-ordered). This is also what moves a
+  // special-clinician booking onto a general clinician, and what
+  // replaces the old "first active host" fallback that ignored hours.
+  // The gate above guarantees a non-empty list for virtual.
   let rescheduledMeetHostId: string | null = existing.meet_host_id ?? null;
-  if (existing.service_type === 'virtual_impression_appointment' && !rescheduledMeetHostId) {
-    const { data: fallbackRaw } = await supabase
-      .from('lng_meet_hosts')
-      .select('id')
-      .eq('is_active', true)
-      .not('refresh_token', 'is', null)
-      .order('created_at', { ascending: true })
-      .limit(1)
-      .maybeSingle();
-    const fallback = fallbackRaw as { id: string } | null;
-    rescheduledMeetHostId = fallback?.id ?? null;
+  if (existing.service_type === 'virtual_impression_appointment') {
+    rescheduledMeetHostId =
+      existing.meet_host_id && availableHostIds.includes(existing.meet_host_id)
+        ? existing.meet_host_id
+        : (availableHostIds[0] ?? null);
   }
 
   // ── Insert new appointment ──────────────────────────────────
