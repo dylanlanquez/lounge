@@ -87,10 +87,10 @@ export interface RescheduleSheetProps {
     end_at: string;
     patient_first_name: string | null;
     patient_last_name: string | null;
-    // Virtual impressions: the clinician currently on the booking. The
-    // reschedule keeps this clinician, so availability is filtered to
+    // Virtual impressions: the clinician (staff member) on the booking.
+    // The reschedule keeps this clinician, so availability is filtered to
     // their hours at the new date. Null on non-virtual or legacy rows.
-    meet_host_id?: string | null;
+    clinician_staff_member_id?: string | null;
   };
   onRescheduled: (newAppointmentId: string) => void;
 }
@@ -321,7 +321,7 @@ export function RescheduleSheet({
           arch: appointment.arch,
           // Virtual: keep the booking's clinician and show only times
           // that clinician is on shift and free at the new date.
-          meetHostId: isVirtualService ? appointment.meet_host_id ?? null : null,
+          staffMemberId: isVirtualService ? appointment.clinician_staff_member_id ?? null : null,
         });
         if (cancelled) return;
         // Strip past times when the picked date is today (the
@@ -365,7 +365,7 @@ export function RescheduleSheet({
     appointment.repair_variant,
     appointment.product_key,
     appointment.arch,
-    appointment.meet_host_id,
+    appointment.clinician_staff_member_id,
     isVirtualService,
     serviceType,
   ]);

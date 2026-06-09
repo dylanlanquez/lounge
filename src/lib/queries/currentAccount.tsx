@@ -66,6 +66,10 @@ export interface CurrentAccount {
   // gates check — admins + managers flagged as CS keep their floor
   // affordances; only pure-CS staff lose them.
   is_cs_only: boolean;
+  // Whether this staff member is a virtual impression clinician — gates
+  // the in-call controls (Join/Rejoin/Mark complete) on a virtual
+  // appointment. Only flagged clinicians can run the call.
+  is_virtual_impression_clinician: boolean;
   can_view_reports: boolean;
   can_view_financials: boolean;
   can_count_cash: boolean;
@@ -253,6 +257,8 @@ export function CurrentAccountProvider({ children }: { children: ReactNode }) {
           is_manager: isManagerEff,
           is_customer_service: isCustomerService,
           is_cs_only: isCsOnly,
+          is_virtual_impression_clinician:
+            isActiveStaff && membership?.is_virtual_impression_clinician === true,
           can_view_reports:
             (isActiveStaff && membership?.can_view_reports === true) || isSuperAdmin,
           can_view_financials:

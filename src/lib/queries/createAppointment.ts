@@ -70,13 +70,13 @@ export async function createAppointment(input: {
   repairVariant?: string | null;
   productKey?: string | null;
   arch?: 'upper' | 'lower' | 'both' | null;
-  // Per-host Meet integration. Set on virtual appointments so the
-  // Meet space gets created under THIS host's OAuth grant (and so
-  // attendance can be fetched later via the Meet REST API). Omitting
-  // it for a virtual appointment falls back to the legacy service-
-  // account google-meet-create — used today by Calendly imports
-  // and any service that hasn't been wired through the new flow yet.
-  meetHostId?: string | null;
+  // Virtual impression clinician (staff member) running the call. Set
+  // on virtual appointments: it stamps clinician_staff_member_id (the
+  // availability + no-double-book key) and tells meet-create-space which
+  // clinician's room owner to use. Omitting it for a virtual appointment
+  // falls back to the legacy service-account google-meet-create — used
+  // by Calendly imports and any flow not yet wired to clinicians.
+  clinicianStaffMemberId?: string | null;
   // Shopify-paid services attach a resolved order at booking time.
   // The order's total credits against the cart at checkout, the
   // same way a Calendly deposit currently does. Null when the
@@ -156,6 +156,7 @@ export async function createAppointment(input: {
       repair_variant: input.repairVariant ?? null,
       product_key: input.productKey ?? null,
       arch: input.arch ?? null,
+      clinician_staff_member_id: input.clinicianStaffMemberId ?? null,
       // Shopify order credit. Attached at booking time so the cart
       // total at checkout already reflects what the customer paid
       // online. Currency stays as Shopify reports it (string) — we
@@ -233,10 +234,10 @@ export async function createAppointment(input: {
   let meetCreateError: string | null = null;
   if (input.serviceType === 'virtual_impression_appointment') {
     try {
-      if (input.meetHostId) {
+      if (input.clinicianStaffMemberId) {
         const { data, error } = await supabase.functions.invoke<unknown>(
           'meet-create-space',
-          { body: { appointment_id: appointmentId, host_id: input.meetHostId } },
+          { body: { appointment_id: appointmentId, clinician_staff_member_id: input.clinicianStaffMemberId } },
         );
         if (error) {
           meetCreateError = error.message;

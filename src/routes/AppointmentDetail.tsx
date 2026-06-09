@@ -486,9 +486,12 @@ function Loaded({
   // still can't run the call. Device check is second: a clinician
   // on an iPad gets the device prompt. Only a clinician on a
   // laptop / desktop falls through and opens Google Meet.
-  const isCsOnly = currentAccount?.is_cs_only === true;
+  // Only a staff member flagged as a virtual impression clinician can run
+  // the call (Join / Rejoin / Mark complete). Everyone else sees the
+  // role block, the same way Customer Service did before.
+  const canRunVirtualCall = currentAccount?.is_virtual_impression_clinician === true;
   const handleJoinMeeting = async () => {
-    if (isCsOnly) {
+    if (!canRunVirtualCall) {
       setMeetingBlock({ reason: 'role', action: 'join' });
       return;
     }
@@ -513,7 +516,7 @@ function Loaded({
   };
 
   const handleRejoinMeeting = async () => {
-    if (isCsOnly) {
+    if (!canRunVirtualCall) {
       setMeetingBlock({ reason: 'role', action: 'rejoin' });
       return;
     }
@@ -831,6 +834,7 @@ function Loaded({
         actions={actions}
         resending={resending}
         isCsOnly={currentAccount?.is_cs_only === true}
+        canRunVirtualCall={currentAccount?.is_virtual_impression_clinician === true}
         onPatientProfile={() =>
           // Forward `from: 'appointment'` so the patient profile's
           // breadcrumb reads "Ledger › <Name>'s Appt N May › <Name>"
@@ -933,7 +937,7 @@ function Loaded({
             source: appt.source,
             start_at: appt.start_at,
             end_at: appt.end_at,
-            meet_host_id: appt.meet_host_id ?? null,
+            clinician_staff_member_id: appt.clinician_staff_member_id ?? null,
             patient_first_name: appt.patient.first_name,
             patient_last_name: appt.patient.last_name,
           }}
@@ -2760,6 +2764,7 @@ function Actions({
   actions,
   resending,
   isCsOnly,
+  canRunVirtualCall,
   onPatientProfile,
   onMarkArrived,
   onJoinMeeting,
@@ -2780,6 +2785,9 @@ function Actions({
   // reverse no-show). Customer Service staff can still reschedule,
   // cancel, and resend confirmations — those are patient-comms.
   isCsOnly: boolean;
+  // Whether the signed-in staff member is a virtual impression clinician.
+  // Gates mark_virtual_complete (running/closing the call).
+  canRunVirtualCall: boolean;
   onPatientProfile: () => void;
   onMarkArrived: () => void;
   onJoinMeeting: () => void;
@@ -2800,12 +2808,14 @@ function Actions({
   // view_rescheduled_to, join_meeting) pass through unchanged.
   const CS_HIDDEN: ReadonlyArray<AppointmentAction> = [
     'mark_arrived',
-    'mark_virtual_complete',
     'mark_no_show',
     'reverse_no_show',
   ];
   const has = (a: AppointmentAction) => {
     if (isCsOnly && CS_HIDDEN.includes(a)) return false;
+    // Closing a virtual call is a clinician action — hide it from anyone
+    // who isn't a virtual impression clinician.
+    if (a === 'mark_virtual_complete' && !canRunVirtualCall) return false;
     return actions.includes(a);
   };
   const isFirstAction = !has('join_meeting') && !has('mark_arrived');

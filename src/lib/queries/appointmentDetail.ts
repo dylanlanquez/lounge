@@ -79,6 +79,7 @@ export interface AppointmentDetailRow {
   // the legacy service-account google-meet-create (no attendance
   // available for those — they have join_url but no host).
   meet_host_id: string | null;
+  clinician_staff_member_id: string | null;
   meet_space_id: string | null;
   meet_meeting_code: string | null;
   // Captured from Google's conferenceRecords API when meet-fetch-
@@ -257,6 +258,7 @@ interface RawAppointment {
   join_url: string | null;
   meeting_platform: string | null;
   meet_host_id: string | null;
+  clinician_staff_member_id: string | null;
   meet_space_id: string | null;
   meet_meeting_code: string | null;
   conference_started_at: string | null;
@@ -322,7 +324,7 @@ export function useAppointmentDetail(appointmentId: string | undefined | null): 
         const { data: rawAppt, error: apptErr } = await supabase
           .from('lng_appointments')
           .select(
-            'id, status, source, start_at, end_at, event_type_label, appointment_ref, jb_ref, cancel_reason, notes, customer_note, reschedule_to_id, staff_account_id, location_id, patient_id, service_type, product_key, repair_variant, arch, quantity, shade, brand_id, join_url, meeting_platform, meet_host_id, meet_space_id, meet_meeting_code, conference_started_at, conference_ended_at, conference_count, recording_count, transcript_count, patient_rsvp_status, patient_rsvp_updated_at, intake, deposit_pence, deposit_currency, deposit_provider, deposit_status, paid_in_full_at_booking, shopify_order_id, shopify_order_name, shopify_order_total_pence, created_via, created_via_actor, free_upgrade, free_upgrade_reason, walk_in_id',
+            'id, status, source, start_at, end_at, event_type_label, appointment_ref, jb_ref, cancel_reason, notes, customer_note, reschedule_to_id, staff_account_id, location_id, patient_id, service_type, product_key, repair_variant, arch, quantity, shade, brand_id, join_url, meeting_platform, meet_host_id, clinician_staff_member_id, meet_space_id, meet_meeting_code, conference_started_at, conference_ended_at, conference_count, recording_count, transcript_count, patient_rsvp_status, patient_rsvp_updated_at, intake, deposit_pence, deposit_currency, deposit_provider, deposit_status, paid_in_full_at_booking, shopify_order_id, shopify_order_name, shopify_order_total_pence, created_via, created_via_actor, free_upgrade, free_upgrade_reason, walk_in_id',
           )
           .eq('id', appointmentId)
           .maybeSingle();
@@ -505,6 +507,7 @@ export function useAppointmentDetail(appointmentId: string | undefined | null): 
           join_url: appt.join_url,
           meeting_platform: appt.meeting_platform,
           meet_host_id: (appt as RawAppointment & { meet_host_id?: string | null }).meet_host_id ?? null,
+          clinician_staff_member_id: (appt as RawAppointment & { clinician_staff_member_id?: string | null }).clinician_staff_member_id ?? null,
           meet_space_id: (appt as RawAppointment & { meet_space_id?: string | null }).meet_space_id ?? null,
           meet_meeting_code: (appt as RawAppointment & { meet_meeting_code?: string | null }).meet_meeting_code ?? null,
           conference_started_at: (appt as RawAppointment & { conference_started_at?: string | null }).conference_started_at ?? null,

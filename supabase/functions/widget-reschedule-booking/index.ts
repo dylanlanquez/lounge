@@ -85,6 +85,7 @@ interface ExistingAppointment {
   // checks. Result: rescheduled virtual bookings had no attendance
   // section even when the original did.
   meet_host_id: string | null;
+  clinician_staff_member_id: string | null;
 }
 
 Deno.serve(async (req) => {
@@ -111,7 +112,7 @@ Deno.serve(async (req) => {
   const { data: existingRaw, error: lookupErr } = await supabase
     .from('lng_appointments')
     .select(
-      'id, patient_id, location_id, source, status, service_type, event_type_label, staff_account_id, repair_variant, product_key, arch, notes, appointment_ref, start_at, deposit_status, deposit_pence, deposit_currency, deposit_provider, deposit_external_id, deposit_paid_at, paid_in_full_at_booking, intake, brand_id, shopify_order_id, shopify_order_name, shopify_order_total_pence, shopify_order_currency, shopify_order_linked_at, shopify_order_linked_by, google_calendar_event_id, meet_host_id',
+      'id, patient_id, location_id, source, status, service_type, event_type_label, staff_account_id, repair_variant, product_key, arch, notes, appointment_ref, start_at, deposit_status, deposit_pence, deposit_currency, deposit_provider, deposit_external_id, deposit_paid_at, paid_in_full_at_booking, intake, brand_id, shopify_order_id, shopify_order_name, shopify_order_total_pence, shopify_order_currency, shopify_order_linked_at, shopify_order_linked_by, google_calendar_event_id, meet_host_id, clinician_staff_member_id',
     )
     .eq('manage_token', token)
     .maybeSingle();
@@ -198,32 +199,32 @@ Deno.serve(async (req) => {
     return jsonResponse(409, { error: 'slot_unavailable' });
   }
 
-  // ── Virtual clinician availability gate + host pick list ────
+  // ── Virtual clinician availability gate + clinician pick ────
   // Self-serve reschedule of a virtual impression must land on a
   // self-serve clinician who is on shift AND free at the new time
-  // (lng_meet_hosts_available, p_self_serve_only=true, excluding the
-  // original row). Special/temp clinicians (self_serve=false) are not
-  // in this list, so a booking originally placed with one moves to a
-  // general clinician here — the agreed behaviour for a customer
+  // (lng_clinicians_available, p_self_serve_only=true, excluding the
+  // original row). Staff-only clinicians (clinician_self_serve=false)
+  // are not in this list, so a booking originally placed with one moves
+  // to a general clinician here — the agreed behaviour for a customer
   // self-rescheduling a special-clinician appointment. An empty list
   // means no clinician is free; refuse with a dedicated code.
-  let availableHostIds: string[] = [];
+  let availableClinicianIds: string[] = [];
   if (existing.service_type === 'virtual_impression_appointment') {
-    const { data: availRows, error: availErr } = await supabase.rpc('lng_meet_hosts_available', {
+    const { data: availRows, error: availErr } = await supabase.rpc('lng_clinicians_available', {
       p_start_at: newStart.toISOString(),
       p_end_at: newEnd.toISOString(),
       p_self_serve_only: true,
       p_exclude_appointment_id: existing.id,
-      p_host_id: null,
+      p_staff_member_id: null,
     });
     if (availErr) {
-      await logFailure('meet_hosts_available_failed', { error: availErr.message });
+      await logFailure('clinicians_available_failed', { error: availErr.message });
       return jsonResponse(500, { error: 'availability_check_failed' });
     }
-    availableHostIds = (Array.isArray(availRows) ? availRows : []).map(
-      (r: { host_id: string }) => r.host_id,
+    availableClinicianIds = (Array.isArray(availRows) ? availRows : []).map(
+      (r: { staff_member_id: string }) => r.staff_member_id,
     );
-    if (availableHostIds.length === 0) {
+    if (availableClinicianIds.length === 0) {
       return jsonResponse(409, { error: 'no_clinician_available' });
     }
   }
@@ -236,21 +237,18 @@ Deno.serve(async (req) => {
   }
   const newRef = typeof refRaw === 'string' ? refRaw : null;
 
-  // ── Pick the Meet host for the new row (virtual_impression only) ─
-  // Keep the original host only when they are in the available
-  // self-serve list (on shift + free at the new time) — that preserves
-  // continuity so meet-fetch-attendance still reads under the same
-  // account. Otherwise assign the preferred available clinician
-  // (availableHostIds is sort_order-ordered). This is also what moves a
-  // special-clinician booking onto a general clinician, and what
-  // replaces the old "first active host" fallback that ignored hours.
-  // The gate above guarantees a non-empty list for virtual.
-  let rescheduledMeetHostId: string | null = existing.meet_host_id ?? null;
+  // ── Pick the clinician for the new row (virtual_impression only) ─
+  // Keep the original clinician only when they are still in the
+  // available self-serve list (on shift + free at the new time) — that
+  // preserves continuity. Otherwise assign the preferred available
+  // clinician. This is also what moves a special-clinician booking onto
+  // a general clinician. The gate above guarantees a non-empty list.
+  let rescheduledClinicianId: string | null = existing.clinician_staff_member_id ?? null;
   if (existing.service_type === 'virtual_impression_appointment') {
-    rescheduledMeetHostId =
-      existing.meet_host_id && availableHostIds.includes(existing.meet_host_id)
-        ? existing.meet_host_id
-        : (availableHostIds[0] ?? null);
+    rescheduledClinicianId =
+      existing.clinician_staff_member_id && availableClinicianIds.includes(existing.clinician_staff_member_id)
+        ? existing.clinician_staff_member_id
+        : (availableClinicianIds[0] ?? null);
   }
 
   // ── Insert new appointment ──────────────────────────────────
@@ -276,7 +274,7 @@ Deno.serve(async (req) => {
       // reports / timelines walk the chain in either direction
       // without scanning the table.
       reschedule_from_id: existing.id,
-      meet_host_id: rescheduledMeetHostId,
+      clinician_staff_member_id: rescheduledClinicianId,
       // Carry every booking-time commitment forward — patient
       // already paid (deposit OR full-pay OR Shopify-order credit),
       // filled in their intake, and was tied to a specific brand at
@@ -358,16 +356,16 @@ Deno.serve(async (req) => {
   // patient-self-serve reschedule. Both create + delete are
   // best-effort — failures log to lng_system_failures but don't
   // unwind the reschedule.
-  if (existing.service_type === 'virtual_impression_appointment' && rescheduledMeetHostId) {
+  if (existing.service_type === 'virtual_impression_appointment' && rescheduledClinicianId) {
     try {
       const createRes = await supabase.functions.invoke('meet-create-space', {
-        body: { appointment_id: newRow.id, host_id: rescheduledMeetHostId },
+        body: { appointment_id: newRow.id, clinician_staff_member_id: rescheduledClinicianId },
       });
       if (createRes.error) {
         await logFailure('meet_create_space_failed', {
           oldAppointmentId: existing.id,
           newAppointmentId: newRow.id,
-          hostId: rescheduledMeetHostId,
+          clinicianId: rescheduledClinicianId,
           error: createRes.error.message,
         });
       }
@@ -399,10 +397,10 @@ Deno.serve(async (req) => {
         }),
       );
   } else if (existing.service_type === 'virtual_impression_appointment') {
-    // Defensive log — service is virtual but no host available at
-    // all. The booking row still saves; an admin can wire a host
-    // and re-run meet-create-space from Admin → Meet.
-    await logFailure('virtual_reschedule_no_host_available', {
+    // Defensive log — service is virtual but no clinician was assignable.
+    // The booking row still saves; staff can fix the clinician and re-run
+    // meet-create-space.
+    await logFailure('virtual_reschedule_no_clinician_available', {
       oldAppointmentId: existing.id,
       newAppointmentId: newRow.id,
     });

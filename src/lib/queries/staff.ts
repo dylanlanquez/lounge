@@ -25,6 +25,13 @@ export interface StaffRow {
   // useCurrentAccount so admins or managers flagged as CS aren't
   // restricted.
   is_customer_service: boolean;
+  // Virtual impression clinician capability. When true the staff member
+  // can run the video-call controls (Join/Rejoin/Mark complete) AND is a
+  // bookable clinician whose hours (lng_clinician_hours) drive virtual
+  // availability. clinician_self_serve gates whether they appear in
+  // self-serve availability (public widget) or are staff-placement only.
+  is_virtual_impression_clinician: boolean;
+  clinician_self_serve: boolean;
   // Granular permission flags introduced alongside Reports + Financials.
   // Reports defaults true (every staff member sees operational reports);
   // Financials and cash counting default false (super-admin grants
@@ -95,6 +102,8 @@ interface RawJoinedRow {
   is_admin: boolean | null;
   is_manager: boolean | null;
   is_customer_service: boolean | null;
+  is_virtual_impression_clinician: boolean | null;
+  clinician_self_serve: boolean | null;
   can_view_reports: boolean | null;
   can_view_financials: boolean | null;
   can_count_cash: boolean | null;
@@ -147,6 +156,8 @@ function mapRow(r: RawJoinedRow): StaffRow {
     is_admin: r.is_admin === true,
     is_manager: r.is_manager === true,
     is_customer_service: r.is_customer_service === true,
+    is_virtual_impression_clinician: r.is_virtual_impression_clinician === true,
+    clinician_self_serve: r.clinician_self_serve !== false,
     can_view_reports: r.can_view_reports === true,
     can_view_financials: r.can_view_financials === true,
     can_count_cash: r.can_count_cash === true,
@@ -176,7 +187,7 @@ function mapRow(r: RawJoinedRow): StaffRow {
 }
 
 const STAFF_SELECT =
-  'id, account_id, is_admin, is_manager, is_customer_service, can_view_reports, can_view_financials, can_count_cash, require_2fa, admin_page_access, role_id, status, hired_at, deactivated_at, invite_sent_at, invite_expires_at, invite_accepted_at, last_sign_in_at, account:accounts!account_id(id, first_name, last_name, name, login_email, location_id, location:locations!location_id(id, name, type, city)), role:lng_staff_roles!role_id(id, name)';
+  'id, account_id, is_admin, is_manager, is_customer_service, is_virtual_impression_clinician, clinician_self_serve, can_view_reports, can_view_financials, can_count_cash, require_2fa, admin_page_access, role_id, status, hired_at, deactivated_at, invite_sent_at, invite_expires_at, invite_accepted_at, last_sign_in_at, account:accounts!account_id(id, first_name, last_name, name, login_email, location_id, location:locations!location_id(id, name, type, city)), role:lng_staff_roles!role_id(id, name)';
 
 // Lists every staff member, active and inactive, sorted alphabetically
 // by display name. Inactive rows render with a "Deactivated" badge in
@@ -243,6 +254,30 @@ export async function setIsCustomerService(staffMemberId: string, value: boolean
   const { error } = await supabase
     .from('lng_staff_members')
     .update({ is_customer_service: value })
+    .eq('id', staffMemberId);
+  if (error) throw new Error(error.message);
+}
+
+// Toggles the virtual impression clinician capability: grants the
+// in-call controls AND makes the staff member a bookable clinician
+// whose hours drive virtual availability.
+export async function setIsVirtualImpressionClinician(
+  staffMemberId: string,
+  value: boolean,
+): Promise<void> {
+  const { error } = await supabase
+    .from('lng_staff_members')
+    .update({ is_virtual_impression_clinician: value })
+    .eq('id', staffMemberId);
+  if (error) throw new Error(error.message);
+}
+
+// For a virtual impression clinician: whether they appear in self-serve
+// availability (public widget) or are staff-placement only.
+export async function setClinicianSelfServe(staffMemberId: string, value: boolean): Promise<void> {
+  const { error } = await supabase
+    .from('lng_staff_members')
+    .update({ clinician_self_serve: value })
     .eq('id', staffMemberId);
   if (error) throw new Error(error.message);
 }
@@ -912,6 +947,8 @@ export interface CurrentStaffMembership {
   is_admin: boolean;
   is_manager: boolean;
   is_customer_service: boolean;
+  // Whether the signed-in staff member can run virtual impression calls.
+  is_virtual_impression_clinician: boolean;
   can_view_reports: boolean;
   can_view_financials: boolean;
   can_count_cash: boolean;
@@ -938,7 +975,7 @@ export async function fetchCurrentStaffMembership(
   // entire auth gate. Two cheap round-trips, no schema-cache risk.
   const { data, error } = await supabase
     .from('lng_staff_members')
-    .select('id, is_admin, is_manager, is_customer_service, can_view_reports, can_view_financials, can_count_cash, require_2fa, admin_page_access, role_id, status')
+    .select('id, is_admin, is_manager, is_customer_service, is_virtual_impression_clinician, can_view_reports, can_view_financials, can_count_cash, require_2fa, admin_page_access, role_id, status')
     .eq('account_id', accountId)
     .maybeSingle();
   if (error) {
@@ -973,6 +1010,7 @@ export async function fetchCurrentStaffMembership(
         is_admin: l.is_admin === true,
         is_manager: l.is_manager === true,
         is_customer_service: false,
+        is_virtual_impression_clinician: false,
         can_view_reports: l.can_view_reports === true,
         can_view_financials: l.can_view_financials === true,
         can_count_cash: l.can_count_cash === true,
@@ -991,6 +1029,7 @@ export async function fetchCurrentStaffMembership(
     is_admin: boolean;
     is_manager: boolean;
     is_customer_service: boolean | null;
+    is_virtual_impression_clinician: boolean | null;
     can_view_reports: boolean | null;
     can_view_financials: boolean | null;
     can_count_cash: boolean | null;
@@ -1021,6 +1060,7 @@ export async function fetchCurrentStaffMembership(
     is_admin: r.is_admin === true,
     is_manager: r.is_manager === true,
     is_customer_service: r.is_customer_service === true,
+    is_virtual_impression_clinician: r.is_virtual_impression_clinician === true,
     can_view_reports: r.can_view_reports === true,
     can_view_financials: r.can_view_financials === true,
     can_count_cash: r.can_count_cash === true,

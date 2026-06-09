@@ -84,6 +84,8 @@ interface AppointmentRowMin {
   // host so the Calendar event lands on the original host's calendar
   // (Karly's, Lab's, etc.) and not the service-account fallback.
   meet_host_id: string | null;
+  // Virtual impression clinician carried forward across the reschedule.
+  clinician_staff_member_id: string | null;
   // Booking-time data the patient has committed to. Reschedule moves
   // the patient to a new slot; everything they were booked in for
   // moves with them — staff at the new appointment see the same
@@ -238,7 +240,7 @@ export async function rescheduleAppointment(input: {
   const { data: existingRaw, error: readErr } = await supabase
     .from('lng_appointments')
     .select(
-      'id, patient_id, location_id, source, service_type, event_type_label, staff_account_id, status, repair_variant, product_key, arch, meet_host_id, notes, customer_note, intake, brand_id, paid_in_full_at_booking, deposit_pence, deposit_currency, deposit_provider, deposit_external_id, deposit_paid_at, deposit_status, shopify_order_id, shopify_order_name, shopify_order_total_pence, shopify_order_currency, shopify_order_linked_at, shopify_order_linked_by',
+      'id, patient_id, location_id, source, service_type, event_type_label, staff_account_id, status, repair_variant, product_key, arch, meet_host_id, clinician_staff_member_id, notes, customer_note, intake, brand_id, paid_in_full_at_booking, deposit_pence, deposit_currency, deposit_provider, deposit_external_id, deposit_paid_at, deposit_status, shopify_order_id, shopify_order_name, shopify_order_total_pence, shopify_order_currency, shopify_order_linked_at, shopify_order_linked_by',
     )
     .eq('id', input.appointmentId)
     .maybeSingle();
@@ -331,12 +333,10 @@ export async function rescheduleAppointment(input: {
       // lets reports walk the chain in either direction without
       // scanning the table.
       reschedule_from_id: existing.id,
-      // Carry the host forward so meet-create-space creates the new
-      // Calendar event under the same Google account that owned the
-      // original room. Without this, a reschedule of a per-host
-      // booking would silently fall back to the service-account flow
-      // and the original host's calendar would never see the new slot.
-      meet_host_id: existing.meet_host_id,
+      // Carry the clinician forward so the new row keeps the same
+      // virtual impression clinician (the availability + no-double-book
+      // key), and meet-create-space resolves the same room owner.
+      clinician_staff_member_id: existing.clinician_staff_member_id,
       // Booking-time data the patient committed to. Preserved across
       // the reschedule so the new appointment surfaces the same
       // intake answers, deposit credit (so the till still nets it
@@ -443,40 +443,15 @@ export async function rescheduleAppointment(input: {
   // template instead of the virtual one. Deletion of the old event
   // stays fire-and-forget.
   if (serviceType === 'virtual_impression_appointment') {
-    let hostId = existing.meet_host_id;
-    if (!hostId) {
-      // Fallback host lookup. Prefer is_active=true rows that have
-      // refresh_token set (the host's OAuth grant is the only way the
-      // server can later mint a token to read attendance). Pick the
-      // preferred host by sort_order (matching the NewBookingSheet
-      // picker default), with created_at as a stable tiebreak so the
-      // same host is picked across reschedules.
-      const { data: fallbackRaw } = await supabase
-        .from('lng_meet_hosts')
-        .select('id')
-        .eq('is_active', true)
-        .not('refresh_token', 'is', null)
-        .order('sort_order', { ascending: true })
-        .order('created_at', { ascending: true })
-        .limit(1)
-        .maybeSingle();
-      const fallback = fallbackRaw as { id: string } | null;
-      hostId = fallback?.id ?? null;
-      if (hostId) {
-        // Stamp the host onto the new row so meet-fetch-attendance
-        // (which reads meet_host_id off the row, not from a request
-        // arg) can later use this host's OAuth token to pull
-        // attendance.
-        await supabase
-          .from('lng_appointments')
-          .update({ meet_host_id: hostId })
-          .eq('id', newAppointmentId);
-      }
-    }
-    if (hostId) {
+    // The new row already carries clinician_staff_member_id (set on the
+    // insert above). meet-create-space resolves the room owner from the
+    // clinician — their own connected Google account if linked, else the
+    // default active OAuth host.
+    const clinicianId = existing.clinician_staff_member_id;
+    if (clinicianId) {
       try {
         await supabase.functions.invoke('meet-create-space', {
-          body: { appointment_id: newAppointmentId, host_id: hostId },
+          body: { appointment_id: newAppointmentId, clinician_staff_member_id: clinicianId },
         });
       } catch (e: unknown) {
         console.warn('[rescheduleAppointment] meet-create-space failed:', e);
@@ -495,13 +470,13 @@ export async function rescheduleAppointment(input: {
           console.warn('[rescheduleAppointment] google-meet-delete failed:', e),
         );
     } else {
-      // No host available at all — log loud and skip Meet creation.
-      // The booking row still saves; an admin can connect a host
-      // and re-run meet-create-space manually from Admin → Meet.
+      // No clinician on the row — log loud and skip Meet creation. The
+      // booking row still saves; an admin can fix the clinician and
+      // re-run meet-create-space.
       await supabase.from('lng_system_failures').insert({
         severity: 'error',
         source: 'rescheduleAppointment',
-        message: 'No active Meet host available to attach to rescheduled virtual appointment',
+        message: 'No clinician on rescheduled virtual appointment; Meet room not created',
         context: {
           old_appointment_id: existing.id,
           new_appointment_id: newAppointmentId,
