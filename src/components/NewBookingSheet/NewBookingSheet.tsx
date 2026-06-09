@@ -1088,77 +1088,6 @@ export function NewBookingSheet({
             return renderAxis(row[0]!);
           })}
 
-          {isVirtualService ? (
-            <Section
-              title="Clinician"
-              required
-              info="The virtual impression clinician who will run this video call. Their availability drives the times below."
-            >
-              {clinicians.length === 0 ? (
-                <div
-                  style={{
-                    padding: `${theme.space[4]}px ${theme.space[4]}px`,
-                    borderRadius: theme.radius.input,
-                    background: theme.color.bg,
-                    border: `1px dashed ${theme.color.border}`,
-                  }}
-                >
-                  <p
-                    style={{
-                      margin: 0,
-                      fontSize: theme.type.size.sm,
-                      color: theme.color.ink,
-                      lineHeight: 1.5,
-                      fontWeight: theme.type.weight.semibold,
-                    }}
-                  >
-                    No virtual impression clinicians set up yet.
-                  </p>
-                  <p
-                    style={{
-                      margin: `${theme.space[1]}px 0 ${theme.space[3]}px`,
-                      fontSize: theme.type.size.xs,
-                      color: theme.color.inkMuted,
-                      lineHeight: 1.5,
-                    }}
-                  >
-                    In Admin, Staff, turn on Virtual impression clinician for a staff member and set their hours so they can take video calls.
-                  </p>
-                  <a
-                    href="/admin?tab=staff"
-                    style={{
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: 6,
-                      padding: `${theme.space[2]}px ${theme.space[3]}px`,
-                      borderRadius: theme.radius.pill,
-                      border: `1px solid ${theme.color.border}`,
-                      background: theme.color.surface,
-                      color: theme.color.accent,
-                      fontSize: theme.type.size.xs,
-                      fontWeight: theme.type.weight.semibold,
-                      textDecoration: 'none',
-                    }}
-                  >
-                    Open Admin, Staff
-                  </a>
-                </div>
-              ) : (
-                <DropdownSelect<string>
-                  ariaLabel="Clinician"
-                  value={clinicianId ?? ''}
-                  onChange={(v) => setClinicianId(v || null)}
-                  options={clinicians.map((c) => ({
-                    value: c.staff_member_id,
-                    label: c.clinician_self_serve ? c.display_name : `${c.display_name} (staff only)`,
-                  }))}
-                  placeholder={cliniciansLoading ? 'Loading clinicians' : 'Pick a clinician'}
-                  disabled={cliniciansLoading}
-                />
-              )}
-            </Section>
-          ) : null}
-
           {isShopifyService ? (
             <Section
               title="Online order"
@@ -1464,6 +1393,77 @@ export function NewBookingSheet({
               </div>
             )}
           </Section>
+          ) : null}
+
+          {isVirtualService ? (
+            <Section
+              title="Clinician"
+              required
+              info="The virtual impression clinician who will run this video call. Their hours decide the available times above."
+            >
+              {clinicians.length === 0 ? (
+                <div
+                  style={{
+                    padding: `${theme.space[4]}px ${theme.space[4]}px`,
+                    borderRadius: theme.radius.input,
+                    background: theme.color.bg,
+                    border: `1px dashed ${theme.color.border}`,
+                  }}
+                >
+                  <p
+                    style={{
+                      margin: 0,
+                      fontSize: theme.type.size.sm,
+                      color: theme.color.ink,
+                      lineHeight: 1.5,
+                      fontWeight: theme.type.weight.semibold,
+                    }}
+                  >
+                    No virtual impression clinicians set up yet.
+                  </p>
+                  <p
+                    style={{
+                      margin: `${theme.space[1]}px 0 ${theme.space[3]}px`,
+                      fontSize: theme.type.size.xs,
+                      color: theme.color.inkMuted,
+                      lineHeight: 1.5,
+                    }}
+                  >
+                    In Admin, Virtual impressions, add a clinician and set their hours so they can take video calls.
+                  </p>
+                  <a
+                    href="/admin?tab=virtual_impressions"
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 6,
+                      padding: `${theme.space[2]}px ${theme.space[3]}px`,
+                      borderRadius: theme.radius.pill,
+                      border: `1px solid ${theme.color.border}`,
+                      background: theme.color.surface,
+                      color: theme.color.accent,
+                      fontSize: theme.type.size.xs,
+                      fontWeight: theme.type.weight.semibold,
+                      textDecoration: 'none',
+                    }}
+                  >
+                    Open Virtual impressions
+                  </a>
+                </div>
+              ) : (
+                <DropdownSelect<string>
+                  ariaLabel="Clinician"
+                  value={clinicianId ?? ''}
+                  onChange={(v) => setClinicianId(v || null)}
+                  options={clinicians.map((c) => ({
+                    value: c.staff_member_id,
+                    label: c.clinician_self_serve ? c.display_name : `${c.display_name} (staff only)`,
+                  }))}
+                  placeholder={cliniciansLoading ? 'Loading clinicians' : 'Pick a clinician'}
+                  disabled={cliniciansLoading}
+                />
+              )}
+            </Section>
           ) : null}
 
           <Section

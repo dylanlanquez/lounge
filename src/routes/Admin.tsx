@@ -48,6 +48,7 @@ import {
   setCanCountCash,
   setCanViewFinancials,
   setCanViewReports,
+  setClinicianCanEditOwnHours,
   setClinicianSelfServe,
   setIsAdmin,
   setIsCustomerService,
@@ -151,9 +152,12 @@ import { useLocations } from '../lib/queries/locations.ts';
 import { AdminBookingTypesTab, TimeField, WorkingHoursEditor } from './AdminBookingTypesTab.tsx';
 import {
   addClinicianOverride,
+  addOwnClinicianOverride,
   deleteClinicianOverride,
+  deleteOwnClinicianOverride,
   fetchClinicianSchedule,
   setClinicianHours,
+  setOwnClinicianHours,
   type ClinicianOverride,
 } from '../lib/queries/clinicianHours.ts';
 import type { OpeningHoursWeek } from '../lib/queries/clinicSettings.ts';
@@ -4867,14 +4871,20 @@ const CLINICIAN_EMPTY_WEEK = [
 // for the weekly grid (so it matches exactly) and adds a calm one-off
 // overrides section below. Reads/writes lng_clinician_hours +
 // lng_clinician_overrides via the is_admin RPCs.
-function ClinicianHoursSheet({
+export function ClinicianHoursSheet({
   staff,
   onClose,
   onError,
+  selfEdit = false,
 }: {
-  staff: StaffRow | null;
+  // Minimal shape so this works for admin (a StaffRow) and for a
+  // clinician editing their own hours (just id + name).
+  staff: { staff_member_id: string; display_name: string } | null;
   onClose: () => void;
   onError: (message: string) => void;
+  // When true, write through the self-edit RPCs (the signed-in clinician
+  // editing their own availability) instead of the admin RPCs.
+  selfEdit?: boolean;
 }) {
   const [week, setWeek] = useState<OpeningHoursWeek>(CLINICIAN_EMPTY_WEEK);
   const [overrides, setOverrides] = useState<ClinicianOverride[]>([]);
@@ -4919,7 +4929,8 @@ function ClinicianHoursSheet({
     if (!staffId) return;
     setSavingHours(true);
     try {
-      await setClinicianHours(staffId, week);
+      if (selfEdit) await setOwnClinicianHours(week);
+      else await setClinicianHours(staffId, week);
       setToast({ tone: 'success', title: 'Hours saved' });
     } catch (e) {
       onError(e instanceof Error ? e.message : String(e));
@@ -4941,13 +4952,22 @@ function ClinicianHoursSheet({
     }
     setOvBusy(true);
     try {
-      await addClinicianOverride({
-        staffMemberId: staffId,
-        date: ovDate,
-        kind: ovKind,
-        start: useWindow ? ovStart : null,
-        end: useWindow ? ovEnd : null,
-      });
+      if (selfEdit) {
+        await addOwnClinicianOverride({
+          date: ovDate,
+          kind: ovKind,
+          start: useWindow ? ovStart : null,
+          end: useWindow ? ovEnd : null,
+        });
+      } else {
+        await addClinicianOverride({
+          staffMemberId: staffId,
+          date: ovDate,
+          kind: ovKind,
+          start: useWindow ? ovStart : null,
+          end: useWindow ? ovEnd : null,
+        });
+      }
       const s = await fetchClinicianSchedule(staffId);
       setOverrides(s.overrides);
       setOvDate('');
@@ -4962,7 +4982,8 @@ function ClinicianHoursSheet({
   const removeOverride = async (ov: ClinicianOverride) => {
     if (!staffId) return;
     try {
-      await deleteClinicianOverride(ov.id);
+      if (selfEdit) await deleteOwnClinicianOverride(ov.id);
+      else await deleteClinicianOverride(ov.id);
       setOverrides((prev) => prev.filter((o) => o.id !== ov.id));
     } catch (e) {
       onError(e instanceof Error ? e.message : String(e));
@@ -5172,10 +5193,15 @@ function VirtualImpressionsTab() {
 // staff member, set their hours, choose public vs staff-only, remove.
 function CliniciansCard() {
   const staff = useStaff();
+  const { hosts: meetHosts, refresh: refreshHosts } = useMeetHosts({ activeOnly: true });
   const [hoursTarget, setHoursTarget] = useState<StaffRow | null>(null);
   const [addStaffId, setAddStaffId] = useState<string>('');
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // A clinician must also be a Meet host (Google room owner or a
+  // recognised name) or their video call can't be created.
+  const hasMeetHost = (staffMemberId: string) => meetHosts.some((h) => h.staff_member_id === staffMemberId);
 
   const clinicians = staff.data.filter((s) => s.is_virtual_impression_clinician && s.status === 'active');
   const addable = staff.data
@@ -5260,10 +5286,41 @@ function CliniciansCard() {
                 <p style={{ margin: `${theme.space[1]}px 0 0`, fontSize: theme.type.size.xs, color: theme.color.inkMuted }}>
                   {c.login_email}
                 </p>
+                {hasMeetHost(c.staff_member_id) ? null : (
+                  <p style={{ margin: `${theme.space[1]}px 0 0`, fontSize: theme.type.size.xs, color: theme.color.warn, fontWeight: theme.type.weight.semibold }}>
+                    Not set up to run calls yet. Make them a Meet host.
+                  </p>
+                )}
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[2], flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                {hasMeetHost(c.staff_member_id) ? null : (
+                  <button
+                    type="button"
+                    disabled={busyId === c.staff_member_id}
+                    onClick={() => run(c.staff_member_id, async () => {
+                      await addStaffMeetHost({ staffMemberId: c.staff_member_id, displayName: c.display_name });
+                      refreshHosts();
+                    })}
+                    style={pillBtn({ border: `1px solid ${theme.color.accent}`, background: theme.color.accentBg, color: theme.color.accent })}
+                  >
+                    <Video size={13} aria-hidden /> Make a host
+                  </button>
+                )}
                 <button type="button" onClick={() => setHoursTarget(c)} style={pillBtn()}>
                   <Clock size={13} aria-hidden /> Edit hours
+                </button>
+                <button
+                  type="button"
+                  disabled={busyId === c.staff_member_id}
+                  onClick={() => run(c.staff_member_id, () => setClinicianCanEditOwnHours(c.staff_member_id, !c.clinician_can_edit_own_hours))}
+                  title={c.clinician_can_edit_own_hours ? 'This clinician can edit their own availability. Tap to stop that.' : 'Let this clinician edit their own availability from their profile. Tap to allow.'}
+                  style={pillBtn(
+                    c.clinician_can_edit_own_hours
+                      ? { border: `1px solid ${theme.color.accent}`, background: theme.color.accentBg, color: theme.color.accent }
+                      : {},
+                  )}
+                >
+                  {c.clinician_can_edit_own_hours ? 'Self-edit on' : 'Self-edit off'}
                 </button>
                 <button
                   type="button"
@@ -5311,6 +5368,16 @@ function CliniciansCard() {
           disabled={!addStaffId || busyId !== null}
           onClick={() => run(addStaffId, async () => {
             await setIsVirtualImpressionClinician(addStaffId, true);
+            // A clinician must also be a Meet host or the call can't be
+            // created. Register them as a recognised host if they aren't
+            // one already (they can connect their own Google later).
+            if (!hasMeetHost(addStaffId)) {
+              const row = staff.data.find((s) => s.staff_member_id === addStaffId);
+              if (row) {
+                await addStaffMeetHost({ staffMemberId: addStaffId, displayName: row.display_name });
+                refreshHosts();
+              }
+            }
             setAddStaffId('');
           })}
         >

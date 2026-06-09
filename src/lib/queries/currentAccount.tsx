@@ -70,6 +70,8 @@ export interface CurrentAccount {
   // the in-call controls (Join/Rejoin/Mark complete) on a virtual
   // appointment. Only flagged clinicians can run the call.
   is_virtual_impression_clinician: boolean;
+  // Whether this clinician may edit their own availability (Profile menu).
+  clinician_can_edit_own_hours: boolean;
   can_view_reports: boolean;
   can_view_financials: boolean;
   can_count_cash: boolean;
@@ -259,6 +261,8 @@ export function CurrentAccountProvider({ children }: { children: ReactNode }) {
           is_cs_only: isCsOnly,
           is_virtual_impression_clinician:
             isActiveStaff && membership?.is_virtual_impression_clinician === true,
+          clinician_can_edit_own_hours:
+            isActiveStaff && membership?.clinician_can_edit_own_hours === true,
           can_view_reports:
             (isActiveStaff && membership?.can_view_reports === true) || isSuperAdmin,
           can_view_financials:
