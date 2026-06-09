@@ -87,6 +87,10 @@ export interface RescheduleSheetProps {
     end_at: string;
     patient_first_name: string | null;
     patient_last_name: string | null;
+    // Virtual impressions: the clinician currently on the booking. The
+    // reschedule keeps this clinician, so availability is filtered to
+    // their hours at the new date. Null on non-virtual or legacy rows.
+    meet_host_id?: string | null;
   };
   onRescheduled: (newAppointmentId: string) => void;
 }
@@ -119,6 +123,7 @@ export function RescheduleSheet({
   const [timeOpen, setTimeOpen] = useState(false);
 
   const serviceType = appointment.service_type ?? 'other';
+  const isVirtualService = serviceType === 'virtual_impression_appointment';
 
   // ── Load booking-type config when the sheet opens ──────────────
   useEffect(() => {
@@ -314,6 +319,9 @@ export function RescheduleSheet({
           repairVariant: appointment.repair_variant,
           productKey: appointment.product_key,
           arch: appointment.arch,
+          // Virtual: keep the booking's clinician and show only times
+          // that clinician is on shift and free at the new date.
+          meetHostId: isVirtualService ? appointment.meet_host_id ?? null : null,
         });
         if (cancelled) return;
         // Strip past times when the picked date is today (the
@@ -357,6 +365,8 @@ export function RescheduleSheet({
     appointment.repair_variant,
     appointment.product_key,
     appointment.arch,
+    appointment.meet_host_id,
+    isVirtualService,
     serviceType,
   ]);
 
@@ -405,8 +415,14 @@ export function RescheduleSheet({
     return startMin + extent <= closeMin;
   }, [config, hoursForDate, time]);
 
-  const slotIsValid =
-    !!config && !!date && !!time && inWorkingHours && fitsBeforeClose;
+  // Virtual availability follows the clinician's own hours (which can
+  // sit outside the booking-type hours), so validate against the
+  // host-aware server allow-list rather than the type-hour gates.
+  const slotInServerList =
+    !!time && Array.isArray(availableSlots) && availableSlots.includes(time);
+  const slotIsValid = isVirtualService
+    ? !!config && !!date && !!time && slotInServerList
+    : !!config && !!date && !!time && inWorkingHours && fitsBeforeClose;
   // A reason on the new row's cancellation note is the audit trail
   // for why the slot moved — staff sick day, patient asked, equipment
   // delay, etc. Without it the patient timeline reads "Rescheduled"
@@ -586,8 +602,13 @@ export function RescheduleSheet({
               // for any reason (slow RPC, effect loop, stale
               // cache). Dim-all initial state is the honest "we
               // don't know yet" signal.
-              availableDates={monthAvailability.dates}
-              availableDatesLoading={monthAvailability.loading}
+              // Virtual availability is per-clinician (this booking's
+              // host), which the widget dates RPC behind
+              // monthAvailability doesn't model. Enable all future days
+              // for virtual and let the host-aware TimePicker be the
+              // real gate; non-virtual keeps the precise whitelist.
+              availableDates={isVirtualService ? undefined : monthAvailability.dates}
+              availableDatesLoading={isVirtualService ? false : monthAvailability.loading}
               onVisibleMonthChange={onCalendarWindow}
             />
             <TimePicker
@@ -597,12 +618,15 @@ export function RescheduleSheet({
               onChange={(t) => setTime(t)}
               anchorRef={timeTriggerRef}
               title="Pick the new start time"
-              startHour={hoursForDate ? clampHour(hoursForDate.open) : 6}
-              endHour={hoursForDate ? clampHour(hoursForDate.close, true) : 22}
+              // Virtual: don't clip to booking-type hours — the
+              // clinician's hours can fall outside them; the host-aware
+              // availableSlots gates which times are tappable.
+              startHour={!isVirtualService && hoursForDate ? clampHour(hoursForDate.open) : 6}
+              endHour={!isVirtualService && hoursForDate ? clampHour(hoursForDate.close, true) : 22}
               availableSlots={availableSlots ?? undefined}
               availabilityLoading={availabilityLoading}
               emptyMessage={
-                hoursForDate
+                isVirtualService || hoursForDate
                   ? 'No free times that day.'
                   : 'Closed on this day.'
               }

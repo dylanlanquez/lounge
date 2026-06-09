@@ -666,6 +666,10 @@ export function NewBookingSheet({
           repairVariant: axisValues.repair_variant,
           productKey: axisValues.product_key,
           arch: axisValues.arch,
+          // Virtual: narrow to the chosen clinician's hours. Null when
+          // no host is picked yet (shows any on-shift clinician) or for
+          // non-virtual services (the RPC ignores it there).
+          meetHostId: isVirtualService ? meetHostId : null,
         });
         if (cancelled) return;
         // Strip past times when the picked date is today. The
@@ -714,6 +718,10 @@ export function NewBookingSheet({
     axisValues.repair_variant,
     axisValues.product_key,
     axisValues.arch,
+    // Refetch when the operator switches clinician — virtual
+    // availability is that host's hours.
+    isVirtualService,
+    meetHostId,
   ]);
 
   // ── Working-hours check ────────────────────────────────────────
@@ -778,8 +786,16 @@ export function NewBookingSheet({
     return new Date(iso).getTime() <= Date.now();
   }, [date, time]);
 
-  const slotIsValid =
-    !!config && !!date && !!time && inWorkingHours && fitsBeforeClose && !isPastSlot;
+  // Virtual availability is driven by the clinician's own hours (which
+  // can fall outside the booking-type working_hours, e.g. a casual
+  // clinician's Sunday override), so the booking-type hour gates
+  // (inWorkingHours / fitsBeforeClose) don't apply. The host-aware
+  // server allow-list is the source of truth — validate membership.
+  const slotInServerList =
+    !!time && Array.isArray(availableSlots) && availableSlots.includes(time);
+  const slotIsValid = isVirtualService
+    ? !!config && !!date && !!time && !isPastSlot && slotInServerList
+    : !!config && !!date && !!time && inWorkingHours && fitsBeforeClose && !isPastSlot;
   // Virtual services require a Meet host. The dropdown auto-picks
   // the first one when hosts exist, so this guard mostly trips when
   // no host has been connected yet — Save stays disabled until
@@ -1325,8 +1341,14 @@ export function NewBookingSheet({
               // during the load window, which silently re-opened
               // closed days whenever the loading flag stayed true
               // longer than expected.
-              availableDates={monthAvailability.dates}
-              availableDatesLoading={monthAvailability.loading}
+              // Virtual availability is per-clinician (it includes
+              // staff-only clinicians and narrows to the picked host),
+              // which the widget dates RPC behind monthAvailability does
+              // not model. Enable all future days for virtual and let
+              // the host-aware TimePicker below be the real gate;
+              // non-virtual keeps the precise day whitelist.
+              availableDates={isVirtualService ? undefined : monthAvailability.dates}
+              availableDatesLoading={isVirtualService ? false : monthAvailability.loading}
               onVisibleMonthChange={onCalendarWindow}
             />
             <TimePicker
@@ -1336,12 +1358,17 @@ export function NewBookingSheet({
               onChange={(t) => setTime(t)}
               anchorRef={timeTriggerRef}
               title="Pick the start time"
-              startHour={hoursForDate ? clampHour(hoursForDate.open) : 6}
-              endHour={hoursForDate ? clampHour(hoursForDate.close, true) : 22}
+              // Virtual: don't clip the visible range to the booking
+              // type's hours — the clinician's own hours (incl. evening
+              // or weekend overrides) can fall outside them, and the
+              // host-aware availableSlots already gates which times are
+              // tappable.
+              startHour={!isVirtualService && hoursForDate ? clampHour(hoursForDate.open) : 6}
+              endHour={!isVirtualService && hoursForDate ? clampHour(hoursForDate.close, true) : 22}
               availableSlots={availableSlots ?? undefined}
               availabilityLoading={availabilityLoading}
               emptyMessage={
-                hoursForDate
+                isVirtualService || hoursForDate
                   ? 'No free times that day.'
                   : 'Closed on this day.'
               }

@@ -1196,6 +1196,7 @@ export function Schedule() {
             source: reschedulingRow.source,
             start_at: reschedulingRow.start_at,
             end_at: reschedulingRow.end_at,
+            meet_host_id: reschedulingRow.meet_host_id ?? null,
             patient_first_name: reschedulingRow.patient_first_name,
             patient_last_name: reschedulingRow.patient_last_name,
           }}

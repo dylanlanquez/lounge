@@ -677,7 +677,6 @@ function Loaded({
           <div
             style={{
               borderRadius: theme.radius.card,
-              border: `1px solid ${theme.color.accent}`,
               background: theme.color.accentBg,
               padding: `${theme.space[4]}px ${theme.space[5]}px`,
               display: 'flex',
@@ -689,26 +688,45 @@ function Loaded({
               aria-hidden
               style={{
                 flexShrink: 0,
-                width: 36,
-                height: 36,
+                width: 30,
+                height: 30,
                 borderRadius: theme.radius.pill,
-                background: theme.color.accent,
-                color: '#fff',
+                background: 'rgba(255, 255, 255, 0.6)',
+                color: theme.color.accent,
                 display: 'inline-flex',
                 alignItems: 'center',
                 justifyContent: 'center',
               }}
             >
-              <Gift size={18} aria-hidden />
+              <Gift size={16} aria-hidden />
             </span>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontSize: theme.type.size.md, fontWeight: theme.type.weight.semibold, color: theme.color.accent, letterSpacing: theme.type.tracking.tight }}>
-                Free upgrade — do not collect for the appliance
+                Free upgrade. Do not collect for the appliance.
               </div>
               <div style={{ marginTop: 2, fontSize: theme.type.size.sm, color: theme.color.ink, lineHeight: theme.type.leading.snug }}>
                 Booked free of charge. The till will collect £0 for the appliance when the patient arrives.
-                {appt.free_upgrade_reason ? ` Reason: ${appt.free_upgrade_reason}.` : ''}
               </div>
+              {appt.free_upgrade_reason ? (
+                <div
+                  style={{
+                    marginTop: theme.space[3],
+                    padding: `${theme.space[3]}px ${theme.space[4]}px`,
+                    background: 'rgba(255, 255, 255, 0.55)',
+                    borderRadius: theme.radius.input,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 2,
+                  }}
+                >
+                  <span style={{ fontSize: theme.type.size.xs, fontWeight: theme.type.weight.semibold, color: theme.color.accent, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                    Reason
+                  </span>
+                  <span style={{ fontSize: theme.type.size.sm, fontWeight: theme.type.weight.medium, color: theme.color.ink }}>
+                    {appt.free_upgrade_reason}
+                  </span>
+                </div>
+              ) : null}
             </div>
           </div>
         ) : null}
@@ -915,6 +933,7 @@ function Loaded({
             source: appt.source,
             start_at: appt.start_at,
             end_at: appt.end_at,
+            meet_host_id: appt.meet_host_id ?? null,
             patient_first_name: appt.patient.first_name,
             patient_last_name: appt.patient.last_name,
           }}
