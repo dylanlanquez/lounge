@@ -199,3 +199,49 @@ export function useVirtualClinicians(): { clinicians: VirtualClinician[]; loadin
 
   return { clinicians, loading, error };
 }
+
+// Dates a clinician has availability for, driving the booking calendar's
+// per-day enabled state for virtual impressions (clinician hours, not
+// clinic hours). Empty set when no clinician/window is given.
+export function useClinicianAvailableDates(args: {
+  staffMemberId: string | null;
+  selfServeOnly?: boolean;
+  fromIso: string | null;
+  toIso: string | null;
+}): { dates: ReadonlySet<string>; loading: boolean } {
+  const { staffMemberId, fromIso, toIso } = args;
+  const selfServeOnly = args.selfServeOnly ?? false;
+  const [dates, setDates] = useState<ReadonlySet<string>>(new Set());
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!staffMemberId || !fromIso || !toIso) {
+      setDates(new Set());
+      setLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setLoading(true);
+    (async () => {
+      const { data, error } = await supabase.rpc('lng_clinician_available_dates', {
+        p_staff_member_id: staffMemberId,
+        p_self_serve_only: selfServeOnly,
+        p_from: fromIso,
+        p_to: toIso,
+      });
+      if (cancelled) return;
+      if (error) {
+        setDates(new Set());
+        setLoading(false);
+        return;
+      }
+      setDates(new Set<string>((data ?? []).map((r: { date: string }) => r.date)));
+      setLoading(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [staffMemberId, selfServeOnly, fromIso, toIso]);
+
+  return { dates, loading };
+}

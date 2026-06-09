@@ -29,6 +29,7 @@ import { loadAvailableSlots } from '../../lib/queries/bookingAvailableSlots.ts';
 import { properCase } from '../../lib/queries/appointments.ts';
 import { fmtTzAbbr } from '../../lib/dateFormat.ts';
 import { useAvailableDates } from '../../lib/queries/bookingAvailability.ts';
+import { useClinicianAvailableDates } from '../../lib/queries/clinicianHours.ts';
 import { monthGridWindowForIso, todayIso } from '../../lib/calendarMonth.ts';
 import { effectiveDayHoursForDate, useClinicSettings } from '../../lib/queries/clinicSettings.ts';
 
@@ -292,6 +293,13 @@ export function RescheduleSheet({
     repairVariant: appointment.repair_variant,
     productKey: appointment.product_key,
     arch: appointment.arch,
+    fromIso: calendarWindow.fromIso,
+    toIso: calendarWindow.toIso,
+  });
+  // Virtual: the calendar shows the booking's clinician's working days.
+  const clinicianDates = useClinicianAvailableDates({
+    staffMemberId: isVirtualService ? appointment.clinician_staff_member_id ?? null : null,
+    selfServeOnly: false,
     fromIso: calendarWindow.fromIso,
     toIso: calendarWindow.toIso,
   });
@@ -607,8 +615,14 @@ export function RescheduleSheet({
               // monthAvailability doesn't model. Enable all future days
               // for virtual and let the host-aware TimePicker be the
               // real gate; non-virtual keeps the precise whitelist.
-              availableDates={isVirtualService ? undefined : monthAvailability.dates}
-              availableDatesLoading={isVirtualService ? false : monthAvailability.loading}
+              availableDates={
+                isVirtualService
+                  ? appointment.clinician_staff_member_id
+                    ? clinicianDates.dates
+                    : new Set<string>()
+                  : monthAvailability.dates
+              }
+              availableDatesLoading={isVirtualService ? clinicianDates.loading : monthAvailability.loading}
               onVisibleMonthChange={onCalendarWindow}
             />
             <TimePicker

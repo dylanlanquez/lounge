@@ -51,7 +51,7 @@ import {
 import { effectiveDayHoursForDate, useClinicSettings } from '../../lib/queries/clinicSettings.ts';
 import { monthGridWindowForIso, todayIso } from '../../lib/calendarMonth.ts';
 import { createAppointment } from '../../lib/queries/createAppointment.ts';
-import { useVirtualClinicians } from '../../lib/queries/clinicianHours.ts';
+import { useClinicianAvailableDates, useVirtualClinicians } from '../../lib/queries/clinicianHours.ts';
 import { useCatalogueActive } from '../../lib/queries/catalogue.ts';
 import { lookupShopifyOrder, type ShopifyOrderLookup } from '../../lib/queries/shopifyOrderLookup.ts';
 import { formatPence } from '../../lib/queries/carts.ts';
@@ -636,6 +636,15 @@ export function NewBookingSheet({
     fromIso: calendarWindow.fromIso,
     toIso: calendarWindow.toIso,
   });
+  // Virtual: the calendar's enabled days come from the chosen clinician's
+  // hours, not the clinic's. Staff path sees staff-only clinicians too
+  // (selfServeOnly=false).
+  const clinicianDates = useClinicianAvailableDates({
+    staffMemberId: isVirtualService ? clinicianId : null,
+    selfServeOnly: false,
+    fromIso: calendarWindow.fromIso,
+    toIso: calendarWindow.toIso,
+  });
 
   // ── Available slots for the picked day/service ─────────────────
   // The TimePicker is fed an explicit allow-list of HH:MM strings
@@ -801,6 +810,8 @@ export function NewBookingSheet({
   // staff member has been flagged as a virtual impression clinician yet
   // — Save stays disabled until one is set up in Admin > Staff.
   const clinicianPicked = !isVirtualService || !!clinicianId;
+  const clinicianName =
+    clinicians.find((c) => c.staff_member_id === clinicianId)?.display_name ?? 'this clinician';
   // Shopify order is opt-in per booking. The gate only fires when the
   // receptionist explicitly ticks "Coming in from an online order"
   // AND we don't have a resolved order yet — a half-typed number
@@ -1341,14 +1352,18 @@ export function NewBookingSheet({
               // during the load window, which silently re-opened
               // closed days whenever the loading flag stayed true
               // longer than expected.
-              // Virtual availability is per-clinician (it includes
-              // staff-only clinicians and narrows to the picked host),
-              // which the widget dates RPC behind monthAvailability does
-              // not model. Enable all future days for virtual and let
-              // the host-aware TimePicker below be the real gate;
-              // non-virtual keeps the precise day whitelist.
-              availableDates={isVirtualService ? undefined : monthAvailability.dates}
-              availableDatesLoading={isVirtualService ? false : monthAvailability.loading}
+              // Virtual: the calendar's enabled days are the chosen
+              // clinician's working days (clinician hours, not clinic
+              // hours). Before a clinician is picked, no days are
+              // selectable. Non-virtual keeps the clinic-hours whitelist.
+              availableDates={
+                isVirtualService
+                  ? clinicianId
+                    ? clinicianDates.dates
+                    : new Set<string>()
+                  : monthAvailability.dates
+              }
+              availableDatesLoading={isVirtualService ? clinicianDates.loading : monthAvailability.loading}
               onVisibleMonthChange={onCalendarWindow}
             />
             <TimePicker
@@ -1377,7 +1392,27 @@ export function NewBookingSheet({
                 cycle (open, month change). The picker's dim-all-
                 then-light-up behaviour is sufficient signal that
                 data is loading. */}
-            {config && !searchingFirstSlot ? (
+            {config && !searchingFirstSlot && isVirtualService ? (
+              // Virtual availability is the CLINICIAN's, not the clinic's.
+              // The hint reflects the picked clinician's times for the day,
+              // with no clinic open/closed messaging.
+              <InlineHint
+                tone={
+                  date && clinicianId && Array.isArray(availableSlots) && availableSlots.length === 0
+                    ? 'alert'
+                    : 'muted'
+                }
+              >
+                {config.duration_default}-minute video call
+                {!clinicianId
+                  ? '. Pick a clinician to see their available times.'
+                  : availabilityLoading || !date
+                  ? '.'
+                  : Array.isArray(availableSlots) && availableSlots.length > 0
+                  ? `. Times shown are when ${clinicianName} can take the call.`
+                  : `. ${clinicianName} has no availability on this day. Try another date.`}
+              </InlineHint>
+            ) : config && !searchingFirstSlot ? (
               <InlineHint
                 tone={hoursForDate || !date ? 'muted' : 'alert'}
               >

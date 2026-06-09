@@ -181,7 +181,7 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 
-type Tab = 'devices' | 'failures' | 'reports' | 'calendly' | 'services' | 'products' | 'booking_types' | 'conflicts' | 'emails' | 'sms' | 'branding' | 'widget' | 'receipts' | 'testing' | 'waivers' | 'staff' | 'payments';
+type Tab = 'devices' | 'failures' | 'reports' | 'calendly' | 'services' | 'products' | 'booking_types' | 'conflicts' | 'emails' | 'sms' | 'branding' | 'widget' | 'receipts' | 'testing' | 'waivers' | 'staff' | 'payments' | 'virtual_impressions';
 
 // Canonical list of every Admin tab. Drives the SegmentedControl in
 // the Admin header, the per-staff "Admin pages" toggle list in the
@@ -213,6 +213,7 @@ const ADMIN_TABS: { key: Tab; label: string; description: string }[] = [
   { key: 'devices', label: 'Devices', description: 'Stripe Terminal readers + location pairing.' },
   { key: 'payments', label: 'Payments', description: 'Stripe payment log, reconciliation, retries.' },
   { key: 'staff', label: 'Staff', description: 'Add, deactivate, permissions, and account actions for Lounge staff.' },
+  { key: 'virtual_impressions', label: 'Virtual impressions', description: 'Clinicians who run virtual impression calls, their hours, and the Google accounts that host the rooms.' },
   { key: 'failures', label: 'Failures', description: 'Unresolved system failures captured by lng_system_failures.' },
   { key: 'testing', label: 'Testing', description: 'Dev-only resets and test-harness shortcuts.' },
 ];
@@ -355,6 +356,8 @@ export function Admin() {
           <PaymentsTab />
         ) : tab === 'staff' ? (
           <StaffTab />
+        ) : tab === 'virtual_impressions' ? (
+          <VirtualImpressionsTab />
         ) : tab === 'testing' ? (
           <TestingTab />
         ) : (
@@ -2252,8 +2255,6 @@ function StaffTab() {
   // tab used to expose (edit name, permissions, account actions,
   // deactivate). One row state, six sections inside.
   const [managing, setManaging] = useState<StaffRow | null>(null);
-  // Staff member whose virtual-clinician hours editor is open.
-  const [clinicianHoursTarget, setClinicianHoursTarget] = useState<StaffRow | null>(null);
   const [draftFirst, setDraftFirst] = useState('');
   const [draftLast, setDraftLast] = useState('');
   const [nameBusy, setNameBusy] = useState(false);
@@ -2432,32 +2433,6 @@ function StaffTab() {
     setError(null);
     try {
       await setIsCustomerService(staffMemberId, next);
-      staff.refresh();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusyId(null);
-    }
-  };
-
-  const toggleVirtualClinician = async (staffMemberId: string, next: boolean) => {
-    setBusyId(staffMemberId);
-    setError(null);
-    try {
-      await setIsVirtualImpressionClinician(staffMemberId, next);
-      staff.refresh();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusyId(null);
-    }
-  };
-
-  const toggleClinicianSelfServe = async (staffMemberId: string, next: boolean) => {
-    setBusyId(staffMemberId);
-    setError(null);
-    try {
-      await setClinicianSelfServe(staffMemberId, next);
       staff.refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -3355,55 +3330,6 @@ function StaffTab() {
                   checked={managing.is_customer_service}
                   onChange={(v) => toggleCustomerService(managing.staff_member_id, v)}
                 />
-                <PermissionRow
-                  title="Virtual impression clinician"
-                  description="Runs virtual impression video calls (Join, Rejoin, Mark complete) and is a bookable clinician. Set their working hours below so they appear in availability."
-                  checked={managing.is_virtual_impression_clinician}
-                  onChange={(v) => toggleVirtualClinician(managing.staff_member_id, v)}
-                />
-                {managing.is_virtual_impression_clinician ? (
-                  <div
-                    style={{
-                      display: 'flex',
-                      flexDirection: 'column',
-                      gap: theme.space[3],
-                      padding: theme.space[4],
-                      borderRadius: theme.radius.input,
-                      background: theme.color.bg,
-                      border: `1px solid ${theme.color.border}`,
-                    }}
-                  >
-                    <div
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        gap: theme.space[3],
-                        flexWrap: 'wrap',
-                      }}
-                    >
-                      <div style={{ minWidth: 0 }}>
-                        <p style={{ margin: 0, fontSize: theme.type.size.sm, fontWeight: theme.type.weight.semibold, color: theme.color.ink }}>
-                          Working hours
-                        </p>
-                        <p style={{ margin: `${theme.space[1]}px 0 0`, fontSize: theme.type.size.xs, color: theme.color.inkMuted, maxWidth: 360 }}>
-                          When this clinician is available for virtual calls. No hours set means they are not bookable.
-                        </p>
-                      </div>
-                      <Button variant="secondary" size="sm" onClick={() => setClinicianHoursTarget(managing)}>
-                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
-                          <Clock size={15} aria-hidden /> Edit hours
-                        </span>
-                      </Button>
-                    </div>
-                    <PermissionRow
-                      title="Bookable by customers"
-                      description="On: customers can book and reschedule with this clinician through the website. Off: only staff can place a customer with them, for special or temporary clinicians."
-                      checked={managing.clinician_self_serve}
-                      onChange={(v) => toggleClinicianSelfServe(managing.staff_member_id, v)}
-                    />
-                  </div>
-                ) : null}
               </div>
             </ManageSection>
 
@@ -3667,12 +3593,6 @@ function StaffTab() {
           <div />
         )}
       </BottomSheet>
-
-      <ClinicianHoursSheet
-        staff={clinicianHoursTarget}
-        onClose={() => setClinicianHoursTarget(null)}
-        onError={(msg) => setError(msg)}
-      />
 
       <BottomSheet
         open={addOpen}
@@ -4928,7 +4848,6 @@ function CatalogueTab({ mode }: { mode: CatalogueMode }) {
         </div>
       ) : null}
     </Card>
-    {isServices ? <MeetHostsCard /> : null}
     </div>
   );
 }
@@ -5234,6 +5153,179 @@ function ClinicianHoursSheet({
         </div>
       ) : null}
     </BottomSheet>
+  );
+}
+
+// The dedicated "Virtual impressions" admin section: the clinicians who
+// run virtual impression calls (and their hours) + the Google accounts
+// that own the Meet rooms, together in one place.
+function VirtualImpressionsTab() {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[5] }}>
+      <CliniciansCard />
+      <MeetHostsCard />
+    </div>
+  );
+}
+
+// CliniciansCard — manage who is a virtual impression clinician. Add a
+// staff member, set their hours, choose public vs staff-only, remove.
+function CliniciansCard() {
+  const staff = useStaff();
+  const [hoursTarget, setHoursTarget] = useState<StaffRow | null>(null);
+  const [addStaffId, setAddStaffId] = useState<string>('');
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const clinicians = staff.data.filter((s) => s.is_virtual_impression_clinician && s.status === 'active');
+  const addable = staff.data
+    .filter((s) => !s.is_virtual_impression_clinician && s.status === 'active')
+    .sort((a, b) => a.display_name.localeCompare(b.display_name, 'en-GB'));
+
+  const run = async (id: string, fn: () => Promise<void>) => {
+    setBusyId(id);
+    setError(null);
+    try {
+      await fn();
+      staff.refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const pillBtn = (extra: CSSProperties = {}): CSSProperties => ({
+    appearance: 'none',
+    border: `1px solid ${theme.color.border}`,
+    background: theme.color.surface,
+    color: theme.color.ink,
+    cursor: 'pointer',
+    padding: '6px 12px',
+    borderRadius: theme.radius.pill,
+    fontSize: theme.type.size.xs,
+    fontWeight: theme.type.weight.semibold,
+    fontFamily: 'inherit',
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 6,
+    ...extra,
+  });
+
+  return (
+    <Card padding="md">
+      <div style={{ marginBottom: theme.space[4] }}>
+        <h2 style={{ margin: 0, fontSize: theme.type.size.lg, fontWeight: theme.type.weight.semibold }}>
+          Clinicians
+        </h2>
+        <p style={{ margin: `${theme.space[1]}px 0 0`, color: theme.color.inkMuted, fontSize: theme.type.size.sm, maxWidth: 620 }}>
+          Staff who run virtual impression video calls. A clinician's hours, not the clinic's, decide when a virtual impression can be booked, so set their hours below. They can be on different hours to the clinic (a different office or timezone).
+        </p>
+      </div>
+
+      {error ? <p style={{ color: theme.color.alert, margin: `0 0 ${theme.space[3]}px` }}>{error}</p> : null}
+
+      {staff.loading ? (
+        <Skeleton height={64} radius={12} />
+      ) : clinicians.length === 0 ? (
+        <EmptyState
+          icon={<Video size={24} />}
+          title="No clinicians yet"
+          description="Add a staff member below to let them run virtual impression calls and be booked for them."
+        />
+      ) : (
+        <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
+          {clinicians.map((c) => (
+            <li
+              key={c.staff_member_id}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: theme.space[3],
+                padding: `${theme.space[3]}px ${theme.space[4]}px`,
+                borderRadius: theme.radius.input,
+                background: theme.color.surface,
+                border: `1px solid ${theme.color.border}`,
+                flexWrap: 'wrap',
+              }}
+            >
+              <div style={{ minWidth: 0 }}>
+                <p style={{ margin: 0, fontSize: theme.type.size.base, fontWeight: theme.type.weight.semibold, color: theme.color.ink }}>
+                  {c.display_name}
+                  {c.clinician_self_serve ? null : (
+                    <span style={{ marginLeft: 8, fontSize: theme.type.size.xs, color: theme.color.inkMuted, fontWeight: theme.type.weight.medium }}>· Staff only</span>
+                  )}
+                </p>
+                <p style={{ margin: `${theme.space[1]}px 0 0`, fontSize: theme.type.size.xs, color: theme.color.inkMuted }}>
+                  {c.login_email}
+                </p>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[2], flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                <button type="button" onClick={() => setHoursTarget(c)} style={pillBtn()}>
+                  <Clock size={13} aria-hidden /> Edit hours
+                </button>
+                <button
+                  type="button"
+                  disabled={busyId === c.staff_member_id}
+                  onClick={() => run(c.staff_member_id, () => setClinicianSelfServe(c.staff_member_id, !c.clinician_self_serve))}
+                  title={c.clinician_self_serve ? 'Customers can book this clinician. Tap to make staff-only.' : 'Only staff can place a customer with this clinician. Tap to allow customer bookings.'}
+                  style={pillBtn(
+                    c.clinician_self_serve
+                      ? {}
+                      : { border: `1px solid ${theme.color.accent}`, background: theme.color.accentBg, color: theme.color.accent },
+                  )}
+                >
+                  {c.clinician_self_serve ? 'Bookable by customers' : 'Staff only'}
+                </button>
+                <button
+                  type="button"
+                  disabled={busyId === c.staff_member_id}
+                  onClick={() => run(c.staff_member_id, () => setIsVirtualImpressionClinician(c.staff_member_id, false))}
+                  aria-label={`Remove ${c.display_name} as a clinician`}
+                  style={pillBtn({ color: theme.color.alert, width: 30, height: 30, padding: 0, justifyContent: 'center' })}
+                >
+                  <Trash2 size={14} aria-hidden />
+                </button>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {/* Add a clinician */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[2], marginTop: theme.space[4], flexWrap: 'wrap' }}>
+        <div style={{ flex: 1, minWidth: 220 }}>
+          <DropdownSelect<string>
+            ariaLabel="Add a clinician"
+            value={addStaffId}
+            onChange={(v) => setAddStaffId(v)}
+            options={addable.map((s) => ({ value: s.staff_member_id, label: s.display_name }))}
+            placeholder={addable.length === 0 ? 'All staff are clinicians' : 'Pick a staff member'}
+            disabled={addable.length === 0}
+          />
+        </div>
+        <Button
+          variant="secondary"
+          size="md"
+          disabled={!addStaffId || busyId !== null}
+          onClick={() => run(addStaffId, async () => {
+            await setIsVirtualImpressionClinician(addStaffId, true);
+            setAddStaffId('');
+          })}
+        >
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
+            <Plus size={16} aria-hidden /> Add clinician
+          </span>
+        </Button>
+      </div>
+
+      <ClinicianHoursSheet
+        staff={hoursTarget}
+        onClose={() => setHoursTarget(null)}
+        onError={(msg) => setError(msg)}
+      />
+    </Card>
   );
 }
 
