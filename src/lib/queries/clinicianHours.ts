@@ -140,6 +140,41 @@ export async function deleteClinicianOverride(overrideId: string): Promise<void>
   if (error) throw new Error(error.message);
 }
 
+// ── Self-edit (a clinician editing their OWN availability) ────────
+// These resolve the signed-in clinician server-side and require the
+// admin-set clinician_can_edit_own_hours flag.
+export async function setOwnClinicianHours(week: OpeningHoursWeek): Promise<void> {
+  const { error } = await supabase.rpc('lng_set_own_clinician_hours', {
+    p_windows: weekToWindows(week),
+  });
+  if (error) throw new Error(error.message);
+}
+
+export async function addOwnClinicianOverride(args: {
+  date: string;
+  kind: 'available' | 'off';
+  start?: string | null;
+  end?: string | null;
+  note?: string | null;
+}): Promise<string> {
+  const { data, error } = await supabase.rpc('lng_add_own_clinician_override', {
+    p_date: args.date,
+    p_kind: args.kind,
+    p_start_local: args.start ?? null,
+    p_end_local: args.end ?? null,
+    p_note: args.note ?? null,
+  });
+  if (error) throw new Error(error.message);
+  return data as string;
+}
+
+export async function deleteOwnClinicianOverride(overrideId: string): Promise<void> {
+  const { error } = await supabase.rpc('lng_delete_own_clinician_override', {
+    p_override_id: overrideId,
+  });
+  if (error) throw new Error(error.message);
+}
+
 // ── Clinician picker (staff booking sheets) ──────────────────────
 export interface VirtualClinician {
   staff_member_id: string;

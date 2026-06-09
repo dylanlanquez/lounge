@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { BarChart3, Settings, Wallet } from 'lucide-react';
+import { BarChart3, CalendarClock, Settings, Wallet } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../lib/auth.tsx';
 import { useCurrentAccount } from '../../lib/queries/currentAccount.tsx';
@@ -213,6 +213,13 @@ export function KioskStatusBar() {
       email={user.email ?? null}
       displayName={account?.display_name ?? null}
       roleName={account?.role_name ?? null}
+      canEditOwnAvailability={
+        account?.is_virtual_impression_clinician === true && account?.clinician_can_edit_own_hours === true
+      }
+      onMyAvailability={() => {
+        setProfileOpen(false);
+        navigate('/my-availability');
+      }}
       onSignOut={() => {
         setProfileOpen(false);
         void signOut();
@@ -262,6 +269,8 @@ function ProfileSheet({
   email,
   displayName,
   roleName,
+  canEditOwnAvailability,
+  onMyAvailability,
   onSignOut,
 }: {
   open: boolean;
@@ -269,6 +278,8 @@ function ProfileSheet({
   email: string | null;
   displayName: string | null;
   roleName: string | null;
+  canEditOwnAvailability: boolean;
+  onMyAvailability: () => void;
   onSignOut: () => void;
 }) {
   const label = displayName ?? email ?? 'No account';
@@ -319,6 +330,37 @@ function ProfileSheet({
           ) : null}
         </div>
       </div>
+      {canEditOwnAvailability ? (
+        <button
+          type="button"
+          onClick={onMyAvailability}
+          style={{
+            appearance: 'none',
+            width: '100%',
+            textAlign: 'left',
+            padding: `${theme.space[4]}px`,
+            borderRadius: theme.radius.input,
+            border: `1px solid ${theme.color.border}`,
+            background: theme.color.surface,
+            color: theme.color.ink,
+            cursor: 'pointer',
+            fontFamily: 'inherit',
+            display: 'flex',
+            alignItems: 'center',
+            gap: theme.space[3],
+          }}
+        >
+          <CalendarClock size={18} aria-hidden style={{ color: theme.color.accent, flexShrink: 0 }} />
+          <span>
+            <span style={{ display: 'block', fontSize: theme.type.size.base, fontWeight: theme.type.weight.semibold }}>
+              My availability
+            </span>
+            <span style={{ display: 'block', fontSize: theme.type.size.xs, color: theme.color.inkMuted, marginTop: 2 }}>
+              Set the hours you can take virtual impression calls (shown in BST).
+            </span>
+          </span>
+        </button>
+      ) : null}
     </BottomSheet>
   );
 }
