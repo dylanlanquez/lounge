@@ -98,14 +98,14 @@ async function handle(req: Request): Promise<Response> {
     if (!who?.user) return json(200, { ok: false, error: 'Not signed in. Sign in and retry.' });
   }
 
-  let body: { appointment_id?: string; host_id?: string };
+  let body: { appointment_id?: string; host_id?: string; clinician_staff_member_id?: string };
   try {
     body = await req.json();
   } catch {
     body = {};
   }
-  if (!body.appointment_id || !body.host_id) {
-    return json(200, { ok: false, error: 'appointment_id and host_id required.' });
+  if (!body.appointment_id || (!body.host_id && !body.clinician_staff_member_id)) {
+    return json(200, { ok: false, error: 'appointment_id and (host_id or clinician_staff_member_id) required.' });
   }
 
   const admin: SupabaseClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
@@ -165,11 +165,46 @@ async function handle(req: Request): Promise<Response> {
     email: string | null;
   } | null;
 
-  // 2. Load the host + refresh tokens if needed.
+  // 2. Resolve the Meet room owner. A clinician's own connected Google
+  //    account owns their room when linked (lng_meet_hosts.staff_member_id
+  //    = the clinician + kind oauth); otherwise fall back to the default
+  //    active OAuth host. Legacy callers that pass host_id directly keep
+  //    working unchanged.
+  let resolvedHostId: string | null = body.host_id ?? null;
+  if (!resolvedHostId && body.clinician_staff_member_id) {
+    const { data: ownHost } = await admin
+      .from('lng_meet_hosts')
+      .select('id')
+      .eq('staff_member_id', body.clinician_staff_member_id)
+      .eq('kind', 'oauth')
+      .eq('is_active', true)
+      .not('refresh_token', 'is', null)
+      .order('sort_order', { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    resolvedHostId = (ownHost as { id: string } | null)?.id ?? null;
+    if (!resolvedHostId) {
+      const { data: defHost } = await admin
+        .from('lng_meet_hosts')
+        .select('id')
+        .eq('kind', 'oauth')
+        .eq('is_active', true)
+        .not('refresh_token', 'is', null)
+        .order('sort_order', { ascending: true })
+        .limit(1)
+        .maybeSingle();
+      resolvedHostId = (defHost as { id: string } | null)?.id ?? null;
+    }
+  }
+  if (!resolvedHostId) {
+    return json(200, { ok: false, error: 'No Google account available to host the room.' });
+  }
+
+  // 3. Load the resolved host + refresh tokens if needed.
   const { data: hostRow } = await admin
     .from('lng_meet_hosts')
     .select('id, display_name, google_email, access_token, refresh_token, token_expiry, is_active, oauth_client')
-    .eq('id', body.host_id)
+    .eq('id', resolvedHostId)
     .maybeSingle();
   const host = hostRow as MeetHostRow | null;
   if (!host) return json(200, { ok: false, error: 'Host not found.' });

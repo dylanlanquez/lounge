@@ -32,6 +32,7 @@ const makeRow = (
   intake,
   join_url: null,
   meet_host_id: null,
+  clinician_staff_member_id: null,
   walk_in_id: null,
   deposit_pence: null,
   deposit_currency: null,

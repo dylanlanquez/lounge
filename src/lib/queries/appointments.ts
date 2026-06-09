@@ -57,9 +57,11 @@ export interface AppointmentRow {
   notes: string | null;
   intake: IntakeAnswer[] | null;
   join_url: string | null;
-  // Meet host (clinician) on a virtual impression row. Drives
-  // host-aware availability when rescheduling from the schedule.
+  // Meet host (Google room owner) on a virtual impression row.
   meet_host_id: string | null;
+  // Virtual impression clinician (staff member). Drives clinician-aware
+  // availability when rescheduling from the schedule.
+  clinician_staff_member_id: string | null;
   /** When set, this row is the calendar marker for a walk-in (the
    *  source-of-truth row lives on lng_walk_ins). Used by the schedule
    *  to render the "Walk-in" prefix on walk-in rows only — every

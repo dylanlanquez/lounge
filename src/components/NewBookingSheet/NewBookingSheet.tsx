@@ -51,7 +51,7 @@ import {
 import { effectiveDayHoursForDate, useClinicSettings } from '../../lib/queries/clinicSettings.ts';
 import { monthGridWindowForIso, todayIso } from '../../lib/calendarMonth.ts';
 import { createAppointment } from '../../lib/queries/createAppointment.ts';
-import { useMeetHosts } from '../../lib/queries/meetHosts.ts';
+import { useVirtualClinicians } from '../../lib/queries/clinicianHours.ts';
 import { useCatalogueActive } from '../../lib/queries/catalogue.ts';
 import { lookupShopifyOrder, type ShopifyOrderLookup } from '../../lib/queries/shopifyOrderLookup.ts';
 import { formatPence } from '../../lib/queries/carts.ts';
@@ -192,8 +192,8 @@ export function NewBookingSheet({
   // routes virtual bookings through the new per-host edge function
   // when meetHostId is set; otherwise it falls back to the legacy
   // service-account flow (used by Calendly imports).
-  const [meetHostId, setMeetHostId] = useState<string | null>(null);
-  const { hosts: meetHosts, loading: meetHostsLoading } = useMeetHosts({ activeOnly: true, ownersOnly: true });
+  const [clinicianId, setClinicianId] = useState<string | null>(null);
+  const { clinicians, loading: cliniciansLoading } = useVirtualClinicians();
 
   // Shopify-paid services (admin flag on lwo_catalogue.sold_on_shopify
   // makes the opt-in available). Most customers walking into a sold-
@@ -261,7 +261,7 @@ export function NewBookingSheet({
     setAxisOptions({});
     setAxisOptionsLoading(false);
     setNotes('');
-    setMeetHostId(null);
+    setClinicianId(null);
     setShopifyOrderApplies(false);
     setShopifyOrderInput('');
     setShopifyOrder(null);
@@ -401,12 +401,12 @@ export function NewBookingSheet({
   const isVirtualService = serviceType === 'virtual_impression_appointment';
   useEffect(() => {
     if (!isVirtualService) {
-      setMeetHostId(null);
+      setClinicianId(null);
       return;
     }
-    if (meetHostId) return;
-    if (meetHosts.length > 0) setMeetHostId(meetHosts[0]!.id);
-  }, [isVirtualService, meetHosts, meetHostId]);
+    if (clinicianId) return;
+    if (clinicians.length > 0) setClinicianId(clinicians[0]!.staff_member_id);
+  }, [isVirtualService, clinicians, clinicianId]);
 
   // ── Load axis option lists for the picked service ──────────────
   useEffect(() => {
@@ -667,9 +667,9 @@ export function NewBookingSheet({
           productKey: axisValues.product_key,
           arch: axisValues.arch,
           // Virtual: narrow to the chosen clinician's hours. Null when
-          // no host is picked yet (shows any on-shift clinician) or for
-          // non-virtual services (the RPC ignores it there).
-          meetHostId: isVirtualService ? meetHostId : null,
+          // no clinician is picked yet (shows any on-shift clinician) or
+          // for non-virtual services (the RPC ignores it there).
+          staffMemberId: isVirtualService ? clinicianId : null,
         });
         if (cancelled) return;
         // Strip past times when the picked date is today. The
@@ -719,9 +719,9 @@ export function NewBookingSheet({
     axisValues.product_key,
     axisValues.arch,
     // Refetch when the operator switches clinician — virtual
-    // availability is that host's hours.
+    // availability is that clinician's hours.
     isVirtualService,
-    meetHostId,
+    clinicianId,
   ]);
 
   // ── Working-hours check ────────────────────────────────────────
@@ -796,11 +796,11 @@ export function NewBookingSheet({
   const slotIsValid = isVirtualService
     ? !!config && !!date && !!time && !isPastSlot && slotInServerList
     : !!config && !!date && !!time && inWorkingHours && fitsBeforeClose && !isPastSlot;
-  // Virtual services require a Meet host. The dropdown auto-picks
-  // the first one when hosts exist, so this guard mostly trips when
-  // no host has been connected yet — Save stays disabled until
-  // someone runs the OAuth flow in Admin > Services.
-  const meetHostPicked = !isVirtualService || !!meetHostId;
+  // Virtual services require a clinician. The dropdown auto-picks the
+  // first one when clinicians exist, so this guard mostly trips when no
+  // staff member has been flagged as a virtual impression clinician yet
+  // — Save stays disabled until one is set up in Admin > Staff.
+  const clinicianPicked = !isVirtualService || !!clinicianId;
   // Shopify order is opt-in per booking. The gate only fires when the
   // receptionist explicitly ticks "Coming in from an online order"
   // AND we don't have a resolved order yet — a half-typed number
@@ -816,7 +816,7 @@ export function NewBookingSheet({
     !saving &&
     !configError &&
     !conflictError &&
-    meetHostPicked &&
+    clinicianPicked &&
     shopifyOrderAttached;
 
   // Build the human-readable event_type_label that goes onto the row.
@@ -865,7 +865,7 @@ export function NewBookingSheet({
         repairVariant: axisValues.repair_variant,
         productKey: axisValues.product_key,
         arch: axisValues.arch,
-        meetHostId: isVirtualService ? meetHostId : null,
+        clinicianStaffMemberId: isVirtualService ? clinicianId : null,
         shopifyOrder:
           shopifyOrderApplies && shopifyOrder
             ? {
@@ -1079,11 +1079,11 @@ export function NewBookingSheet({
 
           {isVirtualService ? (
             <Section
-              title="Meeting host"
+              title="Clinician"
               required
-              info="Whose Google account owns the Meet room for this appointment. The host's calendar reflects the booking and attendance data is pulled from the same Google account after the meeting ends."
+              info="The virtual impression clinician who will run this video call. Their availability drives the times below."
             >
-              {meetHosts.length === 0 ? (
+              {clinicians.length === 0 ? (
                 <div
                   style={{
                     padding: `${theme.space[4]}px ${theme.space[4]}px`,
@@ -1101,7 +1101,7 @@ export function NewBookingSheet({
                       fontWeight: theme.type.weight.semibold,
                     }}
                   >
-                    No Meet hosts connected yet.
+                    No virtual impression clinicians set up yet.
                   </p>
                   <p
                     style={{
@@ -1111,10 +1111,10 @@ export function NewBookingSheet({
                       lineHeight: 1.5,
                     }}
                   >
-                    Connect a Google account in Admin so this booking has a host whose calendar owns the Meet room and whose attendance you can read back.
+                    In Admin, Staff, turn on Virtual impression clinician for a staff member and set their hours so they can take video calls.
                   </p>
                   <a
-                    href="/admin?tab=services"
+                    href="/admin?tab=staff"
                     style={{
                       display: 'inline-flex',
                       alignItems: 'center',
@@ -1129,20 +1129,20 @@ export function NewBookingSheet({
                       textDecoration: 'none',
                     }}
                   >
-                    Open Admin, Services
+                    Open Admin, Staff
                   </a>
                 </div>
               ) : (
                 <DropdownSelect<string>
-                  ariaLabel="Meeting host"
-                  value={meetHostId ?? ''}
-                  onChange={(v) => setMeetHostId(v || null)}
-                  options={meetHosts.map((h) => ({
-                    value: h.id,
-                    label: `${h.display_name} (${h.google_email})`,
+                  ariaLabel="Clinician"
+                  value={clinicianId ?? ''}
+                  onChange={(v) => setClinicianId(v || null)}
+                  options={clinicians.map((c) => ({
+                    value: c.staff_member_id,
+                    label: c.clinician_self_serve ? c.display_name : `${c.display_name} (staff only)`,
                   }))}
-                  placeholder={meetHostsLoading ? 'Loading hosts' : 'Pick a host'}
-                  disabled={meetHostsLoading}
+                  placeholder={cliniciansLoading ? 'Loading clinicians' : 'Pick a clinician'}
+                  disabled={cliniciansLoading}
                 />
               )}
             </Section>

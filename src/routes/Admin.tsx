@@ -48,9 +48,11 @@ import {
   setCanCountCash,
   setCanViewFinancials,
   setCanViewReports,
+  setClinicianSelfServe,
   setIsAdmin,
   setIsCustomerService,
   setIsManager,
+  setIsVirtualImpressionClinician,
   setRequire2fa,
   setStaffLocation,
   setStaffName,
@@ -115,24 +117,15 @@ import {
   type ArchMatch,
 } from '../lib/queries/catalogue.ts';
 import {
-  addMeetHostOverride,
   addStaffMeetHost,
   batchUpdateMeetHostSortOrders,
   createMeetHostInvite,
   deleteMeetHost,
-  deleteMeetHostOverride,
-  fetchMeetHostSchedule,
   listMeetOAuthClients,
   type MeetOAuthClient,
   setMeetHostActive,
-  setMeetHostHours,
-  setMeetHostSelfServe,
   startMeetHostOAuth,
   useMeetHosts,
-  type MeetHostOverride,
-  type MeetHostPublic,
-  type MeetHostSchedule,
-  type MeetHostWeeklyWindow,
 } from '../lib/queries/meetHosts.ts';
 import {
   setCatalogueWaiverRequirements,
@@ -155,7 +148,16 @@ import {
 import { supabase } from '../lib/supabase.ts';
 import { useCurrentAccount } from '../lib/queries/currentAccount.tsx';
 import { useLocations } from '../lib/queries/locations.ts';
-import { AdminBookingTypesTab } from './AdminBookingTypesTab.tsx';
+import { AdminBookingTypesTab, TimeField, WorkingHoursEditor } from './AdminBookingTypesTab.tsx';
+import {
+  addClinicianOverride,
+  deleteClinicianOverride,
+  fetchClinicianSchedule,
+  setClinicianHours,
+  type ClinicianOverride,
+} from '../lib/queries/clinicianHours.ts';
+import type { OpeningHoursWeek } from '../lib/queries/clinicSettings.ts';
+import { todayIso } from '../lib/calendarMonth.ts';
 import { AdminConflictsTab } from './AdminConflictsTab.tsx';
 import { AdminEmailTemplatesTab } from './AdminEmailTemplatesTab.tsx';
 import { AdminSmsTemplatesTab } from './AdminSmsTemplatesTab.tsx';
@@ -2250,6 +2252,8 @@ function StaffTab() {
   // tab used to expose (edit name, permissions, account actions,
   // deactivate). One row state, six sections inside.
   const [managing, setManaging] = useState<StaffRow | null>(null);
+  // Staff member whose virtual-clinician hours editor is open.
+  const [clinicianHoursTarget, setClinicianHoursTarget] = useState<StaffRow | null>(null);
   const [draftFirst, setDraftFirst] = useState('');
   const [draftLast, setDraftLast] = useState('');
   const [nameBusy, setNameBusy] = useState(false);
@@ -2428,6 +2432,32 @@ function StaffTab() {
     setError(null);
     try {
       await setIsCustomerService(staffMemberId, next);
+      staff.refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const toggleVirtualClinician = async (staffMemberId: string, next: boolean) => {
+    setBusyId(staffMemberId);
+    setError(null);
+    try {
+      await setIsVirtualImpressionClinician(staffMemberId, next);
+      staff.refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const toggleClinicianSelfServe = async (staffMemberId: string, next: boolean) => {
+    setBusyId(staffMemberId);
+    setError(null);
+    try {
+      await setClinicianSelfServe(staffMemberId, next);
       staff.refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -3325,6 +3355,55 @@ function StaffTab() {
                   checked={managing.is_customer_service}
                   onChange={(v) => toggleCustomerService(managing.staff_member_id, v)}
                 />
+                <PermissionRow
+                  title="Virtual impression clinician"
+                  description="Runs virtual impression video calls (Join, Rejoin, Mark complete) and is a bookable clinician. Set their working hours below so they appear in availability."
+                  checked={managing.is_virtual_impression_clinician}
+                  onChange={(v) => toggleVirtualClinician(managing.staff_member_id, v)}
+                />
+                {managing.is_virtual_impression_clinician ? (
+                  <div
+                    style={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: theme.space[3],
+                      padding: theme.space[4],
+                      borderRadius: theme.radius.input,
+                      background: theme.color.bg,
+                      border: `1px solid ${theme.color.border}`,
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        gap: theme.space[3],
+                        flexWrap: 'wrap',
+                      }}
+                    >
+                      <div style={{ minWidth: 0 }}>
+                        <p style={{ margin: 0, fontSize: theme.type.size.sm, fontWeight: theme.type.weight.semibold, color: theme.color.ink }}>
+                          Working hours
+                        </p>
+                        <p style={{ margin: `${theme.space[1]}px 0 0`, fontSize: theme.type.size.xs, color: theme.color.inkMuted, maxWidth: 360 }}>
+                          When this clinician is available for virtual calls. No hours set means they are not bookable.
+                        </p>
+                      </div>
+                      <Button variant="secondary" size="sm" onClick={() => setClinicianHoursTarget(managing)}>
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
+                          <Clock size={15} aria-hidden /> Edit hours
+                        </span>
+                      </Button>
+                    </div>
+                    <PermissionRow
+                      title="Bookable by customers"
+                      description="On: customers can book and reschedule with this clinician through the website. Off: only staff can place a customer with them, for special or temporary clinicians."
+                      checked={managing.clinician_self_serve}
+                      onChange={(v) => toggleClinicianSelfServe(managing.staff_member_id, v)}
+                    />
+                  </div>
+                ) : null}
               </div>
             </ManageSection>
 
@@ -3588,6 +3667,12 @@ function StaffTab() {
           <div />
         )}
       </BottomSheet>
+
+      <ClinicianHoursSheet
+        staff={clinicianHoursTarget}
+        onClose={() => setClinicianHoursTarget(null)}
+        onError={(msg) => setError(msg)}
+      />
 
       <BottomSheet
         open={addOpen}
@@ -4852,10 +4937,306 @@ function CatalogueTab({ mode }: { mode: CatalogueMode }) {
 // Manages the per-host Google Meet integration. Admin connects one or
 // more Google accounts; native Lounge virtual appointments create their
 // Meet space under the chosen host's OAuth grant so attendance can be
-// pulled back via the Meet REST API (which a shared service account
-// can't read). The Calendly-imported flow continues to use the legacy
-// service-account google-meet-create function until Calendly is fully
-// retired.
+// Seven closed days — the starting point for a clinician with no hours.
+const CLINICIAN_EMPTY_WEEK = [
+  { closed: true }, { closed: true }, { closed: true }, { closed: true },
+  { closed: true }, { closed: true }, { closed: true },
+] as unknown as OpeningHoursWeek;
+
+// ClinicianHoursSheet — the polished hours editor for a virtual
+// impression clinician. Reuses the clinic opening-hours WorkingHoursEditor
+// for the weekly grid (so it matches exactly) and adds a calm one-off
+// overrides section below. Reads/writes lng_clinician_hours +
+// lng_clinician_overrides via the is_admin RPCs.
+function ClinicianHoursSheet({
+  staff,
+  onClose,
+  onError,
+}: {
+  staff: StaffRow | null;
+  onClose: () => void;
+  onError: (message: string) => void;
+}) {
+  const [week, setWeek] = useState<OpeningHoursWeek>(CLINICIAN_EMPTY_WEEK);
+  const [overrides, setOverrides] = useState<ClinicianOverride[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [savingHours, setSavingHours] = useState(false);
+  const [toast, setToast] = useState<{ tone: 'success' | 'error'; title: string } | null>(null);
+
+  // New-override draft.
+  const [ovDate, setOvDate] = useState('');
+  const [ovDateOpen, setOvDateOpen] = useState(false);
+  const ovDateRef = useRef<HTMLButtonElement>(null);
+  const [ovKind, setOvKind] = useState<'available' | 'off'>('available');
+  const [ovStart, setOvStart] = useState('10:00');
+  const [ovEnd, setOvEnd] = useState('14:00');
+  const [ovAllDay, setOvAllDay] = useState(true);
+  const [ovBusy, setOvBusy] = useState(false);
+
+  const staffId = staff?.staff_member_id ?? null;
+
+  useEffect(() => {
+    if (!staffId) return;
+    let cancelled = false;
+    setLoading(true);
+    (async () => {
+      try {
+        const s = await fetchClinicianSchedule(staffId);
+        if (cancelled) return;
+        setWeek(s.weekly);
+        setOverrides(s.overrides);
+      } catch (e) {
+        if (!cancelled) onError(e instanceof Error ? e.message : String(e));
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [staffId, onError]);
+
+  const saveHours = async () => {
+    if (!staffId) return;
+    setSavingHours(true);
+    try {
+      await setClinicianHours(staffId, week);
+      setToast({ tone: 'success', title: 'Hours saved' });
+    } catch (e) {
+      onError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSavingHours(false);
+    }
+  };
+
+  const addOverride = async () => {
+    if (!staffId) return;
+    if (!ovDate) {
+      setToast({ tone: 'error', title: 'Pick a date first' });
+      return;
+    }
+    const useWindow = ovKind === 'available' || !ovAllDay;
+    if (useWindow && ovEnd <= ovStart) {
+      setToast({ tone: 'error', title: 'End time must be after the start' });
+      return;
+    }
+    setOvBusy(true);
+    try {
+      await addClinicianOverride({
+        staffMemberId: staffId,
+        date: ovDate,
+        kind: ovKind,
+        start: useWindow ? ovStart : null,
+        end: useWindow ? ovEnd : null,
+      });
+      const s = await fetchClinicianSchedule(staffId);
+      setOverrides(s.overrides);
+      setOvDate('');
+      setToast({ tone: 'success', title: 'One-off saved' });
+    } catch (e) {
+      onError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setOvBusy(false);
+    }
+  };
+
+  const removeOverride = async (ov: ClinicianOverride) => {
+    if (!staffId) return;
+    try {
+      await deleteClinicianOverride(ov.id);
+      setOverrides((prev) => prev.filter((o) => o.id !== ov.id));
+    } catch (e) {
+      onError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const title = staff ? `Hours · ${staff.display_name}` : 'Hours';
+  const formatOvDate = (iso: string): string => {
+    const [y, m, d] = iso.split('-');
+    return y && m && d ? `${d}/${m}/${y}` : iso;
+  };
+
+  return (
+    <BottomSheet
+      open={!!staff}
+      onClose={savingHours ? () => undefined : onClose}
+      title={title}
+      footer={
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: theme.space[2] }}>
+          <Button variant="tertiary" onClick={onClose} disabled={savingHours}>
+            Close
+          </Button>
+          <Button variant="primary" onClick={saveHours} disabled={savingHours || loading}>
+            {savingHours ? 'Saving…' : 'Save weekly hours'}
+          </Button>
+        </div>
+      }
+    >
+      {loading ? (
+        <Skeleton height={320} radius={12} />
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[5] }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
+            <div>
+              <h3 style={{ margin: 0, fontSize: theme.type.size.md, fontWeight: theme.type.weight.semibold }}>
+                Weekly hours
+              </h3>
+              <p style={{ margin: `${theme.space[1]}px 0 0`, fontSize: theme.type.size.sm, color: theme.color.inkMuted, maxWidth: 560 }}>
+                Tick a day to set when this clinician takes virtual calls. Add a lunch break if they pause midday. A day left unticked means they are not working it.
+              </p>
+            </div>
+            <WorkingHoursEditor value={week} onChange={setWeek} />
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
+            <div>
+              <h3 style={{ margin: 0, fontSize: theme.type.size.md, fontWeight: theme.type.weight.semibold }}>
+                One-off changes
+              </h3>
+              <p style={{ margin: `${theme.space[1]}px 0 0`, fontSize: theme.type.size.sm, color: theme.color.inkMuted, maxWidth: 560 }}>
+                Switch this clinician on for a single date (a picked-up shift) or off for a holiday or sick day. These win over the weekly pattern.
+              </p>
+            </div>
+
+            {overrides.length > 0 ? (
+              <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
+                {overrides.map((ov) => (
+                  <li
+                    key={ov.id}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      gap: theme.space[3],
+                      padding: `${theme.space[3]}px ${theme.space[4]}px`,
+                      borderRadius: theme.radius.input,
+                      border: `1px solid ${theme.color.border}`,
+                      background: theme.color.surface,
+                    }}
+                  >
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2], fontSize: theme.type.size.sm, color: theme.color.ink }}>
+                      <span
+                        style={{
+                          fontSize: theme.type.size.xs,
+                          fontWeight: theme.type.weight.semibold,
+                          color: ov.kind === 'available' ? theme.color.accent : theme.color.warn,
+                          background: ov.kind === 'available' ? theme.color.accentBg : 'rgba(179, 104, 21, 0.1)',
+                          padding: '2px 8px',
+                          borderRadius: theme.radius.pill,
+                          textTransform: 'uppercase',
+                          letterSpacing: theme.type.tracking.wide,
+                        }}
+                      >
+                        {ov.kind === 'available' ? 'Available' : 'Off'}
+                      </span>
+                      <strong>{formatOvDate(ov.override_date)}</strong>
+                      <span style={{ color: theme.color.inkMuted }}>
+                        {ov.start_local && ov.end_local ? `${ov.start_local} to ${ov.end_local}` : 'all day'}
+                      </span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => removeOverride(ov)}
+                      aria-label="Remove one-off"
+                      style={{
+                        appearance: 'none',
+                        border: `1px solid ${theme.color.border}`,
+                        background: theme.color.surface,
+                        color: theme.color.alert,
+                        cursor: 'pointer',
+                        width: 30,
+                        height: 30,
+                        borderRadius: theme.radius.pill,
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        fontFamily: 'inherit',
+                      }}
+                    >
+                      <Trash2 size={14} aria-hidden />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+
+            <div
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: theme.space[3],
+                padding: theme.space[4],
+                borderRadius: theme.radius.input,
+                border: `1px solid ${theme.color.border}`,
+                background: theme.color.bg,
+              }}
+            >
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: theme.space[3] }}>
+                <FieldTrigger
+                  ref={ovDateRef}
+                  label="Date"
+                  icon={<CalendarClock size={16} aria-hidden />}
+                  value={ovDate ? formatOvDate(ovDate) : ''}
+                  placeholder="Pick a date"
+                  open={ovDateOpen}
+                  onClick={() => setOvDateOpen((v) => !v)}
+                />
+                <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[1] }}>
+                  <span style={{ fontSize: theme.type.size.xs, color: theme.color.inkMuted, fontWeight: theme.type.weight.medium }}>
+                    Working or off
+                  </span>
+                  <SegmentedControl<'available' | 'off'>
+                    options={[
+                      { value: 'available', label: 'Working' },
+                      { value: 'off', label: 'Off' },
+                    ]}
+                    value={ovKind}
+                    onChange={setOvKind}
+                    size="sm"
+                    fullWidth
+                  />
+                </div>
+              </div>
+              <DatePicker
+                open={ovDateOpen}
+                onClose={() => setOvDateOpen(false)}
+                value={ovDate}
+                onChange={(iso) => setOvDate(iso)}
+                anchorRef={ovDateRef}
+                title="Pick the date"
+                minIso={todayIso()}
+              />
+              {ovKind === 'off' ? (
+                <Checkbox checked={ovAllDay} onChange={setOvAllDay} size={18} label="Off the whole day" />
+              ) : null}
+              {ovKind === 'available' || !ovAllDay ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[2] }}>
+                  <span style={{ fontSize: theme.type.size.sm, color: theme.color.inkMuted, width: 48 }}>From</span>
+                  <TimeField value={ovStart} onChange={setOvStart} ariaLabel="Override start time" />
+                  <span aria-hidden style={{ color: theme.color.inkSubtle }}>—</span>
+                  <TimeField value={ovEnd} onChange={setOvEnd} ariaLabel="Override end time" />
+                </div>
+              ) : null}
+              <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                <Button variant="secondary" size="sm" onClick={addOverride} disabled={ovBusy}>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
+                    <Plus size={15} aria-hidden /> {ovBusy ? 'Adding…' : 'Add one-off'}
+                  </span>
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      {toast ? (
+        <div style={{ position: 'fixed', bottom: theme.space[6], left: '50%', transform: 'translateX(-50%)', zIndex: 1200 }}>
+          <Toast tone={toast.tone} title={toast.title} duration={3000} onDismiss={() => setToast(null)} />
+        </div>
+      ) : null}
+    </BottomSheet>
+  );
+}
+
 function MeetHostsCard() {
   const { hosts, loading, error, refresh } = useMeetHosts({ activeOnly: false });
   const staff = useStaff();
@@ -4930,10 +5311,6 @@ function MeetHostsCard() {
   // we're about to remove so the sheet can render its label.
   const [removeTarget, setRemoveTarget] = useState<{ id: string; name: string; email: string | null; isStaff: boolean } | null>(null);
   const [removeBusy, setRemoveBusy] = useState(false);
-  // Host whose working-hours editor is open.
-  const [scheduleTarget, setScheduleTarget] = useState<MeetHostPublic | null>(null);
-  // Host id currently mid self-serve toggle (disables the button).
-  const [selfServeBusy, setSelfServeBusy] = useState<string | null>(null);
   const navigate = useNavigate();
 
   // Staff members not already registered as a recognition host, active
@@ -5024,22 +5401,6 @@ function MeetHostsCard() {
         title: nextActive ? 'Could not reactivate host' : 'Could not deactivate host',
         description: e instanceof Error ? e.message : String(e),
       });
-    }
-  };
-
-  const onToggleSelfServe = async (host: MeetHostPublic) => {
-    setSelfServeBusy(host.id);
-    try {
-      await setMeetHostSelfServe(host.id, !host.self_serve);
-      refresh();
-    } catch (e) {
-      setToast({
-        tone: 'error',
-        title: 'Could not change self-serve setting',
-        description: e instanceof Error ? e.message : String(e),
-      });
-    } finally {
-      setSelfServeBusy(null);
     }
   };
 
@@ -5195,7 +5556,6 @@ function MeetHostsCard() {
                         : 'Staff. Recognised by name.'
                       : host.google_email}
                     {host.is_active ? null : <span style={{ marginLeft: 8 }}>· Inactive</span>}
-                    {host.self_serve ? null : <span style={{ marginLeft: 8 }}>· Staff only</span>}
                   </p>
                 </div>
               </div>
@@ -5248,52 +5608,6 @@ function MeetHostsCard() {
                     <ArrowDown size={13} aria-hidden />
                   </button>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setScheduleTarget(host)}
-                  style={{
-                    appearance: 'none',
-                    border: `1px solid ${theme.color.border}`,
-                    background: theme.color.surface,
-                    color: theme.color.ink,
-                    cursor: 'pointer',
-                    padding: `6px 12px`,
-                    borderRadius: theme.radius.pill,
-                    fontSize: theme.type.size.xs,
-                    fontWeight: theme.type.weight.semibold,
-                    fontFamily: 'inherit',
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: 6,
-                  }}
-                >
-                  <Clock size={13} aria-hidden /> Hours
-                </button>
-                <button
-                  type="button"
-                  onClick={() => onToggleSelfServe(host)}
-                  disabled={selfServeBusy === host.id}
-                  title={
-                    host.self_serve
-                      ? 'Bookable by customers via the public widget and self-serve reschedule. Tap to make staff-only.'
-                      : 'Hidden from all self-serve. Only staff can place a customer with them. Tap to allow self-serve.'
-                  }
-                  style={{
-                    appearance: 'none',
-                    border: `1px solid ${host.self_serve ? theme.color.border : theme.color.accent}`,
-                    background: host.self_serve ? theme.color.surface : theme.color.accentBg,
-                    color: host.self_serve ? theme.color.ink : theme.color.accent,
-                    cursor: selfServeBusy === host.id ? 'wait' : 'pointer',
-                    padding: `6px 12px`,
-                    borderRadius: theme.radius.pill,
-                    fontSize: theme.type.size.xs,
-                    fontWeight: theme.type.weight.semibold,
-                    fontFamily: 'inherit',
-                    opacity: selfServeBusy === host.id ? 0.7 : 1,
-                  }}
-                >
-                  {host.self_serve ? 'Self-serve' : 'Staff only'}
-                </button>
                 <button
                   type="button"
                   onClick={() => onToggleActive(host.id, !host.is_active)}
@@ -5571,369 +5885,10 @@ function MeetHostsCard() {
           </div>
         ) : null}
       </BottomSheet>
-      <MeetHostScheduleSheet
-        host={scheduleTarget}
-        onClose={() => setScheduleTarget(null)}
-        onError={(title, description) => setToast({ tone: 'error', title, description })}
-        onSaved={(title) => setToast({ tone: 'success', title })}
-      />
     </Card>
   );
 }
 
-// Day labels, Mon-first (0=Mon..6=Sun) matching lng_meet_host_hours.
-const MEET_DAY_LABELS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
-
-// Working-hours editor for one clinician: a weekly grid (windows per
-// weekday, split shifts allowed) plus a list of date overrides
-// (available / off). Saving the weekly grid replaces the whole set in
-// one transaction; overrides add/delete individually.
-function MeetHostScheduleSheet({
-  host,
-  onClose,
-  onError,
-  onSaved,
-}: {
-  host: MeetHostPublic | null;
-  onClose: () => void;
-  onError: (title: string, description?: string) => void;
-  onSaved: (title: string) => void;
-}) {
-  const [schedule, setSchedule] = useState<MeetHostSchedule | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [savingHours, setSavingHours] = useState(false);
-  // New-override draft.
-  const [ovDate, setOvDate] = useState('');
-  const [ovKind, setOvKind] = useState<'available' | 'off'>('available');
-  const [ovStart, setOvStart] = useState('10:00');
-  const [ovEnd, setOvEnd] = useState('14:00');
-  const [ovAllDay, setOvAllDay] = useState(false);
-  const [ovBusy, setOvBusy] = useState(false);
-
-  const hostId = host?.id ?? null;
-
-  useEffect(() => {
-    if (!hostId) {
-      setSchedule(null);
-      return;
-    }
-    let cancelled = false;
-    setLoading(true);
-    (async () => {
-      try {
-        const s = await fetchMeetHostSchedule(hostId);
-        if (!cancelled) setSchedule(s);
-      } catch (e) {
-        if (!cancelled) onError('Could not load hours', e instanceof Error ? e.message : String(e));
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [hostId, onError]);
-
-  // Group weekly windows by weekday for rendering.
-  const weeklyByDay = (dow: number): MeetHostWeeklyWindow[] =>
-    (schedule?.weekly ?? []).filter((w) => w.day_of_week === dow);
-
-  const updateWeekly = (next: MeetHostWeeklyWindow[]) =>
-    setSchedule((prev) => (prev ? { ...prev, weekly: next } : prev));
-
-  const addWindow = (dow: number) => {
-    if (!schedule) return;
-    updateWeekly([...schedule.weekly, { day_of_week: dow, start: '09:00', end: '17:00' }]);
-  };
-
-  const removeWindow = (dow: number, indexInDay: number) => {
-    if (!schedule) return;
-    let seen = -1;
-    updateWeekly(
-      schedule.weekly.filter((w) => {
-        if (w.day_of_week !== dow) return true;
-        seen += 1;
-        return seen !== indexInDay;
-      }),
-    );
-  };
-
-  const editWindow = (dow: number, indexInDay: number, field: 'start' | 'end', value: string) => {
-    if (!schedule) return;
-    let seen = -1;
-    updateWeekly(
-      schedule.weekly.map((w) => {
-        if (w.day_of_week !== dow) return w;
-        seen += 1;
-        return seen === indexInDay ? { ...w, [field]: value } : w;
-      }),
-    );
-  };
-
-  const saveHours = async () => {
-    if (!hostId || !schedule) return;
-    // Validate every window before sending.
-    for (const w of schedule.weekly) {
-      if (w.end <= w.start) {
-        onError('Check the hours', `${MEET_DAY_LABELS[w.day_of_week]} has an end time at or before its start.`);
-        return;
-      }
-    }
-    setSavingHours(true);
-    try {
-      await setMeetHostHours(hostId, schedule.weekly);
-      onSaved('Hours saved');
-    } catch (e) {
-      onError('Could not save hours', e instanceof Error ? e.message : String(e));
-    } finally {
-      setSavingHours(false);
-    }
-  };
-
-  const addOverride = async () => {
-    if (!hostId) return;
-    if (!ovDate) {
-      onError('Pick a date for the override');
-      return;
-    }
-    if (ovKind === 'available' && ovEnd <= ovStart) {
-      onError('Check the override times', 'End time must be after the start time.');
-      return;
-    }
-    setOvBusy(true);
-    try {
-      const useWindow = ovKind === 'available' || !ovAllDay;
-      await addMeetHostOverride({
-        hostId,
-        date: ovDate,
-        kind: ovKind,
-        start: useWindow ? ovStart : null,
-        end: useWindow ? ovEnd : null,
-      });
-      const s = await fetchMeetHostSchedule(hostId);
-      setSchedule(s);
-      setOvDate('');
-      onSaved('Override added');
-    } catch (e) {
-      onError('Could not add override', e instanceof Error ? e.message : String(e));
-    } finally {
-      setOvBusy(false);
-    }
-  };
-
-  const removeOverride = async (ov: MeetHostOverride) => {
-    if (!hostId) return;
-    try {
-      await deleteMeetHostOverride(ov.id);
-      setSchedule((prev) =>
-        prev ? { ...prev, overrides: prev.overrides.filter((o) => o.id !== ov.id) } : prev,
-      );
-    } catch (e) {
-      onError('Could not remove override', e instanceof Error ? e.message : String(e));
-    }
-  };
-
-  const timeInputStyle: CSSProperties = {
-    appearance: 'none',
-    border: `1px solid ${theme.color.border}`,
-    background: theme.color.surface,
-    color: theme.color.ink,
-    borderRadius: theme.radius.input,
-    padding: '6px 8px',
-    fontSize: theme.type.size.sm,
-    fontFamily: 'inherit',
-  };
-  const smallPill: CSSProperties = {
-    appearance: 'none',
-    border: `1px solid ${theme.color.border}`,
-    background: theme.color.surface,
-    color: theme.color.ink,
-    cursor: 'pointer',
-    padding: '5px 10px',
-    borderRadius: theme.radius.pill,
-    fontSize: theme.type.size.xs,
-    fontWeight: theme.type.weight.semibold,
-    fontFamily: 'inherit',
-    display: 'inline-flex',
-    alignItems: 'center',
-    gap: 5,
-  };
-
-  return (
-    <BottomSheet
-      open={!!host}
-      onClose={savingHours ? () => undefined : onClose}
-      title={host ? `Hours · ${host.display_name}` : 'Hours'}
-      footer={
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: theme.space[2], flexWrap: 'wrap' }}>
-          <span style={{ fontSize: theme.type.size.xs, color: theme.color.inkMuted, maxWidth: 360 }}>
-            No hours set means this clinician is not bookable. A casual clinician can be left empty here and switched on for specific dates below.
-          </span>
-          <div style={{ display: 'flex', gap: theme.space[2] }}>
-            <Button variant="tertiary" onClick={onClose} disabled={savingHours}>
-              Close
-            </Button>
-            <Button variant="primary" onClick={saveHours} disabled={savingHours || loading}>
-              {savingHours ? 'Saving…' : 'Save weekly hours'}
-            </Button>
-          </div>
-        </div>
-      }
-    >
-      {loading || !schedule ? (
-        <Skeleton height={220} radius={12} />
-      ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[5] }}>
-          {/* Weekly grid */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
-            <h3 style={{ margin: 0, fontSize: theme.type.size.base, fontWeight: theme.type.weight.semibold }}>
-              Weekly hours
-            </h3>
-            {MEET_DAY_LABELS.map((label, dow) => {
-              const windows = weeklyByDay(dow);
-              return (
-                <div
-                  key={dow}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'flex-start',
-                    gap: theme.space[3],
-                    padding: `${theme.space[2]}px 0`,
-                    borderBottom: `1px solid ${theme.color.border}`,
-                  }}
-                >
-                  <span style={{ width: 92, flexShrink: 0, fontSize: theme.type.size.sm, color: theme.color.ink, paddingTop: 6 }}>
-                    {label}
-                  </span>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2], flex: 1, minWidth: 0 }}>
-                    {windows.length === 0 ? (
-                      <span style={{ fontSize: theme.type.size.sm, color: theme.color.inkMuted, paddingTop: 6 }}>Not working</span>
-                    ) : (
-                      windows.map((w, i) => (
-                        <div key={i} style={{ display: 'flex', alignItems: 'center', gap: theme.space[2], flexWrap: 'wrap' }}>
-                          <input
-                            type="time"
-                            value={w.start}
-                            onChange={(e) => editWindow(dow, i, 'start', e.target.value)}
-                            style={timeInputStyle}
-                          />
-                          <span style={{ color: theme.color.inkMuted }}>to</span>
-                          <input
-                            type="time"
-                            value={w.end}
-                            onChange={(e) => editWindow(dow, i, 'end', e.target.value)}
-                            style={timeInputStyle}
-                          />
-                          <button
-                            type="button"
-                            onClick={() => removeWindow(dow, i)}
-                            aria-label="Remove window"
-                            style={{ ...smallPill, color: theme.color.alert }}
-                          >
-                            <X size={13} aria-hidden />
-                          </button>
-                        </div>
-                      ))
-                    )}
-                    <button type="button" onClick={() => addWindow(dow)} style={{ ...smallPill, alignSelf: 'flex-start' }}>
-                      <Plus size={13} aria-hidden /> Add window
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-
-          {/* Date overrides */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
-            <div>
-              <h3 style={{ margin: 0, fontSize: theme.type.size.base, fontWeight: theme.type.weight.semibold }}>
-                Date overrides
-              </h3>
-              <p style={{ margin: `${theme.space[1]}px 0 0`, fontSize: theme.type.size.sm, color: theme.color.inkMuted, maxWidth: 560 }}>
-                Switch a clinician on for a one-off date (picked-up shift) or off for a holiday or sick day. Overrides win over the weekly pattern.
-              </p>
-            </div>
-
-            {schedule.overrides.length > 0 ? (
-              <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
-                {schedule.overrides.map((ov) => (
-                  <li
-                    key={ov.id}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      gap: theme.space[3],
-                      padding: `${theme.space[2]}px ${theme.space[3]}px`,
-                      borderRadius: theme.radius.input,
-                      border: `1px solid ${theme.color.border}`,
-                      background: theme.color.surface,
-                    }}
-                  >
-                    <span style={{ fontSize: theme.type.size.sm, color: theme.color.ink }}>
-                      <strong>{ov.override_date}</strong>{' · '}
-                      {ov.kind === 'available' ? 'Available' : 'Off'}
-                      {ov.start_local && ov.end_local ? ` ${ov.start_local}–${ov.end_local}` : ' (all day)'}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => removeOverride(ov)}
-                      aria-label="Remove override"
-                      style={{ ...smallPill, color: theme.color.alert }}
-                    >
-                      <Trash2 size={13} aria-hidden />
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            ) : null}
-
-            {/* New override */}
-            <div style={{ display: 'flex', alignItems: 'flex-end', gap: theme.space[2], flexWrap: 'wrap' }}>
-              <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: theme.type.size.xs, color: theme.color.inkMuted }}>
-                Date
-                <input type="date" value={ovDate} onChange={(e) => setOvDate(e.target.value)} style={timeInputStyle} />
-              </label>
-              <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: theme.type.size.xs, color: theme.color.inkMuted }}>
-                Type
-                <select
-                  value={ovKind}
-                  onChange={(e) => setOvKind(e.target.value as 'available' | 'off')}
-                  style={timeInputStyle}
-                >
-                  <option value="available">Available</option>
-                  <option value="off">Off</option>
-                </select>
-              </label>
-              {ovKind === 'off' ? (
-                <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: theme.type.size.xs, color: theme.color.inkMuted, paddingBottom: 8 }}>
-                  <input type="checkbox" checked={ovAllDay} onChange={(e) => setOvAllDay(e.target.checked)} />
-                  All day
-                </label>
-              ) : null}
-              {ovKind === 'available' || !ovAllDay ? (
-                <>
-                  <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: theme.type.size.xs, color: theme.color.inkMuted }}>
-                    From
-                    <input type="time" value={ovStart} onChange={(e) => setOvStart(e.target.value)} style={timeInputStyle} />
-                  </label>
-                  <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: theme.type.size.xs, color: theme.color.inkMuted }}>
-                    To
-                    <input type="time" value={ovEnd} onChange={(e) => setOvEnd(e.target.value)} style={timeInputStyle} />
-                  </label>
-                </>
-              ) : null}
-              <button type="button" onClick={addOverride} disabled={ovBusy} style={{ ...smallPill, padding: '8px 12px', opacity: ovBusy ? 0.7 : 1 }}>
-                <Plus size={14} aria-hidden /> {ovBusy ? 'Adding…' : 'Add override'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-    </BottomSheet>
-  );
-}
 
 type PricingModel = 'flat' | 'per_unit' | 'per_arch';
 

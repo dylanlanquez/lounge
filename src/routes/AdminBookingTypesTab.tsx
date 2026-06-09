@@ -2003,7 +2003,7 @@ function summariseHours(week: OpeningHoursWeek | null | undefined): string {
 // left, open/close TimeFields on the right, optional lunch-break
 // sub-row underneath. Same shape used for the clinic-wide editor and
 // for the per-booking-type override.
-function WorkingHoursEditor({
+export function WorkingHoursEditor({
   value,
   onChange,
 }: {
@@ -2268,7 +2268,7 @@ function WorkingHoursEditor({
 // Lightweight time-of-day field. Renders a native <input type="time">
 // but styled to match the rest of the form. Inline styles only —
 // honours the Lounge no-Tailwind rule.
-function TimeField({
+export function TimeField({
   value,
   onChange,
   ariaLabel,

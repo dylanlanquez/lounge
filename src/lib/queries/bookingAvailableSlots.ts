@@ -25,10 +25,10 @@ export interface AvailableSlotsArgs {
   // Step granularity in minutes. Defaults to the picker's 15.
   stepMinutes?: number;
   // Virtual impressions only: narrow availability to one clinician's
-  // hours (the staff picker's chosen Meet host). Null = any on-shift
-  // clinician (staff path includes special/temp clinicians). Ignored
-  // by every non-virtual service type.
-  meetHostId?: string | null;
+  // hours (the staff picker's chosen clinician = a staff member). Null =
+  // any on-shift clinician (staff path includes staff-only clinicians).
+  // Ignored by every non-virtual service type.
+  staffMemberId?: string | null;
 }
 
 export async function loadAvailableSlots(
@@ -45,7 +45,7 @@ export async function loadAvailableSlots(
       p_product_key: args.productKey ?? null,
       p_arch: args.arch ?? null,
       p_step_minutes: args.stepMinutes ?? 15,
-      p_meet_host_id: args.meetHostId ?? null,
+      p_staff_member_id: args.staffMemberId ?? null,
     },
   );
   if (error) throw new Error(error.message);

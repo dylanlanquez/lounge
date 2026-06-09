@@ -32,11 +32,6 @@ export interface MeetHostPublic {
   google_user_id: string | null;
   // Admin-controlled display order (lower = earlier).
   sort_order: number;
-  // When true the host appears in self-serve availability (public widget
-  // + self-serve reschedule). When false they are a special/temp
-  // clinician used only when staff place a customer with them
-  // explicitly — hidden from all self-serve surfaces.
-  self_serve: boolean;
 }
 
 // Display order is admin-controlled via sort_order (set by the reorder
@@ -74,7 +69,7 @@ export function useMeetHosts(opts: { activeOnly?: boolean; ownersOnly?: boolean 
     (async () => {
       let q = supabase
         .from('lng_meet_hosts')
-        .select('id, display_name, google_email, is_active, created_at, kind, staff_member_id, google_user_id, sort_order, self_serve');
+        .select('id, display_name, google_email, is_active, created_at, kind, staff_member_id, google_user_id, sort_order');
       if (activeOnly) q = q.eq('is_active', true);
       if (ownersOnly) q = q.eq('kind', 'oauth');
       const { data, error: err } = await q;
@@ -239,119 +234,6 @@ export async function batchUpdateMeetHostSortOrders(
         }),
     ),
   );
-}
-
-// ── Per-clinician working hours ──────────────────────────────────
-// Weekly recurring windows + date-specific overrides drive virtual
-// availability. day_of_week is 0=Mon..6=Sun (clinic-local times). See
-// migration 20260609000001_lng_meet_host_hours.
-
-export interface MeetHostWeeklyWindow {
-  day_of_week: number; // 0=Mon..6=Sun
-  start: string; // 'HH:MM'
-  end: string; // 'HH:MM'
-}
-
-export interface MeetHostOverride {
-  id: string;
-  override_date: string; // 'YYYY-MM-DD'
-  kind: 'available' | 'off';
-  // null for a whole-day 'off'. 'HH:MM' otherwise.
-  start_local: string | null;
-  end_local: string | null;
-  note: string | null;
-}
-
-export interface MeetHostSchedule {
-  weekly: MeetHostWeeklyWindow[];
-  overrides: MeetHostOverride[];
-}
-
-// 'HH:MM:SS' (Postgres time) -> 'HH:MM' for the editor inputs.
-function trimTime(t: string | null): string | null {
-  if (!t) return null;
-  return t.slice(0, 5);
-}
-
-export async function fetchMeetHostSchedule(hostId: string): Promise<MeetHostSchedule> {
-  const [hoursRes, overridesRes] = await Promise.all([
-    supabase
-      .from('lng_meet_host_hours')
-      .select('day_of_week, start_local, end_local')
-      .eq('host_id', hostId)
-      .order('day_of_week', { ascending: true })
-      .order('start_local', { ascending: true }),
-    supabase
-      .from('lng_meet_host_overrides')
-      .select('id, override_date, kind, start_local, end_local, note')
-      .eq('host_id', hostId)
-      .order('override_date', { ascending: true }),
-  ]);
-  if (hoursRes.error) throw new Error(hoursRes.error.message);
-  if (overridesRes.error) throw new Error(overridesRes.error.message);
-
-  const weekly: MeetHostWeeklyWindow[] = (hoursRes.data ?? []).map((r) => ({
-    day_of_week: r.day_of_week as number,
-    start: trimTime(r.start_local as string) ?? '09:00',
-    end: trimTime(r.end_local as string) ?? '17:00',
-  }));
-  const overrides: MeetHostOverride[] = (overridesRes.data ?? []).map((r) => ({
-    id: r.id as string,
-    override_date: r.override_date as string,
-    kind: r.kind as 'available' | 'off',
-    start_local: trimTime(r.start_local as string | null),
-    end_local: trimTime(r.end_local as string | null),
-    note: (r.note as string | null) ?? null,
-  }));
-  return { weekly, overrides };
-}
-
-// Replaces the host's entire weekly hours set in one transaction
-// (lng_set_meet_host_hours). The editor reads all, edits, saves all.
-export async function setMeetHostHours(
-  hostId: string,
-  windows: MeetHostWeeklyWindow[],
-): Promise<void> {
-  const { error } = await supabase.rpc('lng_set_meet_host_hours', {
-    p_host_id: hostId,
-    p_windows: windows,
-  });
-  if (error) throw new Error(error.message);
-}
-
-export async function addMeetHostOverride(args: {
-  hostId: string;
-  date: string; // 'YYYY-MM-DD'
-  kind: 'available' | 'off';
-  start?: string | null; // 'HH:MM'
-  end?: string | null;
-  note?: string | null;
-}): Promise<string> {
-  const { data, error } = await supabase.rpc('lng_add_meet_host_override', {
-    p_host_id: args.hostId,
-    p_date: args.date,
-    p_kind: args.kind,
-    p_start_local: args.start ?? null,
-    p_end_local: args.end ?? null,
-    p_note: args.note ?? null,
-  });
-  if (error) throw new Error(error.message);
-  return data as string;
-}
-
-export async function deleteMeetHostOverride(overrideId: string): Promise<void> {
-  const { error } = await supabase.rpc('lng_delete_meet_host_override', {
-    p_override_id: overrideId,
-  });
-  if (error) throw new Error(error.message);
-}
-
-export async function setMeetHostSelfServe(hostId: string, selfServe: boolean): Promise<void> {
-  const { error } = await supabase.rpc('lng_set_meet_host_self_serve', {
-    p_host_id: hostId,
-    p_self_serve: selfServe,
-  });
-  if (error) throw new Error(error.message);
 }
 
 // Booking-flow caller: invoke the space-creation edge function once

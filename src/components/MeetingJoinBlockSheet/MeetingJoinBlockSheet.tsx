@@ -59,12 +59,12 @@ export function MeetingJoinBlockSheet({
       title={
         isDevice
           ? `${verbCapitalised} from a laptop or desktop`
-          : 'Customer Service cannot run meetings'
+          : 'Only a virtual impression clinician can run the call'
       }
       description={
         isDevice
           ? `Virtual impression appointments need a full keyboard, camera, and screen-sharing. ${verbCapitalised} the meeting from a laptop or desktop, not from this tablet.`
-          : `Customer Service is not set up to ${verb} virtual meetings. An impression clinician handles the call; you can still help with reschedules, cancellations, and resending the confirmation.`
+          : `Running the video call is for staff set up as a virtual impression clinician (Admin, Staff). You can still help with reschedules, cancellations, and resending the confirmation.`
       }
       footer={
         <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
