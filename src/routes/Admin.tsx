@@ -4926,6 +4926,9 @@ export function ClinicianHoursSheet({
   selfEdit?: boolean;
 }) {
   const [week, setWeek] = useState<OpeningHoursWeek>(CLINICIAN_EMPTY_WEEK);
+  // Snapshot of the last-saved weekly hours, so we can show an
+  // "unsaved changes" cue and only enable Save when something differs.
+  const [savedWeek, setSavedWeek] = useState<OpeningHoursWeek>(CLINICIAN_EMPTY_WEEK);
   const [overrides, setOverrides] = useState<ClinicianOverride[]>([]);
   const [loading, setLoading] = useState(false);
   const [savingHours, setSavingHours] = useState(false);
@@ -4957,6 +4960,7 @@ export function ClinicianHoursSheet({
         const s = await fetchClinicianSchedule(staffId);
         if (cancelled) return;
         setWeek(s.weekly);
+        setSavedWeek(s.weekly);
         setOverrides(s.overrides);
       } catch (e) {
         if (!cancelled) onError(e instanceof Error ? e.message : String(e));
@@ -4987,6 +4991,7 @@ export function ClinicianHoursSheet({
       }
       if (selfEdit) await setOwnClinicianHours(week);
       else await setClinicianHours(staffId, week);
+      setSavedWeek(week);
       setToast({ tone: 'success', title: 'Hours saved' });
     } catch (e) {
       onError(e instanceof Error ? e.message : String(e));
@@ -5067,6 +5072,15 @@ export function ClinicianHoursSheet({
     }
   };
 
+  // Unsaved-changes detection. Weekly grid differs from the last save,
+  // or a Specific date / Day off row is filled but not yet committed.
+  // (Specific date / Day off rows added via their own button save
+  // instantly; this catches a row left filled-but-not-added.)
+  const weekDirty = JSON.stringify(week) !== JSON.stringify(savedWeek);
+  const workPending = !!workDate && workEnd > workStart;
+  const offPending = !!offDate && (offAllDay || offEnd > offStart);
+  const dirty = weekDirty || workPending || offPending;
+
   const title = staff ? `Hours · ${staff.display_name}` : 'Hours';
   const formatOvDate = (iso: string): string => {
     const [y, m, d] = iso.split('-');
@@ -5081,12 +5095,38 @@ export function ClinicianHoursSheet({
       footer={
         // Weekly hours commit with this button; specific dates and days
         // off save the moment they're added.
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: theme.space[2] }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[3] }}>
+          {/* Save-state cue so it's obvious nothing's stored until Save
+              is pressed: amber "Unsaved changes" while dirty, a quiet
+              "All changes saved" once clean. */}
+          <span
+            style={{
+              marginRight: 'auto',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: theme.space[2],
+              fontSize: theme.type.size.sm,
+              fontWeight: dirty ? theme.type.weight.semibold : theme.type.weight.regular,
+              color: dirty ? theme.color.warn : theme.color.inkSubtle,
+            }}
+          >
+            <span
+              aria-hidden
+              style={{
+                width: 8,
+                height: 8,
+                borderRadius: theme.radius.pill,
+                background: dirty ? theme.color.warn : theme.color.border,
+                flexShrink: 0,
+              }}
+            />
+            {dirty ? 'Unsaved changes' : 'All changes saved'}
+          </span>
           <Button variant="tertiary" onClick={onClose} disabled={savingHours}>
             Close
           </Button>
-          <Button variant="primary" onClick={saveHours} disabled={savingHours || loading}>
-            {savingHours ? 'Saving…' : 'Save hours'}
+          <Button variant="primary" onClick={saveHours} disabled={savingHours || loading || !dirty}>
+            {savingHours ? 'Saving…' : dirty ? 'Save hours' : 'Saved'}
           </Button>
         </div>
       }
