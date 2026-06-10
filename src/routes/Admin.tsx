@@ -4902,6 +4902,11 @@ export function ClinicianHoursSheet({
   const [ovAllDay, setOvAllDay] = useState(true);
   const [ovBusy, setOvBusy] = useState(false);
 
+  // How the clinician wants to set availability: a repeating weekly
+  // pattern, or specific dates only (the override calendar). Defaults to
+  // weekly — the familiar primary view.
+  const [mode, setMode] = useState<'weekly' | 'dates'>('weekly');
+
   const staffId = staff?.staff_member_id ?? null;
 
   useEffect(() => {
@@ -5002,39 +5007,91 @@ export function ClinicianHoursSheet({
       onClose={savingHours ? () => undefined : onClose}
       title={title}
       footer={
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: theme.space[2] }}>
-          <Button variant="tertiary" onClick={onClose} disabled={savingHours}>
-            Close
-          </Button>
-          <Button variant="primary" onClick={saveHours} disabled={savingHours || loading}>
-            {savingHours ? 'Saving…' : 'Save weekly hours'}
-          </Button>
-        </div>
+        mode === 'weekly' ? (
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: theme.space[2] }}>
+            <Button variant="tertiary" onClick={onClose} disabled={savingHours}>
+              Close
+            </Button>
+            <Button variant="primary" onClick={saveHours} disabled={savingHours || loading}>
+              {savingHours ? 'Saving…' : 'Save weekly hours'}
+            </Button>
+          </div>
+        ) : (
+          // Specific dates save the moment they're added, so there's
+          // nothing to commit here — just close.
+          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+            <Button variant="primary" onClick={onClose}>
+              Done
+            </Button>
+          </div>
+        )
       }
     >
       {loading ? (
         <Skeleton height={320} radius={12} />
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[5] }}>
+          {/* Choose the approach first: a repeating weekly pattern, or
+              availability set per specific date. Plus a persistent
+              reminder that every time on this sheet is UK time (BST) —
+              a clinician may be working from another timezone. */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
             <div>
               <h3 style={{ margin: 0, fontSize: theme.type.size.md, fontWeight: theme.type.weight.semibold }}>
-                Weekly hours
+                How would you like to set {selfEdit ? 'your' : 'these'} hours?
               </h3>
               <p style={{ margin: `${theme.space[1]}px 0 0`, fontSize: theme.type.size.sm, color: theme.color.inkMuted, maxWidth: 560 }}>
-                Tick a day to set when this clinician takes virtual calls. Add a lunch break if they pause midday. A day left unticked means they are not working it.
+                Use a repeating weekly pattern, or set availability for specific dates only.
+              </p>
+            </div>
+            <SegmentedControl<'weekly' | 'dates'>
+              options={[
+                { value: 'weekly', label: 'Repeating weekly' },
+                { value: 'dates', label: 'Specific dates' },
+              ]}
+              value={mode}
+              onChange={setMode}
+              fullWidth
+            />
+            <div
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: theme.space[2],
+                padding: `${theme.space[2]}px ${theme.space[3]}px`,
+                borderRadius: theme.radius.input,
+                background: theme.color.accentBg,
+                color: theme.color.accent,
+                fontSize: theme.type.size.sm,
+                fontWeight: theme.type.weight.medium,
+              }}
+            >
+              <Clock size={15} aria-hidden /> All times are UK time (BST).
+            </div>
+          </div>
+
+          {mode === 'weekly' ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
+            <div>
+              <h3 style={{ margin: 0, fontSize: theme.type.size.md, fontWeight: theme.type.weight.semibold }}>
+                Repeating weekly hours
+              </h3>
+              <p style={{ margin: `${theme.space[1]}px 0 0`, fontSize: theme.type.size.sm, color: theme.color.inkMuted, maxWidth: 560 }}>
+                Tick a day to set when {selfEdit ? 'you take' : 'this clinician takes'} virtual calls (UK time). Add a lunch break for a midday pause. A day left unticked means {selfEdit ? 'you are' : 'they are'} not working it.
               </p>
             </div>
             <WorkingHoursEditor value={week} onChange={setWeek} />
           </div>
-
+          ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
             <div>
               <h3 style={{ margin: 0, fontSize: theme.type.size.md, fontWeight: theme.type.weight.semibold }}>
-                One-off changes
+                Specific dates
               </h3>
               <p style={{ margin: `${theme.space[1]}px 0 0`, fontSize: theme.type.size.sm, color: theme.color.inkMuted, maxWidth: 560 }}>
-                Switch this clinician on for a single date (a picked-up shift) or off for a holiday or sick day. These win over the weekly pattern.
+                {selfEdit
+                  ? 'Pick the dates you can take calls and set the times (UK time), or mark a date off. Anything here wins over your weekly pattern.'
+                  : 'Switch this clinician on for a single date (a picked-up shift) or off for a holiday or sick day. These win over the weekly pattern.'}
               </p>
             </div>
 
@@ -5166,6 +5223,7 @@ export function ClinicianHoursSheet({
               </div>
             </div>
           </div>
+          )}
         </div>
       )}
       {toast ? (
