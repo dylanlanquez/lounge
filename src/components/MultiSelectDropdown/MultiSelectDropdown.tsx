@@ -134,14 +134,26 @@ export function MultiSelectDropdown<T extends string>({
     background: theme.color.surface,
     border: `1px solid ${open ? theme.color.ink : theme.color.border}`,
     borderRadius: theme.radius.input,
-    padding: `${theme.space[3]}px ${theme.space[4]}px`,
-    paddingRight: theme.space[8],
     display: 'flex',
-    flexDirection: 'column',
-    gap: theme.space[2],
     position: 'relative',
     transition: `border-color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
     opacity: disabled ? 0.5 : 1,
+    // With an inline label the trigger stacks (label over value). Without
+    // one it behaves like a standard field: a single centered row at the
+    // shared input height, so it lines up beside Inputs / date fields
+    // that carry their label externally.
+    ...(label
+      ? {
+          flexDirection: 'column',
+          gap: theme.space[2],
+          padding: `${theme.space[3]}px ${theme.space[4]}px`,
+          paddingRight: theme.space[8],
+        }
+      : {
+          alignItems: 'center',
+          minHeight: theme.layout.inputHeight,
+          padding: `0 ${theme.space[8]}px 0 ${theme.space[4]}px`,
+        }),
   };
 
   return (
@@ -184,10 +196,15 @@ export function MultiSelectDropdown<T extends string>({
         ) : null}
         <span
           style={{
-            fontSize: theme.type.size.md,
-            fontWeight: theme.type.weight.semibold,
+            // Labelled (stacked) trigger keeps the larger value type;
+            // label-less (inline) trigger matches a standard input value.
+            fontSize: label ? theme.type.size.md : theme.type.size.base,
+            fontWeight: label ? theme.type.weight.semibold : theme.type.weight.medium,
             color: hasValue ? theme.color.ink : theme.color.inkSubtle,
-            letterSpacing: theme.type.tracking.tight,
+            letterSpacing: label ? theme.type.tracking.tight : 'normal',
+            // In the inline layout the value must be free to shrink so the
+            // ellipsis triggers and the chevron stays put.
+            ...(label ? {} : { flex: 1, minWidth: 0 }),
             // Long comma lists shouldn't push the chevron off the
             // trigger or wrap onto two lines; truncate with an
             // ellipsis instead.

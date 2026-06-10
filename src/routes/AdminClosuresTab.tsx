@@ -264,14 +264,17 @@ export function AdminClosuresTab() {
               <DateField label="To" value={to} onChange={setTo} minIso={from || today} />
             </>
           )}
-          <MultiSelectDropdown<ClosureScope>
-            label="Closes"
-            values={[...selected]}
-            options={SCOPE_OPTIONS}
-            onChange={handleScopeChange}
-            placeholder="Choose what to close"
-            totalNoun="types"
-          />
+          <div>
+            <FieldLabel>Closes</FieldLabel>
+            <MultiSelectDropdown<ClosureScope>
+              ariaLabel="What this closure closes"
+              values={[...selected]}
+              options={SCOPE_OPTIONS}
+              onChange={handleScopeChange}
+              placeholder="Choose what to close"
+              totalNoun="types"
+            />
+          </div>
           <Input
             label="Reason (internal)"
             value={reason}
@@ -392,7 +395,7 @@ function FieldLabel({ children }: { children: React.ReactNode }) {
         marginBottom: theme.space[2],
         fontSize: theme.type.size.sm,
         fontWeight: theme.type.weight.medium,
-        color: theme.color.inkMuted,
+        color: theme.color.ink,
       }}
     >
       {children}
