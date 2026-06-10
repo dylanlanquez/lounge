@@ -21,6 +21,9 @@ export type { SegmentedControlOption, SegmentedControlProps } from './SegmentedC
 export { ScheduleFilter } from './ScheduleFilter/ScheduleFilter.tsx';
 export type { ScheduleFilterProps } from './ScheduleFilter/ScheduleFilter.tsx';
 
+export { ShopifyImportSheet } from './ShopifyImportSheet/ShopifyImportSheet.tsx';
+export type { ShopifyImportSheetProps } from './ShopifyImportSheet/ShopifyImportSheet.tsx';
+
 export { DropdownSelect } from './DropdownSelect/DropdownSelect.tsx';
 export type { DropdownSelectProps, DropdownSelectOption } from './DropdownSelect/DropdownSelect.tsx';
 

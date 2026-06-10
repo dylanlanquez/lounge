@@ -78,6 +78,10 @@ export interface CatalogueRow {
   // pick up the kit). Used for services like impression appointments
   // where the underlying product was paid for on venneir.com.
   sold_on_shopify: boolean;
+  // Set when the row was imported from the Shopify catalogue (the
+  // de-dupe key for re-imports). Null for manually-created products.
+  shopify_product_id: string | null;
+  shopify_variant_id: string | null;
   sort_order: number;
   active: boolean;
   created_at: string;
@@ -114,7 +118,7 @@ function useCatalogueQuery({ activeOnly }: { activeOnly: boolean }): CatalogueRe
       let q = supabase
         .from('lwo_catalogue')
         .select(
-          'id, code, category, name, description, unit_price, extra_unit_price, both_arches_price, unit_label, image_url, service_type, product_key, repair_variant, arch_match, is_service, quantity_enabled, sla_enabled, sla_target_minutes, include_on_lwo, allocate_job_box, is_virtual, meeting_platform, fulfilment_required, sold_on_shopify, sort_order, active, created_at, updated_at'
+          'id, code, category, name, description, unit_price, extra_unit_price, both_arches_price, unit_label, image_url, service_type, product_key, repair_variant, arch_match, is_service, quantity_enabled, sla_enabled, sla_target_minutes, include_on_lwo, allocate_job_box, is_virtual, meeting_platform, fulfilment_required, sold_on_shopify, shopify_product_id, shopify_variant_id, sort_order, active, created_at, updated_at'
         )
         .order('category', { ascending: true })
         .order('sort_order', { ascending: true });
@@ -149,9 +153,16 @@ function useCatalogueQuery({ activeOnly }: { activeOnly: boolean }): CatalogueRe
 // Persist a draft catalogue row. Insert when id is missing, otherwise
 // update. Returns the saved row.
 export async function upsertCatalogueRow(
-  draft: Omit<CatalogueRow, 'id' | 'created_at' | 'updated_at'> & { id?: string }
+  // shopify_* are optional: the manual editor omits them (so an edit
+  // never wipes an imported row's link), only the Shopify importer sets
+  // them.
+  draft: Omit<CatalogueRow, 'id' | 'created_at' | 'updated_at' | 'shopify_product_id' | 'shopify_variant_id'> & {
+    id?: string;
+    shopify_product_id?: string | null;
+    shopify_variant_id?: string | null;
+  }
 ): Promise<CatalogueRow> {
-  const payload = {
+  const payload: Record<string, unknown> = {
     code: draft.code,
     category: draft.category,
     name: draft.name,
@@ -178,6 +189,8 @@ export async function upsertCatalogueRow(
     sort_order: draft.sort_order,
     active: draft.active,
   };
+  if (draft.shopify_product_id !== undefined) payload.shopify_product_id = draft.shopify_product_id;
+  if (draft.shopify_variant_id !== undefined) payload.shopify_variant_id = draft.shopify_variant_id;
   if (draft.id) {
     const { data, error } = await supabase
       .from('lwo_catalogue')
@@ -274,4 +287,89 @@ export async function batchUpdateSortOrders(updates: Array<{ id: string; sort_or
 // weirder.
 function slugifyCode(code: string): string {
   return code.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, '-');
+}
+
+// ── Shopify import ───────────────────────────────────────────────────
+// The shopify-products edge function lists the Venneir catalogue live
+// (read_products). One Lounge product per Shopify product.
+
+export interface ShopifyProduct {
+  product_id: string;
+  variant_id: string | null;
+  title: string;
+  sku: string | null;
+  price: number | null; // pounds
+  currency: string | null;
+  image_url: string | null;
+  product_type: string | null;
+  vendor: string | null;
+  status: string | null;
+  handle: string | null;
+}
+
+export type ShopifyFetchResult =
+  | { ok: true; products: ShopifyProduct[] }
+  // The token isn't set yet — the UI shows a "connect Shopify" note
+  // rather than an error.
+  | { ok: false; reason: 'not_configured' | 'failed'; message?: string };
+
+export async function fetchShopifyProducts(): Promise<ShopifyFetchResult> {
+  const { data, error } = await supabase.functions.invoke('shopify-products', { body: {} });
+  if (error) {
+    // supabase-js surfaces non-2xx as a FunctionsHttpError; read the body
+    // to distinguish "not configured" from a real failure.
+    const ctx = (error as { context?: Response }).context;
+    if (ctx && typeof ctx.json === 'function') {
+      try {
+        const body = await ctx.json();
+        if (body?.error === 'shopify_not_configured') return { ok: false, reason: 'not_configured' };
+        return { ok: false, reason: 'failed', message: body?.error };
+      } catch {
+        /* fall through */
+      }
+    }
+    return { ok: false, reason: 'failed', message: error.message };
+  }
+  const products = (data?.products ?? []) as ShopifyProduct[];
+  return { ok: true, products };
+}
+
+// Build a Lounge product draft from a Shopify product and upsert it.
+// `existingId` updates an already-imported row in place (re-import).
+export async function importShopifyProduct(
+  p: ShopifyProduct,
+  category: string,
+  existingId?: string
+): Promise<CatalogueRow> {
+  const code = p.handle ? slugifyCode(p.handle) : `shopify-${p.product_id}`;
+  return upsertCatalogueRow({
+    id: existingId,
+    code,
+    category: category.trim() || 'Retail',
+    name: p.title,
+    description: null,
+    unit_price: p.price ?? 0,
+    extra_unit_price: null,
+    both_arches_price: null,
+    unit_label: null,
+    image_url: p.image_url,
+    service_type: null,
+    product_key: null,
+    repair_variant: null,
+    arch_match: 'any',
+    is_service: false,
+    quantity_enabled: true,
+    sla_enabled: false,
+    sla_target_minutes: null,
+    include_on_lwo: false,
+    allocate_job_box: false,
+    is_virtual: false,
+    meeting_platform: null,
+    fulfilment_required: true,
+    sold_on_shopify: true,
+    shopify_product_id: p.product_id,
+    shopify_variant_id: p.variant_id,
+    sort_order: 0,
+    active: true,
+  });
 }

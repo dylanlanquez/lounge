@@ -1,6 +1,6 @@
 import { type CSSProperties, Fragment, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, useNavigate, useParams } from 'react-router-dom';
-import { AlertTriangle, ArchiveRestore, ArrowDown, ArrowUp, BarChart3, Briefcase, CalendarCheck, CalendarClock, Check, ChevronUp, Clock, CreditCard, FileSignature, FlaskConical, GripVertical, Image as ImageIcon, KeyRound, Layers, Mail, Package, Pencil, Plus, RefreshCw, Rocket, RotateCcw, Settings, Link2, ShieldAlert, ShieldCheck, Trash2, UserPlus, Users, Video, Wallet, X } from 'lucide-react';
+import { AlertTriangle, ArchiveRestore, ArrowDown, ArrowUp, BarChart3, Briefcase, CalendarCheck, CalendarClock, Check, ChevronUp, Clock, CreditCard, FileSignature, FlaskConical, GripVertical, Image as ImageIcon, KeyRound, Layers, Mail, Package, Pencil, Plus, RefreshCw, Rocket, RotateCcw, Settings, Link2, ShieldAlert, ShieldCheck, ShoppingBag, Trash2, UserPlus, Users, Video, Wallet, X } from 'lucide-react';
 import {
   Button,
   Card,
@@ -72,6 +72,7 @@ import {
   type StripePaymentRow,
 } from '../lib/queries/terminalPayments.ts';
 import { BottomSheet } from '../components/index.ts';
+import { ShopifyImportSheet } from '../components/index.ts';
 import {
   useReceptionistSessions,
   useUnresolvedFailures,
@@ -4633,7 +4634,14 @@ function CatalogueTab({ mode }: { mode: CatalogueMode }) {
   const { rows, loading, error, refresh } = useCatalogueAll();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
+  const [importing, setImporting] = useState(false);
   const [toast, setToast] = useState<{ tone: 'success' | 'error'; title: string; description?: string } | null>(null);
+  // Shopify product ids already imported, so the import panel can mark
+  // them as added and never duplicate.
+  const existingShopifyIds = useMemo(
+    () => new Set(rows.map((r) => r.shopify_product_id).filter((id): id is string => !!id)),
+    [rows],
+  );
   // Local row order for optimistic drag-and-drop. Synced from filteredRows
   // after every DB refresh; diverges only during / immediately after a drag.
   const [localRows, setLocalRows] = useState<CatalogueRow[]>([]);
@@ -4769,12 +4777,33 @@ function CatalogueTab({ mode }: { mode: CatalogueMode }) {
               : 'Care products and retail items. Surface as cart upsells at checkout.'}
           </p>
         </div>
-        <Button variant="secondary" size="sm" onClick={() => setAdding(true)} disabled={adding}>
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
-            <Plus size={16} /> {isServices ? 'Add service' : 'Add product'}
-          </span>
-        </Button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[2], flexShrink: 0 }}>
+          {!isServices ? (
+            <Button variant="secondary" size="sm" onClick={() => setImporting(true)}>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
+                <ShoppingBag size={16} /> Import from Shopify
+              </span>
+            </Button>
+          ) : null}
+          <Button variant="secondary" size="sm" onClick={() => setAdding(true)} disabled={adding}>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
+              <Plus size={16} /> {isServices ? 'Add service' : 'Add product'}
+            </span>
+          </Button>
+        </div>
       </div>
+
+      {!isServices ? (
+        <ShopifyImportSheet
+          open={importing}
+          onClose={() => setImporting(false)}
+          existingShopifyIds={existingShopifyIds}
+          onImported={() => {
+            refresh();
+            setToast({ tone: 'success', title: 'Products imported from Shopify' });
+          }}
+        />
+      ) : null}
 
       {error ? (
         <p style={{ color: theme.color.alert, margin: 0 }}>Could not load catalogue: {error}</p>
