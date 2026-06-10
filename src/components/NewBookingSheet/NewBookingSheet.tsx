@@ -1420,7 +1420,10 @@ export function NewBookingSheet({
           </Section>
           ) : null}
 
-          {isVirtualService ? (
+          {/* Slot-first: the whole Clinician section stays hidden until a
+              valid date + time are chosen. Once a slot exists it appears,
+              listing only the clinicians free for it. */}
+          {isVirtualService && virtualSlotStartIso ? (
             <Section
               title="Clinician"
               required
@@ -1475,11 +1478,6 @@ export function NewBookingSheet({
                     Open Virtual impressions
                   </a>
                 </div>
-              ) : !virtualSlotStartIso ? (
-                // Slot-first: no chooser until a valid date + time exist.
-                <InlineHint>
-                  Pick a date and time above first. Only clinicians free for that slot are shown here.
-                </InlineHint>
               ) : availableCliniciansLoading ? (
                 <InlineHint>Checking which clinicians are free…</InlineHint>
               ) : availableClinicians.length === 0 ? (
