@@ -1,6 +1,14 @@
 import { useMemo, useRef, useState } from 'react';
-import { CalendarOff, CalendarClock, Check, Info, LayoutGrid, Plus, Trash2 } from 'lucide-react';
-import { Button, Card, DatePicker, EmptyState, Input, SegmentedControl } from '../components/index.ts';
+import { CalendarOff, CalendarClock, Info, Plus, Trash2 } from 'lucide-react';
+import {
+  Button,
+  Card,
+  DatePicker,
+  EmptyState,
+  Input,
+  MultiSelectDropdown,
+  SegmentedControl,
+} from '../components/index.ts';
 import { theme } from '../theme/index.ts';
 import { addDaysIso, todayIso } from '../lib/calendarMonth.ts';
 import {
@@ -30,8 +38,16 @@ const SCOPE_LABEL: Record<ClosureScope, string> = {
   other: 'Other',
 };
 
-// Per-type palette dot — the same category colours as the schedule
-// bars / filter, so a type reads the same wherever it appears.
+// Order in the dropdown: whole clinic first, then the in-person types,
+// then virtual (the separate team) last.
+const SCOPE_OPTIONS: { value: ClosureScope; label: string }[] = [
+  { value: 'whole_clinic', label: SCOPE_LABEL.whole_clinic },
+  ...IN_PERSON_SCOPES.map((s) => ({ value: s, label: SCOPE_LABEL[s] })),
+  { value: 'virtual_impression_appointment', label: SCOPE_LABEL.virtual_impression_appointment },
+];
+
+// Per-type palette dot for the list — the same category colours as the
+// schedule bars / filter.
 const SCOPE_COLOR: Record<ClosureScope, string | null> = {
   whole_clinic: null,
   denture_repair: theme.category.repair,
@@ -100,8 +116,9 @@ export function AdminClosuresTab() {
   const [single, setSingle] = useState('');
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
-  // Multi-select: tick one or more types to close. Whole clinic stands
-  // in for every in-person type; virtual is independent.
+  // Multi-select: choose one or more types to close. Whole clinic and
+  // the individual in-person types are mutually exclusive (whole clinic
+  // already covers them); virtual is independent.
   const [selected, setSelected] = useState<Set<ClosureScope>>(new Set());
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
@@ -117,20 +134,19 @@ export function AdminClosuresTab() {
     return { upcoming: up, past: pa };
   }, [closures, today]);
 
-  const toggle = (scope: ClosureScope) => {
+  // Keep whole-clinic and the in-person types mutually exclusive: adding
+  // whole clinic clears the individual ones, and vice versa.
+  const handleScopeChange = (vals: ClosureScope[]) => {
     setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(scope)) {
-        next.delete(scope);
-      } else {
-        next.add(scope);
-        if (scope === 'whole_clinic') for (const s of IN_PERSON_SCOPES) next.delete(s);
-      }
+      const next = new Set(vals);
+      const addedWhole = next.has('whole_clinic') && !prev.has('whole_clinic');
+      const addedInPerson = IN_PERSON_SCOPES.some((s) => next.has(s) && !prev.has(s));
+      if (addedWhole) for (const s of IN_PERSON_SCOPES) next.delete(s);
+      else if (addedInPerson) next.delete('whole_clinic');
       return next;
     });
   };
 
-  // Resolve the chosen span. Range auto-orders from/to.
   const span =
     mode === 'single'
       ? single
@@ -209,7 +225,7 @@ export function AdminClosuresTab() {
       <Card padding="md">
         <h3
           style={{
-            margin: `0 0 ${theme.space[5]}px`,
+            margin: `0 0 ${theme.space[4]}px`,
             fontSize: theme.type.size.md,
             fontWeight: theme.type.weight.semibold,
             color: theme.color.ink,
@@ -231,12 +247,13 @@ export function AdminClosuresTab() {
           />
         </div>
 
-        {/* Date(s) + reason. */}
+        {/* Date(s) + closes + reason — one tidy row that wraps. */}
         <div
           style={{
             display: 'grid',
             gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
             gap: theme.space[4],
+            alignItems: 'end',
           }}
         >
           {mode === 'single' ? (
@@ -247,6 +264,14 @@ export function AdminClosuresTab() {
               <DateField label="To" value={to} onChange={setTo} minIso={from || today} />
             </>
           )}
+          <MultiSelectDropdown<ClosureScope>
+            label="Closes"
+            values={[...selected]}
+            options={SCOPE_OPTIONS}
+            onChange={handleScopeChange}
+            placeholder="Choose what to close"
+            totalNoun="types"
+          />
           <Input
             label="Reason (internal)"
             value={reason}
@@ -256,52 +281,10 @@ export function AdminClosuresTab() {
           />
         </div>
 
-        {/* What to close — selectable tiles. */}
-        <div style={{ marginTop: theme.space[5] }}>
-          <FieldLabel>Closes</FieldLabel>
-
-          <ScopeTile
-            label={SCOPE_LABEL.whole_clinic}
-            sublabel="Blocks every in-person booking type"
-            icon={<LayoutGrid size={18} aria-hidden />}
-            selected={wholeClinic}
-            onClick={() => toggle('whole_clinic')}
-          />
-
-          <Eyebrow>In-person types</Eyebrow>
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
-              gap: theme.space[3],
-            }}
-          >
-            {IN_PERSON_SCOPES.map((scope) => (
-              <ScopeTile
-                key={scope}
-                label={SCOPE_LABEL[scope]}
-                dotColor={SCOPE_COLOR[scope] ?? undefined}
-                selected={wholeClinic || selected.has(scope)}
-                locked={wholeClinic}
-                onClick={() => toggle(scope)}
-              />
-            ))}
-          </div>
-
-          <Eyebrow>Virtual</Eyebrow>
-          <ScopeTile
-            label={SCOPE_LABEL.virtual_impression_appointment}
-            sublabel="Separate team. A whole-clinic closure does not affect it."
-            dotColor={SCOPE_COLOR.virtual_impression_appointment ?? undefined}
-            selected={selected.has('virtual_impression_appointment')}
-            onClick={() => toggle('virtual_impression_appointment')}
-          />
-        </div>
-
-        {/* Action. */}
+        {/* Action on its own row so it never gets crammed beside the fields. */}
         <div
           style={{
-            marginTop: theme.space[6],
+            marginTop: theme.space[5],
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'flex-end',
@@ -414,148 +397,6 @@ function FieldLabel({ children }: { children: React.ReactNode }) {
     >
       {children}
     </span>
-  );
-}
-
-function Eyebrow({ children }: { children: React.ReactNode }) {
-  return (
-    <p
-      style={{
-        margin: `${theme.space[4]}px 0 ${theme.space[2]}px`,
-        fontSize: theme.type.size.xs,
-        fontWeight: theme.type.weight.medium,
-        color: theme.color.inkSubtle,
-        textTransform: 'uppercase',
-        letterSpacing: theme.type.tracking.wide,
-      }}
-    >
-      {children}
-    </p>
-  );
-}
-
-// A selectable tile. Resting = white card with a palette dot (or icon);
-// selected = accent tint + accent border + a green check. `locked` shows
-// the selected look but is non-interactive (implied by whole clinic).
-function ScopeTile({
-  label,
-  sublabel,
-  dotColor,
-  icon,
-  selected,
-  locked = false,
-  onClick,
-}: {
-  label: string;
-  sublabel?: string;
-  dotColor?: string;
-  icon?: React.ReactNode;
-  selected: boolean;
-  locked?: boolean;
-  onClick: () => void;
-}) {
-  const [hover, setHover] = useState(false);
-  return (
-    <button
-      type="button"
-      role="checkbox"
-      aria-checked={selected}
-      aria-disabled={locked || undefined}
-      onClick={() => !locked && onClick()}
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
-      style={{
-        appearance: 'none',
-        width: '100%',
-        minHeight: 60,
-        textAlign: 'left',
-        fontFamily: 'inherit',
-        cursor: locked ? 'default' : 'pointer',
-        display: 'flex',
-        alignItems: 'center',
-        gap: theme.space[3],
-        padding: `${theme.space[3]}px ${theme.space[4]}px`,
-        borderRadius: theme.radius.input,
-        border: `1.5px solid ${selected ? theme.color.accent : hover && !locked ? theme.color.inkSubtle : theme.color.border}`,
-        background: selected ? theme.color.accentBg : theme.color.surface,
-        opacity: locked ? 0.65 : 1,
-        transition: `border-color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}, background ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
-        WebkitTapHighlightColor: 'transparent',
-      }}
-    >
-      {icon ? (
-        <span
-          aria-hidden
-          style={{
-            width: 22,
-            height: 22,
-            flexShrink: 0,
-            display: 'inline-flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            color: selected ? theme.color.accent : theme.color.inkMuted,
-          }}
-        >
-          {icon}
-        </span>
-      ) : (
-        <span
-          aria-hidden
-          style={{
-            width: 12,
-            height: 12,
-            flexShrink: 0,
-            borderRadius: theme.radius.pill,
-            background: dotColor ?? theme.color.inkMuted,
-          }}
-        />
-      )}
-
-      <span style={{ flex: 1, minWidth: 0 }}>
-        <span
-          style={{
-            display: 'block',
-            fontSize: theme.type.size.base,
-            fontWeight: selected ? theme.type.weight.semibold : theme.type.weight.medium,
-            color: theme.color.ink,
-          }}
-        >
-          {label}
-        </span>
-        {sublabel ? (
-          <span
-            style={{
-              display: 'block',
-              marginTop: 2,
-              fontSize: theme.type.size.xs,
-              color: theme.color.inkMuted,
-              lineHeight: theme.type.leading.snug,
-            }}
-          >
-            {sublabel}
-          </span>
-        ) : null}
-      </span>
-
-      <span
-        aria-hidden
-        style={{
-          width: 22,
-          height: 22,
-          flexShrink: 0,
-          borderRadius: theme.radius.pill,
-          display: 'inline-flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          background: selected ? theme.color.accent : 'transparent',
-          border: selected ? 'none' : `1.5px solid ${theme.color.border}`,
-          color: theme.color.surface,
-          transition: `background ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
-        }}
-      >
-        {selected ? <Check size={14} strokeWidth={3} /> : null}
-      </span>
-    </button>
   );
 }
 
