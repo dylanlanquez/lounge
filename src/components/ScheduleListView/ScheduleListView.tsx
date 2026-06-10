@@ -6,7 +6,7 @@ import { StatusPill } from '../StatusPill/StatusPill.tsx';
 import { theme } from '../../theme/index.ts';
 import {
   type AppointmentRow,
-  eventTypeCategory,
+  appointmentCategory,
   formatAppointmentSummary,
   formatLateDuration,
   humaniseStatus,
@@ -190,7 +190,7 @@ export function ScheduleListRow({
   const barColor = isLate
     ? theme.color.alert
     : row.status === 'booked'
-      ? theme.category[eventTypeCategory(row.event_type_label)]
+      ? theme.category[appointmentCategory(row)]
       : undefined;
   return (
     <li>

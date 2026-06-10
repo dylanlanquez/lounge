@@ -430,6 +430,69 @@ export function eventTypeCategory(
   return 'consult';
 }
 
+// The six display buckets every booking falls into. These line up
+// 1:1 with the colour keys on `theme.category`, so a category value
+// indexes straight into the palette for dots, bars, and chips.
+export type AppointmentCategory =
+  | 'repair'
+  | 'sameDay'
+  | 'appliance'
+  | 'impression'
+  | 'virtualImpression'
+  | 'consult';
+
+// Axis-pinned bookings (native widget + staff-created) carry a
+// canonical service_type; map it straight to a category so these rows
+// don't fall through to the event_type_label heuristics (which they
+// leave null). Mirrors eventTypeCategory's buckets exactly.
+const SERVICE_TYPE_CATEGORY: Record<string, AppointmentCategory> = {
+  denture_repair: 'repair',
+  click_in_veneers: 'sameDay',
+  same_day_appliance: 'appliance',
+  impression_appointment: 'impression',
+  virtual_impression_appointment: 'virtualImpression',
+  other: 'consult',
+};
+
+// Canonical category for a booking, whatever its origin. service_type
+// is the source of truth when present (axis-pinned rows); otherwise
+// fall back to parsing the Calendly event_type_label. This is the ONE
+// derivation that should drive both the colour bar on the row and the
+// schedule type-filter, so the two can never disagree.
+export function appointmentCategory(row: {
+  service_type: string | null;
+  event_type_label: string | null;
+}): AppointmentCategory {
+  if (row.service_type) {
+    const mapped = SERVICE_TYPE_CATEGORY[row.service_type];
+    if (mapped) return mapped;
+  }
+  return eventTypeCategory(row.event_type_label);
+}
+
+// Human labels + canonical display order for the categories. Order is
+// the same scan order staff use when reading the strip: repairs and
+// veneers (the bread-and-butter same-day work) first, impressions
+// next, "other" last. Labels are plural — they head a filter list, not
+// a single row.
+export const APPOINTMENT_CATEGORY_LABELS: Record<AppointmentCategory, string> = {
+  repair: 'Denture repairs',
+  sameDay: 'Click-in veneers',
+  appliance: 'Same-day appliances',
+  impression: 'Impressions',
+  virtualImpression: 'Virtual impressions',
+  consult: 'Other',
+};
+
+export const APPOINTMENT_CATEGORY_ORDER: AppointmentCategory[] = [
+  'repair',
+  'sameDay',
+  'appliance',
+  'impression',
+  'virtualImpression',
+  'consult',
+];
+
 // One-line, human-readable summary of the appointment for cards and sheets.
 // Combines arch + appliance/repair into "Upper Missing Tooth Retainer";
 // strips event-type prefixes ("Same-day ", "In-person ", "Virtual ") so the

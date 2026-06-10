@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { Navigate, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   AlertTriangle,
@@ -10,6 +10,7 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  ListFilter,
   Mail,
   Monitor,
 
@@ -29,6 +30,7 @@ import {
   Input,
   NewBookingSheet,
   RescheduleSheet,
+  ScheduleFilter,
   Skeleton,
   StatusPill,
   Toast,
@@ -56,6 +58,9 @@ import {
 } from '../lib/calendarMonth.ts';
 import {
   type AppointmentRow,
+  type AppointmentCategory,
+  appointmentCategory,
+  APPOINTMENT_CATEGORY_ORDER,
   formatAppointmentSummary,
   formatLateDuration,
   humaniseStatus,
@@ -211,6 +216,15 @@ export function Schedule() {
   const [datePickerOpen, setDatePickerOpen] = useState(false);
   const monthPillRef = useRef<HTMLButtonElement | null>(null);
 
+  // Booking-type filter. The set holds the categories currently shown;
+  // the full set is the resting "no filter" state. Kept in component
+  // state (not the URL) so it persists as the operator flicks between
+  // days but never leaks into a shared / bookmarked link.
+  const [shownCategories, setShownCategories] = useState<Set<AppointmentCategory>>(
+    () => new Set(APPOINTMENT_CATEGORY_ORDER)
+  );
+  const filterActive = shownCategories.size !== APPOINTMENT_CATEGORY_ORDER.length;
+
   // Filter the day's appointments to the staff member's bound
   // location. Without this, a staff member with cross-location RLS
   // visibility (lab + practice) sees both clinics' rows on a single
@@ -218,6 +232,27 @@ export function Schedule() {
   // pool, so the OTHER location's rows look like they're competing
   // with yours when they aren't.
   const day = useDayAppointments(selectedDate, currentLocation.data?.id ?? null);
+
+  // Per-category booking counts for the day in view — feeds the live
+  // numbers beside each row in the filter popover.
+  const categoryCounts = useMemo(() => {
+    const counts = Object.fromEntries(
+      APPOINTMENT_CATEGORY_ORDER.map((c) => [c, 0])
+    ) as Record<AppointmentCategory, number>;
+    for (const row of day.data) counts[appointmentCategory(row)] += 1;
+    return counts;
+  }, [day.data]);
+
+  // The rows actually rendered, narrowed to the shown categories. When
+  // the filter is at rest (all categories shown) this is day.data
+  // untouched, so the common path allocates nothing.
+  const visibleRows = useMemo(
+    () =>
+      filterActive
+        ? day.data.filter((r) => shownCategories.has(appointmentCategory(r)))
+        : day.data,
+    [day.data, shownCategories, filterActive]
+  );
   // Counts power the dots under each day pill in the WeekStrip. The
   // strip materialises every day in a ±60 day window around today, so
   // this query matches that window — earlier this only fetched the
@@ -490,7 +525,9 @@ export function Schedule() {
             >
               {day.data.length === 0
                 ? 'No appointments'
-                : `${day.data.length} appointment${day.data.length === 1 ? '' : 's'}`}
+                : filterActive
+                  ? `${visibleRows.length} of ${day.data.length} shown`
+                  : `${day.data.length} appointment${day.data.length === 1 ? '' : 's'}`}
             </span>
           </div>
           <div
@@ -503,6 +540,15 @@ export function Schedule() {
               justifyContent: isMobile ? 'space-between' : 'flex-end',
             }}
           >
+            {/* Type filter only earns its place once there's a list to
+                narrow — hidden on empty days so the toolbar stays calm. */}
+            {day.data.length > 0 ? (
+              <ScheduleFilter
+                counts={categoryCounts}
+                selected={shownCategories}
+                onChange={setShownCategories}
+              />
+            ) : null}
             {!onToday ? (
               <TodayPill onClick={handleJumpToToday} />
             ) : null}
@@ -520,9 +566,9 @@ export function Schedule() {
                   appearance: 'none',
                   display: 'inline-flex',
                   alignItems: 'center',
-                  gap: theme.space[1],
+                  gap: theme.space[2],
                   height: 44,
-                  padding: `0 ${theme.space[3]}px`,
+                  padding: `0 ${theme.space[4]}px`,
                   background: 'rgba(14,20,20,0.05)',
                   border: 'none',
                   borderRadius: theme.radius.pill,
@@ -532,6 +578,8 @@ export function Schedule() {
                   color: theme.color.inkMuted,
                   opacity: newBookingBlocker ? 0.5 : 1,
                   lineHeight: 1,
+                  whiteSpace: 'nowrap',
+                  flexShrink: 0,
                   transition: `background ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}, color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
                 }}
                 onMouseEnter={(e) => {
@@ -545,7 +593,7 @@ export function Schedule() {
                   (e.currentTarget as HTMLElement).style.color = theme.color.inkMuted;
                 }}
               >
-                <Plus size={13} aria-hidden />
+                <Plus size={16} aria-hidden />
                 New booking
               </button>
             ) : null}
@@ -603,8 +651,25 @@ export function Schedule() {
                 ) : undefined
               }
             />
+          ) : visibleRows.length === 0 ? (
+            // The day has bookings, but the active type filter hides them
+            // all. Distinct from the empty-day state above: the fix here
+            // is to widen the filter, not to make a booking.
+            <EmptyState
+              icon={<ListFilter size={24} />}
+              title="No matching bookings"
+              description="No bookings on this day match the booking-type filter."
+              action={
+                <Button
+                  variant="secondary"
+                  onClick={() => setShownCategories(new Set(APPOINTMENT_CATEGORY_ORDER))}
+                >
+                  Show all types
+                </Button>
+              }
+            />
           ) : (
-            <ScheduleListView rows={day.data} onPick={setSelected} isToday={onToday} />
+            <ScheduleListView rows={visibleRows} onPick={setSelected} isToday={onToday} />
           )}
             </DayReloadingWrapper>
           )}
@@ -1344,8 +1409,9 @@ export function Schedule() {
 // opposite of what it does. Dropped the dot and led with a verb so
 // the button is action-shaped, not status-shaped.
 //
-// Visual: 32px tall to line up with the SegmentedControl beside it.
-// Surface fill + 1px border. Hover tints to bg; no green halo.
+// Visual: shares the exact toolbar-pill chrome with Filter and New
+// booking — 44px tall, subtle-tint fill, no border, hover tints to the
+// accent. Sizing them as a matched set keeps the action row symmetrical.
 function TodayPill({ onClick }: { onClick: () => void }) {
   return (
     <button
@@ -1353,32 +1419,36 @@ function TodayPill({ onClick }: { onClick: () => void }) {
       onClick={onClick}
       aria-label="Jump to today"
       onMouseEnter={(e) => {
-        (e.currentTarget as HTMLElement).style.background = theme.color.bg;
+        (e.currentTarget as HTMLElement).style.background = theme.color.accentBg;
+        (e.currentTarget as HTMLElement).style.color = theme.color.accent;
       }}
       onMouseLeave={(e) => {
-        (e.currentTarget as HTMLElement).style.background = theme.color.surface;
+        (e.currentTarget as HTMLElement).style.background = 'rgba(14,20,20,0.05)';
+        (e.currentTarget as HTMLElement).style.color = theme.color.inkMuted;
       }}
       style={{
         appearance: 'none',
-        border: `1px solid ${theme.color.border}`,
-        background: theme.color.surface,
-        color: theme.color.ink,
+        border: 'none',
+        background: 'rgba(14,20,20,0.05)',
+        color: theme.color.inkMuted,
         fontFamily: 'inherit',
         fontSize: theme.type.size.sm,
         fontWeight: theme.type.weight.medium,
-        height: 32,
+        height: 44,
         padding: `0 ${theme.space[4]}px`,
         borderRadius: theme.radius.pill,
         cursor: 'pointer',
         display: 'inline-flex',
         alignItems: 'center',
         gap: theme.space[2],
-        transition: `background ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+        lineHeight: 1,
+        transition: `background ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}, color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
         WebkitTapHighlightColor: 'transparent',
         flexShrink: 0,
         whiteSpace: 'nowrap',
       }}
     >
+      <CalendarCheck size={16} aria-hidden />
       Jump to today
     </button>
   );
