@@ -1,13 +1,6 @@
 import { useMemo, useRef, useState } from 'react';
 import { CalendarOff, CalendarClock, Info, Plus, Trash2 } from 'lucide-react';
-import {
-  Button,
-  Card,
-  DatePicker,
-  DropdownSelect,
-  EmptyState,
-  Input,
-} from '../components/index.ts';
+import { Button, Card, Checkbox, DatePicker, EmptyState, Input } from '../components/index.ts';
 import { theme } from '../theme/index.ts';
 import { todayIso } from '../lib/calendarMonth.ts';
 import {
@@ -18,22 +11,24 @@ import {
   useClosures,
 } from '../lib/queries/closures.ts';
 
-// Scope options for the add form, in scan order. "Whole clinic" leads
-// because it's the common case (a holiday). Labels are plural to read
-// as "block <these>".
-const SCOPE_OPTIONS: { value: ClosureScope; label: string }[] = [
-  { value: 'whole_clinic', label: 'Whole clinic (in-person)' },
-  { value: 'denture_repair', label: 'Denture repairs' },
-  { value: 'click_in_veneers', label: 'Click-in veneers' },
-  { value: 'same_day_appliance', label: 'Same-day appliances' },
-  { value: 'impression_appointment', label: 'Impressions' },
-  { value: 'virtual_impression_appointment', label: 'Virtual impressions' },
-  { value: 'other', label: 'Other' },
+// The individual in-person types a whole-clinic closure stands in for.
+const IN_PERSON_SCOPES: ClosureScope[] = [
+  'denture_repair',
+  'click_in_veneers',
+  'same_day_appliance',
+  'impression_appointment',
+  'other',
 ];
 
-const SCOPE_LABEL: Record<ClosureScope, string> = Object.fromEntries(
-  SCOPE_OPTIONS.map((o) => [o.value, o.label])
-) as Record<ClosureScope, string>;
+const SCOPE_LABEL: Record<ClosureScope, string> = {
+  whole_clinic: 'Whole clinic (in-person)',
+  denture_repair: 'Denture repairs',
+  click_in_veneers: 'Click-in veneers',
+  same_day_appliance: 'Same-day appliances',
+  impression_appointment: 'Impressions',
+  virtual_impression_appointment: 'Virtual impressions',
+  other: 'Other',
+};
 
 // 'YYYY-MM-DD' -> "Wed, 25 Dec 2026", parsed as a plain calendar date
 // (UTC) so no timezone shift nudges it to the day before.
@@ -53,16 +48,19 @@ export function AdminClosuresTab() {
   const { closures, loading, error, reload } = useClosures();
 
   const [date, setDate] = useState('');
-  const [scope, setScope] = useState<ClosureScope>('whole_clinic');
+  // Multi-select: tick one or more types to close on the date. Whole
+  // clinic stands in for every in-person type (so those individual rows
+  // are implied + disabled while it's ticked); virtual is independent.
+  const [selected, setSelected] = useState<Set<ClosureScope>>(new Set());
   const [reason, setReason] = useState('');
   const [datePickerOpen, setDatePickerOpen] = useState(false);
   const dateTriggerRef = useRef<HTMLButtonElement>(null);
   const [busy, setBusy] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
+  const wholeClinic = selected.has('whole_clinic');
   const today = todayIso();
-  // Upcoming first (today onward), then past for reference, each sorted
-  // chronologically.
+
   const { upcoming, past } = useMemo(() => {
     const up: Closure[] = [];
     const pa: Closure[] = [];
@@ -70,17 +68,44 @@ export function AdminClosuresTab() {
     return { upcoming: up, past: pa };
   }, [closures, today]);
 
-  const canAdd = date !== '' && !busy;
+  const toggle = (scope: ClosureScope) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(scope)) {
+        next.delete(scope);
+      } else {
+        next.add(scope);
+        // Whole clinic supersedes the individual in-person types — clear
+        // them so we don't write redundant rows.
+        if (scope === 'whole_clinic') for (const s of IN_PERSON_SCOPES) next.delete(s);
+      }
+      return next;
+    });
+  };
+
+  const canAdd = date !== '' && selected.size > 0 && !busy;
+
+  const resetForm = () => {
+    setDate('');
+    setReason('');
+    setSelected(new Set());
+  };
 
   const handleAdd = async () => {
     if (!canAdd) return;
     setBusy(true);
     setFormError(null);
     try {
-      await addClosure({ date, scope, reason: reason.trim() || null });
-      setDate('');
-      setReason('');
-      setScope('whole_clinic');
+      // Whole clinic already covers every in-person type, so submit only
+      // it (+ virtual if also ticked), never the individual in-person rows.
+      const scopes = wholeClinic
+        ? [...selected].filter((s) => s === 'whole_clinic' || s === 'virtual_impression_appointment')
+        : [...selected];
+      const trimmedReason = reason.trim() || null;
+      for (const scope of scopes) {
+        await addClosure({ date, scope, reason: trimmedReason });
+      }
+      resetForm();
       reload();
     } catch (e) {
       setFormError(e instanceof Error ? e.message : 'Could not add the closure.');
@@ -116,8 +141,8 @@ export function AdminClosuresTab() {
           <span style={{ fontWeight: theme.type.weight.semibold }}>Blocked dates close bookings everywhere</span>
           {' '}— the booking widgets, reschedule, self-serve, and Checkpoint. A
           {' '}<strong>Whole clinic</strong> closure blocks every in-person booking type for that day; it does not
-          affect virtual impressions, which run on a separate team. To close virtual too, add a
-          {' '}<strong>Virtual impressions</strong> closure for the date. Reasons are internal only and are never shown to customers.
+          affect virtual impressions, which run on a separate team. To close virtual too, tick
+          {' '}<strong>Virtual impressions</strong> as well. Reasons are internal only and are never shown to customers.
         </p>
       </div>
 
@@ -133,12 +158,13 @@ export function AdminClosuresTab() {
         >
           Add a closure
         </h3>
+
+        {/* Date + reason. */}
         <div
           style={{
             display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
-            gap: theme.space[3],
-            alignItems: 'end',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+            gap: theme.space[4],
           }}
         >
           <div>
@@ -179,14 +205,6 @@ export function AdminClosuresTab() {
             />
           </div>
 
-          <DropdownSelect
-            label="Closes"
-            ariaLabel="What this closure blocks"
-            value={scope}
-            options={SCOPE_OPTIONS}
-            onChange={(v) => setScope(v as ClosureScope)}
-          />
-
           <Input
             label="Reason (internal)"
             value={reason}
@@ -194,18 +212,76 @@ export function AdminClosuresTab() {
             placeholder="e.g. Bank holiday"
             maxLength={120}
           />
+        </div>
 
-          <Button variant="primary" onClick={handleAdd} disabled={!canAdd} loading={busy}>
+        {/* What to close — multi-select. */}
+        <div style={{ marginTop: theme.space[4] }}>
+          <FieldLabel>Closes</FieldLabel>
+          <div
+            style={{
+              border: `1px solid ${theme.color.border}`,
+              borderRadius: theme.radius.input,
+              padding: theme.space[4],
+              display: 'flex',
+              flexDirection: 'column',
+              gap: theme.space[3],
+            }}
+          >
+            <Checkbox
+              checked={wholeClinic}
+              onChange={() => toggle('whole_clinic')}
+              label={SCOPE_LABEL.whole_clinic}
+            />
+            <div aria-hidden style={{ height: 1, background: theme.color.border }} />
+            {/* Individual in-person types — implied + disabled while whole
+                clinic is ticked. */}
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+                gap: `${theme.space[3]}px ${theme.space[4]}px`,
+              }}
+            >
+              {IN_PERSON_SCOPES.map((scope) => (
+                <Checkbox
+                  key={scope}
+                  checked={wholeClinic || selected.has(scope)}
+                  disabled={wholeClinic}
+                  onChange={() => toggle(scope)}
+                  label={SCOPE_LABEL[scope]}
+                />
+              ))}
+            </div>
+            <div aria-hidden style={{ height: 1, background: theme.color.border }} />
+            <Checkbox
+              checked={selected.has('virtual_impression_appointment')}
+              onChange={() => toggle('virtual_impression_appointment')}
+              label={SCOPE_LABEL.virtual_impression_appointment}
+            />
+          </div>
+        </div>
+
+        {/* Action. */}
+        <div
+          style={{
+            marginTop: theme.space[4],
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'flex-end',
+            gap: theme.space[4],
+          }}
+        >
+          {formError ? (
+            <span style={{ fontSize: theme.type.size.sm, color: theme.color.alert, marginRight: 'auto' }}>
+              {formError}
+            </span>
+          ) : null}
+          <Button variant="primary" size="md" onClick={handleAdd} disabled={!canAdd} loading={busy}>
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
               <Plus size={16} aria-hidden /> Add closure
             </span>
           </Button>
         </div>
-        {formError ? (
-          <p style={{ margin: `${theme.space[3]}px 0 0`, fontSize: theme.type.size.sm, color: theme.color.alert }}>
-            {formError}
-          </p>
-        ) : null}
       </Card>
 
       {/* Existing closures. */}
