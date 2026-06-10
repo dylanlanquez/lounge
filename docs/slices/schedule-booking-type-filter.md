@@ -24,7 +24,10 @@
 
 - Filter state is a `Set<AppointmentCategory>` of the categories **shown**. The full set is the resting "no filter" state.
 - State lives in `Schedule.tsx` component state, not the URL — it persists as the operator flicks between days but doesn't leak into a shared link.
-- The popover shows a live per-category count for the day in view; a category with zero bookings that day renders dimmed and non-interactive.
+- The popover lists **only the types that occur today** (zero-count types are omitted, not dimmed), each with a live count.
+- Three one-tap moves: **All booking types** (reset / show everything), a row's **Only** button (isolate to just that type), or a row's **checkbox** (add / remove).
+- "Active" means a type that *exists today* is being hidden — the only state that changes the list. Deselecting a type with no bookings today hides nothing and does not raise the filter-on signals.
+- **Safety:** whenever the filter is hiding bookings, a loud accent banner sits above the list — "Filter on. Showing only X. N appointments hidden." with a **Show all** button — and the toolbar pill switches to "Filter on" + a count badge. The operator can never be unaware that appointments are hidden.
 
 ---
 
@@ -32,14 +35,14 @@
 
 1. Sign in, land on the schedule for a day that has several booking types.
 2. The action row shows three matched pills — **Filter**, **Jump to today** (when not on today), **New booking** — all the same height (44px), same pill shape, evenly spaced.
-3. Tap **Filter**. A popover opens, right-aligned under the pill, listing the six booking types. Each row shows a colour dot matching the row bars, the type name, and the count of that type today. Types with zero bookings today are dimmed and can't be toggled.
-4. All types start ticked (a check on the right of each row). Tap **Impressions** off and **Virtual impressions** off. The strip immediately drops those rows. The header count reads "N of M shown". The Filter pill turns green and shows a badge with the number of types still shown.
-5. Tap outside the popover (or press Escape). It closes; the filter stays applied.
-6. Flick to the next day with the arrows. The filter persists; counts in the popover update to that day.
-7. Filter down to a type that has zero bookings on the current day → the card shows "No matching bookings" with a **Show all types** button. Tap it; every type returns and the pill goes back to neutral.
-8. Re-open Filter and tap **Show all** in the popover header (only visible while a filter is active) → resets to all types.
-9. On a day with no appointments at all, the Filter pill is not rendered (nothing to narrow).
-10. iPad/tablet width: pills wrap cleanly, popover never bleeds off either screen edge.
+3. Tap **Filter**. A popover opens, right-aligned under the pill. The top row is **All booking types** (ticked while nothing is filtered); below it, one row per type that occurs today — a category-tinted checkbox, the type name, and today's count. Types with no bookings today are not listed at all.
+4. Tap **Only** on the **Impressions** row → the strip instantly shows just impressions. An accent banner appears above the list: "Filter on. Showing only Impressions. N appointments hidden." with a **Show all** button. The toolbar pill reads "Filter on" with a count badge.
+5. Re-open Filter and tick another type's checkbox to add it back. The banner updates to "Showing 2 booking types."
+6. Tap **All booking types** (or **Show all** on the banner / Escape then the pill) → back to the full day; banner and badge clear.
+7. Tap outside the popover (or press Escape). It closes; the filter stays applied. Flick to the next day — the filter persists and the popover's rows/counts update to that day.
+8. Isolate a type, then navigate to a day where that type has no bookings → the card shows "No matching bookings" with **Show all types**, and the banner reads "All booking types are hidden." Tap either to recover.
+9. On a day with no appointments at all, the Filter pill is not rendered.
+10. iPad/tablet width: pills wrap cleanly, the popover never bleeds off either screen edge, and the banner reflows without clipping the **Show all** button.
 
 ---
 

@@ -7,7 +7,7 @@ import {
   useState,
 } from 'react';
 import { createPortal } from 'react-dom';
-import { Check, ListFilter } from 'lucide-react';
+import { Check, LayoutGrid, ListFilter } from 'lucide-react';
 import { theme } from '../../theme/index.ts';
 import {
   type AppointmentCategory,
@@ -16,23 +16,25 @@ import {
 } from '../../lib/queries/appointments.ts';
 
 export interface ScheduleFilterProps {
-  // Per-category booking counts for the day in view. Categories with a
-  // zero count render as disabled rows so staff can see at a glance
-  // which types are absent today without being able to filter to an
-  // empty result by accident.
+  // Per-category booking counts for the day in view. Only categories
+  // with at least one booking today are offered — an empty type would
+  // just be a dead row, and filtering to it could only ever blank the
+  // list.
   counts: Record<AppointmentCategory, number>;
   // The categories currently shown. The full set means "no filter".
   selected: Set<AppointmentCategory>;
   onChange: (next: Set<AppointmentCategory>) => void;
 }
 
-const TOTAL = APPOINTMENT_CATEGORY_ORDER.length;
-const PANEL_WIDTH = 304;
+const ALL = new Set(APPOINTMENT_CATEGORY_ORDER);
+const PANEL_WIDTH = 340;
 
 // Filter control for the schedule strip. A toolbar pill that matches the
 // sibling actions (Jump to today, New booking) and opens a right-aligned
-// popover listing the six booking categories, each with its palette dot
-// and live count. Toggling a row shows / hides that type on the day.
+// popover. The popover offers three moves, each one tap:
+//   - "All booking types"  → show everything (the reset)
+//   - a row's "Only" button → show just that type (the common case)
+//   - a row's checkbox      → add / remove that type (fine-grained)
 export function ScheduleFilter({ counts, selected, onChange }: ScheduleFilterProps) {
   const [open, setOpen] = useState(false);
   const [hovered, setHovered] = useState(false);
@@ -42,9 +44,14 @@ export function ScheduleFilter({ counts, selected, onChange }: ScheduleFilterPro
   const panelId = useId();
   const [triggerRect, setTriggerRect] = useState<DOMRect | null>(null);
 
-  // "Active" = at least one category is hidden. The full set is the
-  // resting, no-filter state.
-  const active = selected.size !== TOTAL;
+  // Only the types that actually occur today are shown / counted.
+  const present = APPOINTMENT_CATEGORY_ORDER.filter((c) => (counts[c] ?? 0) > 0);
+  const shownPresent = present.filter((c) => selected.has(c));
+  // "Active" means a type that exists today is being hidden — the only
+  // case where the filter changes what's on screen. A deselected type
+  // that has no bookings today hides nothing, so it doesn't count.
+  const active = shownPresent.length < present.length;
+  const total = present.reduce((n, c) => n + (counts[c] ?? 0), 0);
 
   // Close on outside pointer / Escape, scoped while open.
   useEffect(() => {
@@ -94,7 +101,8 @@ export function ScheduleFilter({ counts, selected, onChange }: ScheduleFilterPro
     onChange(next);
   };
 
-  const showAll = () => onChange(new Set(APPOINTMENT_CATEGORY_ORDER));
+  const isolate = (cat: AppointmentCategory) => onChange(new Set([cat]));
+  const showAll = () => onChange(new Set(ALL));
 
   // The pill borrows the shared toolbar chrome: a 44px subtle-tint pill.
   // When a filter is applied it latches to the accent tint so a glance
@@ -145,11 +153,15 @@ export function ScheduleFilter({ counts, selected, onChange }: ScheduleFilterPro
         aria-haspopup="dialog"
         aria-expanded={open}
         aria-controls={open ? panelId : undefined}
-        aria-label={active ? `Filter, ${selected.size} of ${TOTAL} types shown` : 'Filter booking types'}
+        aria-label={
+          active
+            ? `Filter on, ${shownPresent.length} of ${present.length} booking types shown`
+            : 'Filter booking types'
+        }
         style={trigger}
       >
         <ListFilter size={16} aria-hidden />
-        Filter
+        {active ? 'Filter on' : 'Filter'}
         {active ? (
           <span
             aria-hidden
@@ -169,7 +181,7 @@ export function ScheduleFilter({ counts, selected, onChange }: ScheduleFilterPro
               lineHeight: 1,
             }}
           >
-            {selected.size}
+            {shownPresent.length}
           </span>
         ) : null}
       </button>
@@ -197,11 +209,7 @@ export function ScheduleFilter({ counts, selected, onChange }: ScheduleFilterPro
             >
               <div
                 style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  padding: `${theme.space[3]}px ${theme.space[4]}px`,
-                  borderBottom: `1px solid ${theme.color.border}`,
+                  padding: `${theme.space[3]}px ${theme.space[4]}px ${theme.space[2]}px`,
                 }}
               >
                 <span
@@ -215,41 +223,35 @@ export function ScheduleFilter({ counts, selected, onChange }: ScheduleFilterPro
                 >
                   Booking types
                 </span>
-                {active ? (
-                  <button
-                    type="button"
-                    onClick={showAll}
-                    style={{
-                      appearance: 'none',
-                      border: 'none',
-                      background: 'transparent',
-                      padding: 0,
-                      cursor: 'pointer',
-                      fontFamily: 'inherit',
-                      fontSize: theme.type.size.sm,
-                      fontWeight: theme.type.weight.semibold,
-                      color: theme.color.accent,
-                    }}
-                  >
-                    Show all
-                  </button>
-                ) : null}
               </div>
 
-              <div style={{ padding: theme.space[1] }}>
-                {APPOINTMENT_CATEGORY_ORDER.map((cat) => {
-                  const count = counts[cat] ?? 0;
+              <div style={{ padding: `0 ${theme.space[1]}px ${theme.space[1]}px` }}>
+                {/* Reset row — one tap back to the full, unfiltered day. */}
+                <AllRow total={total} allSelected={!active} onClick={showAll} />
+                <div
+                  aria-hidden
+                  style={{
+                    height: 1,
+                    background: theme.color.border,
+                    margin: `${theme.space[1]}px ${theme.space[2]}px`,
+                  }}
+                />
+                {present.map((cat) => {
                   const isSelected = selected.has(cat);
-                  const disabled = count === 0;
+                  // "Only" is a no-op when this type is already the sole
+                  // one shown — hide it then so it doesn't look like it'd
+                  // do something it won't.
+                  const onlyIsNoop = isSelected && shownPresent.length === 1;
                   return (
                     <FilterRow
                       key={cat}
                       color={theme.category[cat]}
                       label={APPOINTMENT_CATEGORY_LABELS[cat]}
-                      count={count}
+                      count={counts[cat] ?? 0}
                       selected={isSelected}
-                      disabled={disabled}
-                      onClick={() => !disabled && toggle(cat)}
+                      showOnly={!onlyIsNoop}
+                      onToggle={() => toggle(cat)}
+                      onOnly={() => isolate(cat)}
                     />
                   );
                 })}
@@ -269,19 +271,47 @@ export function ScheduleFilter({ counts, selected, onChange }: ScheduleFilterPro
   );
 }
 
-function FilterRow({
-  color,
-  label,
-  count,
-  selected,
-  disabled,
+// Square, category-tinted checkbox. Checked fills with the row's colour
+// so the control carries the same identity as the strip's colour bar;
+// unchecked is a hollow outline. Accent green stands in as the colour
+// for the "All" row.
+function TickBox({ checked, color }: { checked: boolean; color: string }) {
+  return (
+    <span
+      aria-hidden
+      style={{
+        width: 22,
+        height: 22,
+        flexShrink: 0,
+        borderRadius: 7,
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        background: checked ? color : 'transparent',
+        border: checked ? `1.5px solid ${color}` : '1.5px solid rgba(14,20,20,0.22)',
+        transition: `background ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}, border-color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+      }}
+    >
+      <Check
+        size={14}
+        strokeWidth={3}
+        color={theme.color.surface}
+        style={{
+          opacity: checked ? 1 : 0,
+          transition: `opacity ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+        }}
+      />
+    </span>
+  );
+}
+
+function AllRow({
+  total,
+  allSelected,
   onClick,
 }: {
-  color: string;
-  label: string;
-  count: number;
-  selected: boolean;
-  disabled: boolean;
+  total: number;
+  allSelected: boolean;
   onClick: () => void;
 }) {
   const [hovered, setHovered] = useState(false);
@@ -289,9 +319,7 @@ function FilterRow({
     <button
       type="button"
       role="checkbox"
-      aria-checked={selected}
-      aria-disabled={disabled || undefined}
-      disabled={disabled}
+      aria-checked={allSelected}
       onClick={onClick}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
@@ -301,49 +329,48 @@ function FilterRow({
         minHeight: theme.layout.minTouchTarget,
         textAlign: 'left',
         fontFamily: 'inherit',
-        cursor: disabled ? 'default' : 'pointer',
-        // Selected rows get a faint neutral wash; hover lifts unselected
-        // rows the same amount so the surface feels responsive without
-        // fighting the per-row colour dot.
-        background:
-          selected || (hovered && !disabled) ? 'rgba(14,20,20,0.04)' : 'transparent',
+        cursor: 'pointer',
+        background: allSelected || hovered ? 'rgba(14,20,20,0.04)' : 'transparent',
         border: 'none',
         borderRadius: theme.radius.input,
         padding: `0 ${theme.space[3]}px`,
         display: 'flex',
         alignItems: 'center',
         gap: theme.space[3],
-        opacity: disabled ? 0.4 : 1,
         transition: `background ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
       }}
     >
-      {/* Palette dot — full strength when shown, dimmed when hidden, so
-          the row's on/off state reads from the colour alone. */}
       <span
         aria-hidden
         style={{
-          width: 12,
-          height: 12,
-          borderRadius: theme.radius.pill,
-          background: color,
+          width: 22,
+          height: 22,
           flexShrink: 0,
-          opacity: selected ? 1 : 0.3,
-          transition: `opacity ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+          borderRadius: 7,
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          background: allSelected ? theme.color.accent : 'transparent',
+          border: allSelected
+            ? `1.5px solid ${theme.color.accent}`
+            : '1.5px solid rgba(14,20,20,0.22)',
         }}
-      />
+      >
+        <LayoutGrid
+          size={13}
+          color={allSelected ? theme.color.surface : theme.color.inkSubtle}
+        />
+      </span>
       <span
         style={{
           flex: 1,
           minWidth: 0,
           fontSize: theme.type.size.base,
-          fontWeight: selected ? theme.type.weight.semibold : theme.type.weight.medium,
-          color: selected ? theme.color.ink : theme.color.inkMuted,
-          whiteSpace: 'nowrap',
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
+          fontWeight: theme.type.weight.semibold,
+          color: theme.color.ink,
         }}
       >
-        {label}
+        All booking types
       </span>
       <span
         style={{
@@ -353,26 +380,124 @@ function FilterRow({
           fontVariantNumeric: 'tabular-nums',
         }}
       >
-        {count}
-      </span>
-      {/* Fixed-width check column keeps every row's count digits aligned
-          whether or not the row is selected. */}
-      <span
-        aria-hidden
-        style={{
-          width: 18,
-          height: 18,
-          display: 'inline-flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          flexShrink: 0,
-          color: theme.color.accent,
-          opacity: selected ? 1 : 0,
-          transition: `opacity ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
-        }}
-      >
-        <Check size={18} strokeWidth={2.5} />
+        {total}
       </span>
     </button>
+  );
+}
+
+function FilterRow({
+  color,
+  label,
+  count,
+  selected,
+  showOnly,
+  onToggle,
+  onOnly,
+}: {
+  color: string;
+  label: string;
+  count: number;
+  selected: boolean;
+  showOnly: boolean;
+  onToggle: () => void;
+  onOnly: () => void;
+}) {
+  const [hovered, setHovered] = useState(false);
+  const [onlyHovered, setOnlyHovered] = useState(false);
+  return (
+    <div
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: theme.space[2],
+        borderRadius: theme.radius.input,
+        paddingRight: theme.space[2],
+        background: selected || hovered ? 'rgba(14,20,20,0.04)' : 'transparent',
+        transition: `background ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+      }}
+    >
+      <button
+        type="button"
+        role="checkbox"
+        aria-checked={selected}
+        onClick={onToggle}
+        style={{
+          appearance: 'none',
+          flex: 1,
+          minWidth: 0,
+          minHeight: theme.layout.minTouchTarget,
+          textAlign: 'left',
+          fontFamily: 'inherit',
+          cursor: 'pointer',
+          background: 'transparent',
+          border: 'none',
+          padding: `0 ${theme.space[3]}px`,
+          display: 'flex',
+          alignItems: 'center',
+          gap: theme.space[3],
+        }}
+      >
+        <TickBox checked={selected} color={color} />
+        <span
+          style={{
+            flex: 1,
+            minWidth: 0,
+            fontSize: theme.type.size.base,
+            fontWeight: selected ? theme.type.weight.semibold : theme.type.weight.medium,
+            color: selected ? theme.color.ink : theme.color.inkMuted,
+            whiteSpace: 'nowrap',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+          }}
+        >
+          {label}
+        </span>
+        <span
+          style={{
+            fontSize: theme.type.size.sm,
+            fontWeight: theme.type.weight.medium,
+            color: theme.color.inkSubtle,
+            fontVariantNumeric: 'tabular-nums',
+          }}
+        >
+          {count}
+        </span>
+      </button>
+
+      {/* One-tap isolate. Kept as its own control so the row's body stays
+          a clean add / remove toggle. Reserves its width even when
+          hidden so every row's right edge lines up. */}
+      <span style={{ width: 56, flexShrink: 0, display: 'flex', justifyContent: 'flex-end' }}>
+        {showOnly ? (
+          <button
+            type="button"
+            onClick={onOnly}
+            onMouseEnter={() => setOnlyHovered(true)}
+            onMouseLeave={() => setOnlyHovered(false)}
+            aria-label={`Show only ${label}`}
+            style={{
+              appearance: 'none',
+              fontFamily: 'inherit',
+              cursor: 'pointer',
+              fontSize: theme.type.size.xs,
+              fontWeight: theme.type.weight.semibold,
+              letterSpacing: theme.type.tracking.wide,
+              textTransform: 'uppercase',
+              color: onlyHovered ? theme.color.accent : theme.color.inkSubtle,
+              background: onlyHovered ? theme.color.accentBg : 'transparent',
+              border: `1px solid ${onlyHovered ? theme.color.accent : theme.color.border}`,
+              borderRadius: theme.radius.pill,
+              padding: `${theme.space[1]}px ${theme.space[3]}px`,
+              transition: `background ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}, color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}, border-color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+            }}
+          >
+            Only
+          </button>
+        ) : null}
+      </span>
+    </div>
   );
 }

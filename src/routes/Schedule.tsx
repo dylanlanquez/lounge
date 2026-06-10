@@ -60,6 +60,7 @@ import {
   type AppointmentRow,
   type AppointmentCategory,
   appointmentCategory,
+  APPOINTMENT_CATEGORY_LABELS,
   APPOINTMENT_CATEGORY_ORDER,
   formatAppointmentSummary,
   formatLateDuration,
@@ -223,7 +224,10 @@ export function Schedule() {
   const [shownCategories, setShownCategories] = useState<Set<AppointmentCategory>>(
     () => new Set(APPOINTMENT_CATEGORY_ORDER)
   );
-  const filterActive = shownCategories.size !== APPOINTMENT_CATEGORY_ORDER.length;
+  const showAllCategories = useCallback(
+    () => setShownCategories(new Set(APPOINTMENT_CATEGORY_ORDER)),
+    []
+  );
 
   // Filter the day's appointments to the staff member's bound
   // location. Without this, a staff member with cross-location RLS
@@ -243,15 +247,24 @@ export function Schedule() {
     return counts;
   }, [day.data]);
 
-  // The rows actually rendered, narrowed to the shown categories. When
-  // the filter is at rest (all categories shown) this is day.data
-  // untouched, so the common path allocates nothing.
+  // The rows actually rendered, narrowed to the shown categories.
   const visibleRows = useMemo(
+    () => day.data.filter((r) => shownCategories.has(appointmentCategory(r))),
+    [day.data, shownCategories]
+  );
+  // The filter only counts as "active" when it's actually hiding
+  // bookings that exist today — deselecting a type with no bookings
+  // changes nothing on screen, so it mustn't raise the alarm.
+  const hiddenCount = day.data.length - visibleRows.length;
+  const filterActive = hiddenCount > 0;
+  // Labels of the types currently shown that actually have bookings
+  // today — drives the "Showing only ..." banner copy.
+  const shownCategoryLabels = useMemo(
     () =>
-      filterActive
-        ? day.data.filter((r) => shownCategories.has(appointmentCategory(r)))
-        : day.data,
-    [day.data, shownCategories, filterActive]
+      APPOINTMENT_CATEGORY_ORDER.filter(
+        (c) => categoryCounts[c] > 0 && shownCategories.has(c)
+      ).map((c) => APPOINTMENT_CATEGORY_LABELS[c]),
+    [categoryCounts, shownCategories]
   );
   // Counts power the dots under each day pill in the WeekStrip. The
   // strip materialises every day in a ±60 day window around today, so
@@ -600,6 +613,70 @@ export function Schedule() {
           </div>
         </div>
 
+        {/* Filter-on banner. The danger the operator flagged: a filter
+            silently hides bookings and someone assumes the day is clear.
+            So whenever the filter is actually hiding rows we plant a
+            loud, persistent bar above the list that names what's shown,
+            counts what's hidden, and offers a one-tap way back. */}
+        {filterActive && !currentLocation.loading && day.hasLoaded ? (
+          <div
+            role="status"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: theme.space[3],
+              marginBottom: theme.space[3],
+              padding: `${theme.space[3]}px ${theme.space[3]}px ${theme.space[3]}px ${theme.space[4]}px`,
+              background: theme.color.accentBg,
+              borderRadius: theme.radius.card,
+              borderLeft: `4px solid ${theme.color.accent}`,
+            }}
+          >
+            <ListFilter size={18} color={theme.color.accent} aria-hidden style={{ flexShrink: 0 }} />
+            <p
+              style={{
+                margin: 0,
+                flex: 1,
+                minWidth: 0,
+                fontSize: theme.type.size.sm,
+                lineHeight: theme.type.leading.snug,
+                color: theme.color.accent,
+              }}
+            >
+              <span style={{ fontWeight: theme.type.weight.semibold }}>
+                {shownCategoryLabels.length === 1
+                  ? `Filter on. Showing only ${shownCategoryLabels[0]}.`
+                  : shownCategoryLabels.length === 0
+                    ? 'Filter on. All booking types are hidden.'
+                    : `Filter on. Showing ${shownCategoryLabels.length} booking types.`}
+              </span>{' '}
+              {hiddenCount} appointment{hiddenCount === 1 ? '' : 's'} hidden.
+            </p>
+            <button
+              type="button"
+              onClick={showAllCategories}
+              style={{
+                appearance: 'none',
+                flexShrink: 0,
+                height: 36,
+                padding: `0 ${theme.space[4]}px`,
+                background: theme.color.accent,
+                color: theme.color.surface,
+                border: 'none',
+                borderRadius: theme.radius.pill,
+                cursor: 'pointer',
+                fontFamily: 'inherit',
+                fontSize: theme.type.size.sm,
+                fontWeight: theme.type.weight.semibold,
+                whiteSpace: 'nowrap',
+                WebkitTapHighlightColor: 'transparent',
+              }}
+            >
+              Show all
+            </button>
+          </div>
+        ) : null}
+
         <Card padding={isMobile ? 'sm' : 'md'}>
           {/* Three things must all be resolved before we can decide
               what to render in the day card:
@@ -660,10 +737,7 @@ export function Schedule() {
               title="No matching bookings"
               description="No bookings on this day match the booking-type filter."
               action={
-                <Button
-                  variant="secondary"
-                  onClick={() => setShownCategories(new Set(APPOINTMENT_CATEGORY_ORDER))}
-                >
+                <Button variant="secondary" onClick={showAllCategories}>
                   Show all types
                 </Button>
               }
