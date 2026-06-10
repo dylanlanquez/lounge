@@ -294,6 +294,7 @@ async function handleInviteeCreated(supabase: SupabaseClient, evt: CalendlyEvent
   // resolve the right phase shape — without it the appointment
   // lands with zero pool claims and overlapping impression
   // bookings would slip past the conflict check.
+  const serviceType = serviceTypeFromCalendlyLabel(eventTypeLabel);
   const { error: apptErr } = await supabase
     .from('lng_appointments')
     .insert({
@@ -305,13 +306,46 @@ async function handleInviteeCreated(supabase: SupabaseClient, evt: CalendlyEvent
       start_at: startAt,
       end_at: endAt,
       event_type_label: eventTypeLabel,
-      service_type: serviceTypeFromCalendlyLabel(eventTypeLabel),
+      service_type: serviceType,
       intake,
       join_url,
       status: 'booked',
       ...(deposit ?? {}),
     });
   if (apptErr && apptErr.code !== '23505') throw new Error(apptErr.message);
+
+  // Closure safety net. Calendly manages its own availability, so a
+  // booking can still land on a date we've blocked in lng_closures
+  // (the only booking path with no pre-insert conflict check). We can't
+  // refuse it without orphaning the customer's Calendly booking, so we
+  // log a loud failure for staff to action rather than let it slip by.
+  if (!apptErr) {
+    const closedDate = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Europe/London',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(new Date(startAt));
+    const { data: isClosed } = await supabase.rpc('lng_is_closed', {
+      p_service_type: serviceType,
+      p_date: closedDate,
+    });
+    if (isClosed === true) {
+      await supabase.from('lng_system_failures').insert({
+        severity: 'warning',
+        source: 'calendly-webhook',
+        message: 'Calendly booking landed on a closed date',
+        context: {
+          calendly_invitee_uri: inviteeUri,
+          start_at: startAt,
+          service_type: serviceType,
+          event_type_label: eventTypeLabel,
+          closed_date: closedDate,
+          location_id,
+        },
+      });
+    }
+  }
 
   await supabase.from('patient_events').insert({
     patient_id,

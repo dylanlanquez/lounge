@@ -34,7 +34,7 @@ import { sendAppointmentConfirmation } from './sendAppointmentConfirmation.ts';
 // the whole block will run in a single PL/pgSQL transaction.)
 
 export interface RescheduleConflict {
-  conflict_kind: 'pool_at_capacity' | 'max_concurrent' | 'min_notice';
+  conflict_kind: 'pool_at_capacity' | 'max_concurrent' | 'min_notice' | 'closed';
   pool_id: string | null;
   // For pool_at_capacity / max_concurrent: the pool's effective
   // capacity. For min_notice: the booking type's notice in minutes

@@ -150,6 +150,7 @@ import { supabase } from '../lib/supabase.ts';
 import { useCurrentAccount } from '../lib/queries/currentAccount.tsx';
 import { useLocations } from '../lib/queries/locations.ts';
 import { AdminBookingTypesTab, WorkingHoursEditor } from './AdminBookingTypesTab.tsx';
+import { AdminClosuresTab } from './AdminClosuresTab.tsx';
 import {
   addClinicianOverride,
   addOwnClinicianOverride,
@@ -185,7 +186,7 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 
-type Tab = 'devices' | 'failures' | 'reports' | 'calendly' | 'services' | 'products' | 'booking_types' | 'conflicts' | 'emails' | 'sms' | 'branding' | 'widget' | 'receipts' | 'testing' | 'waivers' | 'staff' | 'payments' | 'virtual_impressions';
+type Tab = 'devices' | 'failures' | 'reports' | 'calendly' | 'services' | 'products' | 'booking_types' | 'closures' | 'conflicts' | 'emails' | 'sms' | 'branding' | 'widget' | 'receipts' | 'testing' | 'waivers' | 'staff' | 'payments' | 'virtual_impressions';
 
 // Canonical list of every Admin tab. Drives the SegmentedControl in
 // the Admin header, the per-staff "Admin pages" toggle list in the
@@ -206,6 +207,7 @@ const ADMIN_TABS: { key: Tab; label: string; description: string }[] = [
   { key: 'services', label: 'Services', description: 'Bookable service catalogue, ordering, images.' },
   { key: 'products', label: 'Products', description: 'Add-on product catalogue, pricing, archiving.' },
   { key: 'booking_types', label: 'Booking types', description: 'Calendly mapping, deposits, services-per-type policy.' },
+  { key: 'closures', label: 'Closures', description: 'Block dates for holidays or clinic closures, clinic-wide or per booking type.' },
   { key: 'conflicts', label: 'Resources', description: 'Resource conflict rules so two appointments never share a chair or surgeon.' },
   { key: 'emails', label: 'Emails', description: 'Editable transactional email templates with version history.' },
   { key: 'sms', label: 'SMS', description: 'Editable manually-sent SMS templates per booking type.' },
@@ -338,6 +340,8 @@ export function Admin() {
           <CatalogueTab key="products" mode="products" />
         ) : tab === 'booking_types' ? (
           <AdminBookingTypesTab />
+        ) : tab === 'closures' ? (
+          <AdminClosuresTab />
         ) : tab === 'conflicts' ? (
           <AdminConflictsTab />
         ) : tab === 'emails' ? (

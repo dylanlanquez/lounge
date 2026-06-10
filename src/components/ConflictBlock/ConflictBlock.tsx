@@ -106,6 +106,12 @@ export function ConflictBlock({
 // present (pool busy in a specific phase, time window known) and
 // falls back to the legacy "pool at capacity" sentence otherwise.
 function describeConflict(c: RescheduleConflict): string {
+  if (c.conflict_kind === 'closed') {
+    // Staff-facing: the clinic / this booking type is closed on this
+    // date (a holiday or admin-set closure). Reason copy is admin-only
+    // and not carried on the conflict row, so keep this generic.
+    return 'The clinic is closed on this date. Pick another day, or clear the closure in Admin, Closures.';
+  }
   if (c.conflict_kind === 'min_notice') {
     // pool_capacity carries the notice window in minutes (see the
     // RescheduleConflict comment + lng_booking_check_conflict). The
