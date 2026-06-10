@@ -24,9 +24,22 @@ const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 
-const SHOPIFY_TOKEN = Deno.env.get('SHOPIFY_VENNEIR_ADMIN_TOKEN') ?? '';
-const SHOPIFY_SHOP = Deno.env.get('SHOPIFY_VENNEIR_SHOP') ?? 'venneir.myshopify.com';
+// Reuse the project's existing Venneir Shopify secrets (SHOPIFY_TOKEN /
+// SHOPIFY_STORE — the same credentials the order sync uses). The
+// VENNEIR-prefixed names are accepted too as an override.
+const SHOPIFY_TOKEN =
+  Deno.env.get('SHOPIFY_VENNEIR_ADMIN_TOKEN') ?? Deno.env.get('SHOPIFY_TOKEN') ?? '';
+const SHOPIFY_SHOP = normaliseShop(
+  Deno.env.get('SHOPIFY_VENNEIR_SHOP') ?? Deno.env.get('SHOPIFY_STORE') ?? 'venneir.myshopify.com'
+);
 const SHOPIFY_API_VERSION = Deno.env.get('SHOPIFY_API_VERSION') ?? '2025-07';
+
+// Accept a full URL, a bare myshopify domain, or just a store handle.
+function normaliseShop(raw: string): string {
+  let v = raw.trim().replace(/^https?:\/\//, '').replace(/\/+$/, '');
+  if (!v.includes('.')) v = `${v}.myshopify.com`;
+  return v;
+}
 
 // Cap pages so a runaway catalogue can't hammer the API (250 * 12 = 3000).
 const MAX_PAGES = 12;
