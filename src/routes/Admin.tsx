@@ -4973,6 +4973,18 @@ export function ClinicianHoursSheet({
     if (!staffId) return;
     setSavingHours(true);
     try {
+      // Catch a half-entered specific date / day off so the main Save
+      // button doesn't silently drop what's typed into those forms (a
+      // common confusion — people fill the row then hit Save instead of
+      // the row's own Add button). Only commits a fully-valid entry.
+      if (workDate && workEnd > workStart) {
+        await saveOverride('available', workDate, workStart, workEnd);
+        setWorkDate('');
+      }
+      if (offDate && (offAllDay || offEnd > offStart)) {
+        await saveOverride('off', offDate, offAllDay ? null : offStart, offAllDay ? null : offEnd);
+        setOffDate('');
+      }
       if (selfEdit) await setOwnClinicianHours(week);
       else await setClinicianHours(staffId, week);
       setToast({ tone: 'success', title: 'Hours saved' });
