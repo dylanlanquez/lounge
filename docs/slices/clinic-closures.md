@@ -2,7 +2,9 @@
 
 **Status:** Built, shadow-verified, awaiting production rollout
 **Phase:** Cross-cutting (availability)
-**Migration (this slice):** `20260610000004_lng_closures.sql`
+**Migrations (this slice):** `20260610000004_lng_closures.sql`, `20260610000005_lng_closure_range.sql` (range upsert + bulk delete RPCs)
+
+**Add UI:** single day or date range (toggle), multi-select booking-type tiles (whole clinic supersedes the in-person types; virtual independent). A range is stored as one `lng_closures` row per date and shown grouped back into a single range row.
 
 **Touched files:**
 - `supabase/migrations/20260610000004_lng_closures.sql` — table, `lng_is_closed`, `lng_add_closure`/`lng_delete_closure`, closure gate in `lng_booking_check_conflict`, guard in `lng_virtual_available_slots`, overlap-guard ignores `closed`

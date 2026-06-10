@@ -68,6 +68,31 @@ export async function deleteClosure(id: string): Promise<void> {
   if (error) throw new Error(error.message);
 }
 
+// Upsert a closure for every date in [from, to] (inclusive) for one
+// scope, in a single atomic call. Single day = from === to.
+export async function addClosureRange(args: {
+  from: string; // 'YYYY-MM-DD'
+  to: string; // 'YYYY-MM-DD'
+  scope: ClosureScope;
+  reason?: string | null;
+}): Promise<number> {
+  const { data, error } = await supabase.rpc('lng_add_closure_range', {
+    p_from: args.from,
+    p_to: args.to,
+    p_service_type: toServiceType(args.scope),
+    p_reason: args.reason ?? null,
+  });
+  if (error) throw new Error(error.message);
+  return (data as number) ?? 0;
+}
+
+// Clear several closure rows at once (used to remove a whole range).
+export async function deleteClosures(ids: string[]): Promise<void> {
+  if (ids.length === 0) return;
+  const { error } = await supabase.rpc('lng_delete_closures', { p_ids: ids });
+  if (error) throw new Error(error.message);
+}
+
 // Loads the full closure list with a manual refetch for after writes.
 export function useClosures(): {
   closures: Closure[];
