@@ -235,22 +235,30 @@ export function useVirtualClinicians(): { clinicians: VirtualClinician[]; loadin
   return { clinicians, loading, error };
 }
 
-// Dates a clinician has availability for, driving the booking calendar's
-// per-day enabled state for virtual impressions (clinician hours, not
-// clinic hours). Empty set when no clinician/window is given.
+// Dates with virtual-impression availability, driving the booking
+// calendar's per-day enabled state (clinician hours, not clinic hours).
+//   • staffMemberId set            → that one clinician's working days.
+//   • anyClinician = true          → any clinician has a free slot that
+//                                    day (slot-first booking: the operator
+//                                    picks the day before a clinician).
+//   • neither                      → empty set (picker stays dimmed).
+// The RPC treats p_staff_member_id = null as "any clinician", so the
+// any-clinician mode simply passes null.
 export function useClinicianAvailableDates(args: {
   staffMemberId: string | null;
+  anyClinician?: boolean;
   selfServeOnly?: boolean;
   fromIso: string | null;
   toIso: string | null;
 }): { dates: ReadonlySet<string>; loading: boolean } {
   const { staffMemberId, fromIso, toIso } = args;
+  const anyClinician = args.anyClinician ?? false;
   const selfServeOnly = args.selfServeOnly ?? false;
   const [dates, setDates] = useState<ReadonlySet<string>>(new Set());
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (!staffMemberId || !fromIso || !toIso) {
+    if ((!staffMemberId && !anyClinician) || !fromIso || !toIso) {
       setDates(new Set());
       setLoading(false);
       return;
@@ -259,7 +267,7 @@ export function useClinicianAvailableDates(args: {
     setLoading(true);
     (async () => {
       const { data, error } = await supabase.rpc('lng_clinician_available_dates', {
-        p_staff_member_id: staffMemberId,
+        p_staff_member_id: anyClinician ? null : staffMemberId,
         p_self_serve_only: selfServeOnly,
         p_from: fromIso,
         p_to: toIso,
@@ -276,7 +284,71 @@ export function useClinicianAvailableDates(args: {
     return () => {
       cancelled = true;
     };
-  }, [staffMemberId, selfServeOnly, fromIso, toIso]);
+  }, [staffMemberId, anyClinician, selfServeOnly, fromIso, toIso]);
 
   return { dates, loading };
+}
+
+// Virtual impression clinicians who are on shift AND free for one
+// specific slot — the staff New Booking picker only offers clinicians
+// who can actually take THIS call. Wraps lng_clinicians_available
+// (on-shift AND no overlapping active virtual booking); selfServeOnly
+// defaults false so staff placement can use staff-only clinicians too.
+// Returns [] until both startIso and endIso are supplied, so the picker
+// stays hidden until the operator has chosen a date and time.
+export function useAvailableCliniciansForSlot(args: {
+  startIso: string | null;
+  endIso: string | null;
+  selfServeOnly?: boolean;
+  excludeAppointmentId?: string | null;
+}): { clinicians: VirtualClinician[]; loading: boolean; error: string | null } {
+  const { startIso, endIso } = args;
+  const selfServeOnly = args.selfServeOnly ?? false;
+  const excludeAppointmentId = args.excludeAppointmentId ?? null;
+  const [clinicians, setClinicians] = useState<VirtualClinician[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!startIso || !endIso) {
+      setClinicians([]);
+      setLoading(false);
+      setError(null);
+      return;
+    }
+    let cancelled = false;
+    setLoading(true);
+    (async () => {
+      const { data, error: err } = await supabase.rpc('lng_clinicians_available', {
+        p_start_at: startIso,
+        p_end_at: endIso,
+        p_self_serve_only: selfServeOnly,
+        p_exclude_appointment_id: excludeAppointmentId,
+        p_staff_member_id: null,
+      });
+      if (cancelled) return;
+      if (err) {
+        setError(err.message);
+        setClinicians([]);
+        setLoading(false);
+        return;
+      }
+      // lng_clinicians_available already orders by display_name.
+      const rows: VirtualClinician[] = (data ?? []).map(
+        (r: { staff_member_id: string; display_name: string; clinician_self_serve: boolean | null }) => ({
+          staff_member_id: r.staff_member_id,
+          display_name: r.display_name,
+          clinician_self_serve: r.clinician_self_serve !== false,
+        }),
+      );
+      setError(null);
+      setClinicians(rows);
+      setLoading(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [startIso, endIso, selfServeOnly, excludeAppointmentId]);
+
+  return { clinicians, loading, error };
 }

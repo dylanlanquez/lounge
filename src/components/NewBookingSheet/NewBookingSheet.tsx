@@ -51,7 +51,7 @@ import {
 import { effectiveDayHoursForDate, useClinicSettings } from '../../lib/queries/clinicSettings.ts';
 import { monthGridWindowForIso, todayIso } from '../../lib/calendarMonth.ts';
 import { createAppointment } from '../../lib/queries/createAppointment.ts';
-import { useClinicianAvailableDates, useVirtualClinicians } from '../../lib/queries/clinicianHours.ts';
+import { useAvailableCliniciansForSlot, useClinicianAvailableDates, useVirtualClinicians } from '../../lib/queries/clinicianHours.ts';
 import { useCatalogueActive } from '../../lib/queries/catalogue.ts';
 import { lookupShopifyOrder, type ShopifyOrderLookup } from '../../lib/queries/shopifyOrderLookup.ts';
 import { formatPence } from '../../lib/queries/carts.ts';
@@ -193,7 +193,7 @@ export function NewBookingSheet({
   // when meetHostId is set; otherwise it falls back to the legacy
   // service-account flow (used by Calendly imports).
   const [clinicianId, setClinicianId] = useState<string | null>(null);
-  const { clinicians, loading: cliniciansLoading } = useVirtualClinicians();
+  const { clinicians } = useVirtualClinicians();
 
   // Shopify-paid services (admin flag on lwo_catalogue.sold_on_shopify
   // makes the opt-in available). Most customers walking into a sold-
@@ -399,14 +399,13 @@ export function NewBookingSheet({
   // from virtual — we never want a stale host id leaking into a
   // non-virtual booking row.
   const isVirtualService = serviceType === 'virtual_impression_appointment';
+  // The clinician is chosen AFTER the slot now (slot-first flow), so it
+  // is selected by the free-clinician effect further down rather than
+  // pre-picked on mount. Here we only guarantee a non-virtual booking
+  // never carries a stale clinician id.
   useEffect(() => {
-    if (!isVirtualService) {
-      setClinicianId(null);
-      return;
-    }
-    if (clinicianId) return;
-    if (clinicians.length > 0) setClinicianId(clinicians[0]!.staff_member_id);
-  }, [isVirtualService, clinicians, clinicianId]);
+    if (!isVirtualService) setClinicianId(null);
+  }, [isVirtualService]);
 
   // ── Load axis option lists for the picked service ──────────────
   useEffect(() => {
@@ -636,11 +635,12 @@ export function NewBookingSheet({
     fromIso: calendarWindow.fromIso,
     toIso: calendarWindow.toIso,
   });
-  // Virtual: the calendar's enabled days come from the chosen clinician's
-  // hours, not the clinic's. Staff path sees staff-only clinicians too
-  // (selfServeOnly=false).
+  // Virtual: the calendar's enabled days are days ANY clinician is free
+  // (slot-first — the operator picks the day before a clinician). Staff
+  // path includes staff-only clinicians (selfServeOnly=false).
   const clinicianDates = useClinicianAvailableDates({
-    staffMemberId: isVirtualService ? clinicianId : null,
+    staffMemberId: null,
+    anyClinician: isVirtualService,
     selfServeOnly: false,
     fromIso: calendarWindow.fromIso,
     toIso: calendarWindow.toIso,
@@ -675,10 +675,10 @@ export function NewBookingSheet({
           repairVariant: axisValues.repair_variant,
           productKey: axisValues.product_key,
           arch: axisValues.arch,
-          // Virtual: narrow to the chosen clinician's hours. Null when
-          // no clinician is picked yet (shows any on-shift clinician) or
-          // for non-virtual services (the RPC ignores it there).
-          staffMemberId: isVirtualService ? clinicianId : null,
+          // Slot-first flow: virtual slots are computed across ANY
+          // on-shift clinician (null), so the operator picks a time
+          // before a clinician. The RPC ignores this for non-virtual.
+          staffMemberId: null,
         });
         if (cancelled) return;
         // Strip past times when the picked date is today. The
@@ -727,10 +727,6 @@ export function NewBookingSheet({
     axisValues.repair_variant,
     axisValues.product_key,
     axisValues.arch,
-    // Refetch when the operator switches clinician — virtual
-    // availability is that clinician's hours.
-    isVirtualService,
-    clinicianId,
   ]);
 
   // ── Working-hours check ────────────────────────────────────────
@@ -805,13 +801,50 @@ export function NewBookingSheet({
   const slotIsValid = isVirtualService
     ? !!config && !!date && !!time && !isPastSlot && slotInServerList
     : !!config && !!date && !!time && inWorkingHours && fitsBeforeClose && !isPastSlot;
-  // Virtual services require a clinician. The dropdown auto-picks the
-  // first one when clinicians exist, so this guard mostly trips when no
-  // staff member has been flagged as a virtual impression clinician yet
-  // — Save stays disabled until one is set up in Admin > Staff.
+
+  // ── Virtual: clinicians free for the CHOSEN slot ───────────────
+  // Slot-first model. The operator picks date + time against any
+  // clinician's availability; only then do we offer the clinicians
+  // who are actually free for that exact window. The picker stays
+  // hidden until a valid slot exists (virtualSlotStartIso is null),
+  // and a clinician with no space simply never appears in the list.
+  const virtualSlotStartIso =
+    isVirtualService && date && time && slotInServerList && !isPastSlot
+      ? composeIso(date, time)
+      : null;
+  const virtualSlotEndIso =
+    virtualSlotStartIso && config
+      ? new Date(new Date(virtualSlotStartIso).getTime() + config.duration_default * 60_000).toISOString()
+      : null;
+  const { clinicians: availableClinicians, loading: availableCliniciansLoading } =
+    useAvailableCliniciansForSlot({
+      startIso: virtualSlotStartIso,
+      endIso: virtualSlotEndIso,
+      selfServeOnly: false,
+    });
+  // Keep the picked clinician valid for the chosen slot: once the
+  // free-clinician list settles, keep the current pick when they're
+  // still free, otherwise snap to the first free clinician (or clear
+  // when none are free / no slot is chosen yet). Replaces the old
+  // pick-first-on-mount, which could leave a clinician selected who
+  // had no space at the chosen time.
+  useEffect(() => {
+    if (!isVirtualService || !virtualSlotStartIso) {
+      setClinicianId(null);
+      return;
+    }
+    if (availableCliniciansLoading) return;
+    setClinicianId((prev) =>
+      prev && availableClinicians.some((c) => c.staff_member_id === prev)
+        ? prev
+        : availableClinicians[0]?.staff_member_id ?? null,
+    );
+  }, [isVirtualService, virtualSlotStartIso, availableCliniciansLoading, availableClinicians]);
+
+  // Virtual services require a clinician. clinicianId is only set once a
+  // slot is chosen AND a clinician is free for it, so this guard keeps
+  // Save disabled until the operator has a bookable clinician.
   const clinicianPicked = !isVirtualService || !!clinicianId;
-  const clinicianName =
-    clinicians.find((c) => c.staff_member_id === clinicianId)?.display_name ?? 'this clinician';
   // Shopify order is opt-in per booking. The gate only fires when the
   // receptionist explicitly ticks "Coming in from an online order"
   // AND we don't have a resolved order yet — a half-typed number
@@ -1281,17 +1314,11 @@ export function NewBookingSheet({
               // during the load window, which silently re-opened
               // closed days whenever the loading flag stayed true
               // longer than expected.
-              // Virtual: the calendar's enabled days are the chosen
-              // clinician's working days (clinician hours, not clinic
-              // hours). Before a clinician is picked, no days are
-              // selectable. Non-virtual keeps the clinic-hours whitelist.
-              availableDates={
-                isVirtualService
-                  ? clinicianId
-                    ? clinicianDates.dates
-                    : new Set<string>()
-                  : monthAvailability.dates
-              }
+              // Virtual: the calendar's enabled days are days ANY
+              // clinician is free (slot-first — the operator picks the
+              // day, then the time, then a clinician free for it).
+              // Non-virtual keeps the clinic-hours whitelist.
+              availableDates={isVirtualService ? clinicianDates.dates : monthAvailability.dates}
               availableDatesLoading={isVirtualService ? clinicianDates.loading : monthAvailability.loading}
               onVisibleMonthChange={onCalendarWindow}
             />
@@ -1322,24 +1349,22 @@ export function NewBookingSheet({
                 then-light-up behaviour is sufficient signal that
                 data is loading. */}
             {config && !searchingFirstSlot && isVirtualService ? (
-              // Virtual availability is the CLINICIAN's, not the clinic's.
-              // The hint reflects the picked clinician's times for the day,
-              // with no clinic open/closed messaging.
+              // Virtual availability spans every clinician (slot-first):
+              // the times shown are when at least one clinician is free.
+              // No clinic open/closed messaging — clinician hours drive it.
               <InlineHint
                 tone={
-                  date && clinicianId && Array.isArray(availableSlots) && availableSlots.length === 0
+                  date && Array.isArray(availableSlots) && availableSlots.length === 0
                     ? 'alert'
                     : 'muted'
                 }
               >
                 {config.duration_default}-minute video call
-                {!clinicianId
-                  ? '. Pick a clinician to see their available times.'
-                  : availabilityLoading || !date
+                {availabilityLoading || !date
                   ? '.'
                   : Array.isArray(availableSlots) && availableSlots.length > 0
-                  ? `. Times shown are when ${clinicianName} can take the call.`
-                  : `. ${clinicianName} has no availability on this day. Try another date.`}
+                  ? '. Times shown are when a clinician is free; choose one below.'
+                  : '. No clinician is free on this day. Try another date.'}
               </InlineHint>
             ) : config && !searchingFirstSlot ? (
               <InlineHint
@@ -1399,7 +1424,7 @@ export function NewBookingSheet({
             <Section
               title="Clinician"
               required
-              info="The virtual impression clinician who will run this video call. Their hours decide the available times above."
+              info="The virtual impression clinician who will run this video call. Only clinicians free for the date and time you picked are shown."
             >
               {clinicians.length === 0 ? (
                 <div
@@ -1450,18 +1475,38 @@ export function NewBookingSheet({
                     Open Virtual impressions
                   </a>
                 </div>
+              ) : !virtualSlotStartIso ? (
+                // Slot-first: no chooser until a valid date + time exist.
+                <InlineHint>
+                  Pick a date and time above first. Only clinicians free for that slot are shown here.
+                </InlineHint>
+              ) : availableCliniciansLoading ? (
+                <InlineHint>Checking which clinicians are free…</InlineHint>
+              ) : availableClinicians.length === 0 ? (
+                // The chosen time is in the any-clinician slot list, so a
+                // clinician was free when it was generated; this only
+                // trips on a race (someone booked the last one meanwhile).
+                <InlineHint tone="alert">
+                  No clinician is free at that time anymore. Pick another time above.
+                </InlineHint>
               ) : (
-                <DropdownSelect<string>
-                  ariaLabel="Clinician"
-                  value={clinicianId ?? ''}
-                  onChange={(v) => setClinicianId(v || null)}
-                  options={clinicians.map((c) => ({
-                    value: c.staff_member_id,
-                    label: c.clinician_self_serve ? c.display_name : `${c.display_name} (staff only)`,
-                  }))}
-                  placeholder={cliniciansLoading ? 'Loading clinicians' : 'Pick a clinician'}
-                  disabled={cliniciansLoading}
-                />
+                <>
+                  <DropdownSelect<string>
+                    ariaLabel="Clinician"
+                    value={clinicianId ?? ''}
+                    onChange={(v) => setClinicianId(v || null)}
+                    options={availableClinicians.map((c) => ({
+                      value: c.staff_member_id,
+                      label: c.clinician_self_serve ? c.display_name : `${c.display_name} (staff only)`,
+                    }))}
+                    placeholder="Pick a clinician"
+                  />
+                  <InlineHint>
+                    {availableClinicians.length === 1
+                      ? 'One clinician is free at this time.'
+                      : `${availableClinicians.length} clinicians are free at this time.`}
+                  </InlineHint>
+                </>
               )}
             </Section>
           ) : null}
