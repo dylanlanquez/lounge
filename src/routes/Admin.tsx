@@ -4654,7 +4654,6 @@ function CatalogueTab({ mode }: { mode: CatalogueMode }) {
     () => rows.filter((r) => (mode === 'services' ? r.is_service : !r.is_service)),
     [rows, mode],
   );
-  const grouped = groupByCategory(filteredRows);
   const isServices = mode === 'services';
 
   useEffect(() => {
@@ -4847,36 +4846,43 @@ function CatalogueTab({ mode }: { mode: CatalogueMode }) {
             </SortableContext>
           </DndContext>
         )
-      ) : grouped.length === 0 ? (
+      ) : displayRows.length === 0 ? (
         <EmptyState
           icon={<Package size={24} />}
           title="No products yet"
           description="Tap Add product to seed care products that show up as cart upsells."
         />
       ) : (
-        <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
-          {grouped.flatMap(([, catRows]) =>
-            catRows.map((row) =>
-              editingId === row.id ? (
-                <li key={row.id}>
-                  <CatalogueRowEditor
-                    mode={mode}
-                    initial={draftFromRow(row)}
-                    onSave={onSave}
-                    onCancel={() => setEditingId(null)}
+        // Drag to reorder. sort_order also drives the order products
+        // appear under "Suggested for this booking" in the picker.
+        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
+          <SortableContext
+            items={displayRows.filter((r) => r.id !== editingId).map((r) => r.id)}
+            strategy={verticalListSortingStrategy}
+          >
+            <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
+              {displayRows.map((row) =>
+                editingId === row.id ? (
+                  <li key={row.id} style={{ listStyle: 'none' }}>
+                    <CatalogueRowEditor
+                      mode={mode}
+                      initial={draftFromRow(row)}
+                      onSave={onSave}
+                      onCancel={() => setEditingId(null)}
+                    />
+                  </li>
+                ) : (
+                  <SortableProductRow
+                    key={row.id}
+                    row={row}
+                    onEdit={() => setEditingId(row.id)}
+                    onToggleActive={() => onToggleActive(row)}
                   />
-                </li>
-              ) : (
-                <CatalogueRowDisplay
-                  key={row.id}
-                  row={row}
-                  onEdit={() => setEditingId(row.id)}
-                  onToggleActive={() => onToggleActive(row)}
-                />
-              ),
-            ),
-          )}
-        </ul>
+                ),
+              )}
+            </ul>
+          </SortableContext>
+        </DndContext>
       )}
 
       {toast ? (
@@ -6327,7 +6333,7 @@ function draftFromRow(row: CatalogueRow): CatalogueDraft {
 }
 
 // ── Products-tab row (no drag handle) ────────────────────────────────────────
-function CatalogueRowDisplay({
+function SortableProductRow({
   row,
   onEdit,
   onToggleActive,
@@ -6336,20 +6342,46 @@ function CatalogueRowDisplay({
   onEdit: () => void;
   onToggleActive: () => void;
 }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: row.id });
   return (
     <li
+      ref={setNodeRef}
       style={{
         listStyle: 'none',
-        border: `1px solid ${theme.color.border}`,
-        borderRadius: 14,
-        padding: `${theme.space[3]}px ${theme.space[4]}px`,
-        background: row.active ? theme.color.surface : 'rgba(14, 20, 20, 0.02)',
-        display: 'flex',
-        alignItems: 'center',
-        gap: theme.space[3],
-        opacity: row.active ? 1 : 0.65,
+        transform: CSS.Transform.toString(transform),
+        transition,
+        opacity: isDragging ? 0.4 : 1,
       }}
     >
+      <div
+        style={{
+          border: `1px solid ${isDragging ? theme.color.accent : theme.color.border}`,
+          borderRadius: 14,
+          padding: `${theme.space[3]}px ${theme.space[4]}px`,
+          background: row.active ? theme.color.surface : 'rgba(14, 20, 20, 0.02)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: theme.space[3],
+          opacity: row.active ? 1 : 0.65,
+          boxShadow: isDragging ? theme.shadow.raised : 'none',
+        }}
+      >
+      <span
+        {...attributes}
+        {...listeners}
+        aria-label="Drag to reorder"
+        style={{
+          color: theme.color.inkSubtle,
+          cursor: isDragging ? 'grabbing' : 'grab',
+          flexShrink: 0,
+          touchAction: 'none',
+          display: 'flex',
+          padding: `${theme.space[1]}px`,
+          marginLeft: `-${theme.space[1]}px`,
+        }}
+      >
+        <GripVertical size={18} />
+      </span>
       <CatalogueThumbnail src={row.image_url} alt={row.name} size={44} />
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: theme.space[2], flexWrap: 'wrap' }}>
@@ -6379,6 +6411,7 @@ function CatalogueRowDisplay({
             <Pencil size={14} /> Edit
           </span>
         </Button>
+      </div>
       </div>
     </li>
   );
@@ -7946,16 +7979,6 @@ function UpgradeEditor({
       </div>
     </div>
   );
-}
-
-function groupByCategory(rows: CatalogueRow[]): Array<[string, CatalogueRow[]]> {
-  const map = new Map<string, CatalogueRow[]>();
-  for (const r of rows) {
-    const list = map.get(r.category) ?? [];
-    list.push(r);
-    map.set(r.category, list);
-  }
-  return [...map.entries()];
 }
 
 // Square thumbnail with a rounded clip + subtle border. Falls back to a
