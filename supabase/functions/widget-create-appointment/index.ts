@@ -34,10 +34,6 @@
 // any deposit fields.
 
 import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.50.0';
-import {
-  createMeetEvent,
-  getGoogleAccessToken,
-} from '../_shared/googleCalendar.ts';
 import { getValidAccessToken, type MeetHostRow } from '../_shared/meetHostToken.ts';
 import { invokeAppointmentConfirmation } from '../_shared/invokeAppointmentConfirmation.ts';
 import { resolveWidgetFullPricePence } from '../_shared/widgetFullPrice.ts';
@@ -64,9 +60,6 @@ async function resolveStripeSecret(
   const mode = (data?.value as string | undefined) === 'test' ? 'test' : 'live';
   return mode === 'test' ? STRIPE_SECRET_KEY_TEST : STRIPE_SECRET_KEY_LIVE;
 }
-const GOOGLE_CALENDAR_SA_EMAIL = Deno.env.get('GOOGLE_CALENDAR_SA_EMAIL') ?? '';
-const GOOGLE_CALENDAR_SA_PRIVATE_KEY = Deno.env.get('GOOGLE_CALENDAR_SA_PRIVATE_KEY') ?? '';
-const GOOGLE_CALENDAR_ID = Deno.env.get('GOOGLE_CALENDAR_ID') ?? '';
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -1110,49 +1103,37 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Fallback — service-account Calendar Meet. Last resort when no
-    // host is configured / every host's token is broken. Means no
-    // meet_space_id / meet_meeting_code → no attendance tracking,
-    // but the patient still has a join link.
+    // No clinician-hosted Meet space could be created (no host
+    // configured, or every candidate host's OAuth token is broken).
+    //
+    // We deliberately do NOT fall back to a service-account Calendar
+    // hangout link. That produced an un-hosted room with Google's
+    // default lobby ("please wait until a host brings you in") and no
+    // meet_space_id — exactly the broken state a clinician can never
+    // run a call from. Persisting it as join_url also made every
+    // join_url-keyed surface (the schedule + appointment Join button)
+    // light up a dead link.
+    //
+    // Instead leave join_url NULL. The booking still saves (the
+    // patient is booked, the clinician is assigned), and because there
+    // is no link the appointment surfaces the "Generate Meet link"
+    // card in Lounge — a proper host-owned, OPEN-access room is minted
+    // there (re-notifying the patient) before the call. Logged at
+    // error severity so the gap is visible immediately, not at call
+    // time. INVARIANT: join_url is set only when meet_space_id is.
     if (!meetCreated) {
-      if (candidateHosts.length === 0) {
-        await logFailure(
-          'meet_host_unconfigured_fallback',
-          { appointmentId },
-          'warning',
-        );
-      }
-      if (GOOGLE_CALENDAR_SA_EMAIL && GOOGLE_CALENDAR_SA_PRIVATE_KEY && GOOGLE_CALENDAR_ID) {
-        try {
-          const token = await getGoogleAccessToken(
-            GOOGLE_CALENDAR_SA_EMAIL,
-            GOOGLE_CALENDAR_SA_PRIVATE_KEY,
-          );
-          const { hangoutLink, eventId } = await createMeetEvent({
-            accessToken: token,
-            calendarId: GOOGLE_CALENDAR_ID,
-            appointmentId,
-            startAt: startAt.toISOString(),
-            endAt: endAt.toISOString(),
-            summary: eventLabel,
-          });
-          await supabase
-            .from('lng_appointments')
-            .update({
-              join_url: hangoutLink,
-              google_calendar_event_id: eventId,
-              meeting_platform: 'google_meet',
-            })
-            .eq('id', appointmentId);
-        } catch (e) {
-          await logFailure('google_meet_create_failed', {
-            appointmentId,
-            error: e instanceof Error ? e.message : String(e),
-          }, 'error');
-        }
-      } else {
-        await logFailure('google_calendar_secrets_missing', { appointmentId }, 'warning');
-      }
+      await logFailure(
+        'virtual_meet_space_not_created',
+        {
+          appointmentId,
+          clinician_staff_member_id: chosenClinicianId,
+          candidate_host_count: candidateHosts.length,
+          reason: candidateHosts.length === 0
+            ? 'no_host_configured'
+            : 'all_candidate_hosts_failed',
+        },
+        'error',
+      );
     }
   }
 
