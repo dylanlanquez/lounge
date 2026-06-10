@@ -53,6 +53,18 @@ export function KioskStatusBar() {
   const showReportsButton = !!account && account.can_view_reports;
   const showCashCountsButton =
     !!account && (account.can_count_cash || account.can_view_financials);
+  // A virtual impression clinician whose admin has switched on self-edit
+  // gets a direct top-bar shortcut to their own availability editor —
+  // the same destination buried in the profile sheet, surfaced as a
+  // first-class tray glyph so they can see at a glance that setting
+  // their own hours is something they're allowed to do. Same gate as
+  // the profile-sheet entry; the /my-availability route enforces it too.
+  const showMyAvailabilityButton =
+    !!account &&
+    account.is_virtual_impression_clinician === true &&
+    account.clinician_can_edit_own_hours === true;
+  const showAnyDestinationButton =
+    showMyAvailabilityButton || showCashCountsButton || showReportsButton || showAdminButton;
 
   // Wall clock pinned to the clinic's timezone so a kiosk plugged in
   // anywhere always reads as UK time. Zone suffix (BST/GMT) sits in
@@ -127,6 +139,11 @@ export function KioskStatusBar() {
           gap: isMobile ? theme.space[2] : theme.space[3],
         }}
       >
+        {showMyAvailabilityButton ? (
+          <KioskIconButton label="My availability" tone="accent" onClick={() => navigate('/my-availability')}>
+            <CalendarClock size={15} />
+          </KioskIconButton>
+        ) : null}
         {showCashCountsButton ? (
           <KioskIconButton label="Cash counts" onClick={() => navigate('/cash-counts')}>
             <Wallet size={15} />
@@ -142,7 +159,7 @@ export function KioskStatusBar() {
             <Settings size={15} />
           </KioskIconButton>
         ) : null}
-        {!isMobile && (showReportsButton || showAdminButton || showCashCountsButton) ? <Divider /> : null}
+        {!isMobile && showAnyDestinationButton ? <Divider /> : null}
         <NetworkIndicator
           online={network.online}
           effectiveType={network.effectiveType}
@@ -629,14 +646,20 @@ function Divider() {
 // Financials, Admin). One helper rather than three near-identical
 // inlined <button> tags so any future tweak — focus ring, colour shift,
 // disabled state — flows to every entry consistently.
+//
+// tone: 'default' renders the neutral ink glyph the ops/admin entries
+// use; 'accent' renders the brand green, reserved for a personal action
+// (My availability) so it reads as "this one's yours" within the tray.
 function KioskIconButton({
   label,
   onClick,
   children,
+  tone = 'default',
 }: {
   label: string;
   onClick: () => void;
   children: React.ReactNode;
+  tone?: 'default' | 'accent';
 }) {
   return (
     <button
@@ -648,7 +671,7 @@ function KioskIconButton({
         appearance: 'none',
         border: 'none',
         background: 'transparent',
-        color: theme.color.ink,
+        color: tone === 'accent' ? theme.color.accent : theme.color.ink,
         cursor: 'pointer',
         display: 'inline-flex',
         alignItems: 'center',
