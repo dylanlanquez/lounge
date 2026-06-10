@@ -7,6 +7,7 @@ import {
   DatePicker,
   DropdownSelect,
   FieldTrigger,
+  InlineHint,
   Input,
   ReturnSegmentHints,
   Section,
@@ -30,7 +31,7 @@ import { loadAvailableSlots } from '../../lib/queries/bookingAvailableSlots.ts';
 import { properCase } from '../../lib/queries/appointments.ts';
 import { fmtTzAbbr } from '../../lib/dateFormat.ts';
 import { useAvailableDates } from '../../lib/queries/bookingAvailability.ts';
-import { useClinicianAvailableDates, useVirtualClinicians } from '../../lib/queries/clinicianHours.ts';
+import { useAvailableCliniciansForSlot, useClinicianAvailableDates } from '../../lib/queries/clinicianHours.ts';
 import { monthGridWindowForIso, todayIso } from '../../lib/calendarMonth.ts';
 import { effectiveDayHoursForDate, useClinicSettings } from '../../lib/queries/clinicSettings.ts';
 
@@ -108,14 +109,14 @@ export function RescheduleSheet({
   const [time, setTime] = useState<string>(initial.time);
   const [reason, setReason] = useState<string>('');
 
-  // Virtual impressions: staff can reassign the booking to a different
-  // clinician while rescheduling. Defaults to the booking's clinician;
-  // the date + slot pickers follow the chosen clinician's hours. Staff
-  // can choose staff-only clinicians too (this is the staff surface).
+  // Virtual impressions: slot-first, like New Booking. The date + time
+  // pickers show ANY clinician's availability; the Clinician picker
+  // below then lists only the clinicians free at the chosen slot. Staff
+  // can pick staff-only clinicians too (this is the staff surface).
+  // Defaults to the booking's existing clinician when they're free.
   const [selectedClinicianId, setSelectedClinicianId] = useState<string | null>(
     appointment.clinician_staff_member_id ?? null,
   );
-  const { clinicians: virtualClinicians } = useVirtualClinicians();
   // Re-sync when a different appointment is loaded into the sheet.
   useEffect(() => {
     setSelectedClinicianId(appointment.clinician_staff_member_id ?? null);
@@ -310,9 +311,12 @@ export function RescheduleSheet({
     fromIso: calendarWindow.fromIso,
     toIso: calendarWindow.toIso,
   });
-  // Virtual: the calendar shows the booking's clinician's working days.
+  // Virtual: the calendar shows days ANY clinician is working (the
+  // Clinician picker below narrows to who's free at the chosen slot),
+  // so days like a single Sunday-only clinician's show up too.
   const clinicianDates = useClinicianAvailableDates({
-    staffMemberId: isVirtualService ? selectedClinicianId : null,
+    staffMemberId: null,
+    anyClinician: isVirtualService,
     selfServeOnly: false,
     fromIso: calendarWindow.fromIso,
     toIso: calendarWindow.toIso,
@@ -341,9 +345,9 @@ export function RescheduleSheet({
           repairVariant: appointment.repair_variant,
           productKey: appointment.product_key,
           arch: appointment.arch,
-          // Virtual: show only times the chosen clinician is on shift
-          // and free at the new date.
-          staffMemberId: isVirtualService ? selectedClinicianId : null,
+          // Virtual: any clinician — the slot list shows every time at
+          // least one clinician is free; the Clinician picker narrows it.
+          staffMemberId: null,
         });
         if (cancelled) return;
         // Strip past times when the picked date is today (the
@@ -387,7 +391,6 @@ export function RescheduleSheet({
     appointment.repair_variant,
     appointment.product_key,
     appointment.arch,
-    selectedClinicianId,
     isVirtualService,
     serviceType,
   ]);
@@ -445,6 +448,33 @@ export function RescheduleSheet({
   const slotIsValid = isVirtualService
     ? !!config && !!date && !!time && slotInServerList
     : !!config && !!date && !!time && inWorkingHours && fitsBeforeClose;
+
+  // Slot-first virtual flow (mirrors New Booking): the chosen new slot
+  // drives which clinicians are free; the Clinician picker below lists
+  // exactly those, defaulting to the booking's clinician when still free.
+  const virtualSlotStartIso = isVirtualService && slotIsValid ? composeIso(date, time) : null;
+  const virtualSlotEndIso =
+    virtualSlotStartIso && config
+      ? new Date(new Date(virtualSlotStartIso).getTime() + config.duration_default * 60_000).toISOString()
+      : null;
+  const { clinicians: availableClinicians, loading: availableCliniciansLoading } =
+    useAvailableCliniciansForSlot({
+      startIso: virtualSlotStartIso,
+      endIso: virtualSlotEndIso,
+      selfServeOnly: false,
+      excludeAppointmentId: appointment.id,
+    });
+  // Keep the picked clinician valid for the chosen slot: keep the
+  // current pick when they're still free, else snap to the first free
+  // clinician (or null when none are free yet).
+  useEffect(() => {
+    if (!isVirtualService || !virtualSlotStartIso || availableCliniciansLoading) return;
+    setSelectedClinicianId((prev) =>
+      prev && availableClinicians.some((c) => c.staff_member_id === prev)
+        ? prev
+        : availableClinicians[0]?.staff_member_id ?? null,
+    );
+  }, [isVirtualService, virtualSlotStartIso, availableCliniciansLoading, availableClinicians]);
   // A reason on the new row's cancellation note is the audit trail
   // for why the slot moved — staff sick day, patient asked, equipment
   // delay, etc. Without it the patient timeline reads "Rescheduled"
@@ -455,6 +485,8 @@ export function RescheduleSheet({
   const canSave =
     slotIsValid &&
     reasonGiven &&
+    // Virtual impressions must land on a clinician who's free at the slot.
+    (!isVirtualService || !!selectedClinicianId) &&
     conflicts.length === 0 &&
     !checkingConflicts &&
     !saving &&
@@ -558,28 +590,6 @@ export function RescheduleSheet({
         <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[5] }}>
           <CurrentSlotSummary appointment={appointment} />
 
-          {isVirtualService && config ? (
-            <Section
-              title="Clinician"
-              info="Who runs this virtual impression call. Change it to move the appointment onto a different clinician; the dates and times below follow the chosen clinician's hours. Staff-only clinicians can be picked here."
-            >
-              <DropdownSelect
-                ariaLabel="Clinician"
-                value={selectedClinicianId ?? ''}
-                placeholder="Pick a clinician"
-                options={virtualClinicians.map((c) => ({
-                  value: c.staff_member_id,
-                  label: c.clinician_self_serve ? c.display_name : `${c.display_name} · Staff only`,
-                }))}
-                onChange={(v) => {
-                  setSelectedClinicianId(v || null);
-                  // Re-snap the time to the new clinician's availability.
-                  setTime('');
-                }}
-              />
-            </Section>
-          ) : null}
-
           {configError ? (
             <StatusBanner tone="error" title="Couldn't load booking config">
               {configError}
@@ -655,11 +665,7 @@ export function RescheduleSheet({
               // for virtual and let the host-aware TimePicker be the
               // real gate; non-virtual keeps the precise whitelist.
               availableDates={
-                isVirtualService
-                  ? selectedClinicianId
-                    ? clinicianDates.dates
-                    : new Set<string>()
-                  : monthAvailability.dates
+                isVirtualService ? clinicianDates.dates : monthAvailability.dates
               }
               availableDatesLoading={isVirtualService ? clinicianDates.loading : monthAvailability.loading}
               onVisibleMonthChange={onCalendarWindow}
@@ -726,6 +732,43 @@ export function RescheduleSheet({
               />
             </div>
           </Section>
+          ) : null}
+
+          {/* Slot-first: the Clinician picker appears once a valid new
+              slot is chosen, listing only the clinicians free for it —
+              exactly like New Booking. */}
+          {isVirtualService && virtualSlotStartIso ? (
+            <Section
+              title="Clinician"
+              required
+              info="The virtual impression clinician who will run this call. Only clinicians free for the date and time you picked are shown. Defaults to the booking's current clinician when they're still free."
+            >
+              {availableCliniciansLoading ? (
+                <InlineHint>Checking which clinicians are free…</InlineHint>
+              ) : availableClinicians.length === 0 ? (
+                <InlineHint tone="alert">
+                  No clinician is free at that time. Pick another slot above.
+                </InlineHint>
+              ) : (
+                <>
+                  <DropdownSelect<string>
+                    ariaLabel="Clinician"
+                    value={selectedClinicianId ?? ''}
+                    onChange={(v) => setSelectedClinicianId(v || null)}
+                    options={availableClinicians.map((c) => ({
+                      value: c.staff_member_id,
+                      label: c.clinician_self_serve ? c.display_name : `${c.display_name} (staff only)`,
+                    }))}
+                    placeholder="Pick a clinician"
+                  />
+                  <InlineHint>
+                    {availableClinicians.length === 1
+                      ? 'One clinician is free at this time.'
+                      : `${availableClinicians.length} clinicians are free at this time.`}
+                  </InlineHint>
+                </>
+              )}
+            </Section>
           ) : null}
 
           <Section
