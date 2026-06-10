@@ -149,7 +149,7 @@ import {
 import { supabase } from '../lib/supabase.ts';
 import { useCurrentAccount } from '../lib/queries/currentAccount.tsx';
 import { useLocations } from '../lib/queries/locations.ts';
-import { AdminBookingTypesTab, TimeField, WorkingHoursEditor } from './AdminBookingTypesTab.tsx';
+import { AdminBookingTypesTab, WorkingHoursEditor } from './AdminBookingTypesTab.tsx';
 import {
   addClinicianOverride,
   addOwnClinicianOverride,
@@ -4892,20 +4892,20 @@ export function ClinicianHoursSheet({
   const [savingHours, setSavingHours] = useState(false);
   const [toast, setToast] = useState<{ tone: 'success' | 'error'; title: string } | null>(null);
 
-  // New-override draft.
-  const [ovDate, setOvDate] = useState('');
-  const [ovDateOpen, setOvDateOpen] = useState(false);
-  const ovDateRef = useRef<HTMLButtonElement>(null);
-  const [ovKind, setOvKind] = useState<'available' | 'off'>('available');
-  const [ovStart, setOvStart] = useState('10:00');
-  const [ovEnd, setOvEnd] = useState('14:00');
-  const [ovAllDay, setOvAllDay] = useState(true);
-  const [ovBusy, setOvBusy] = useState(false);
+  // "Specific dates" draft — an extra one-off WORKING date (kind=available)
+  // added on top of the weekly pattern.
+  const [workDate, setWorkDate] = useState('');
+  const [workStart, setWorkStart] = useState('09:00');
+  const [workEnd, setWorkEnd] = useState('17:00');
+  const [workBusy, setWorkBusy] = useState(false);
 
-  // How the clinician wants to set availability: a repeating weekly
-  // pattern, or specific dates only (the override calendar). Defaults to
-  // weekly — the familiar primary view.
-  const [mode, setMode] = useState<'weekly' | 'dates'>('weekly');
+  // "Days off" draft — a holiday / day off that overrides the weekly
+  // pattern (kind=off). Whole day by default; can be a partial window.
+  const [offDate, setOffDate] = useState('');
+  const [offAllDay, setOffAllDay] = useState(true);
+  const [offStart, setOffStart] = useState('09:00');
+  const [offEnd, setOffEnd] = useState('17:00');
+  const [offBusy, setOffBusy] = useState(false);
 
   const staffId = staff?.staff_member_id ?? null;
 
@@ -4944,43 +4944,64 @@ export function ClinicianHoursSheet({
     }
   };
 
-  const addOverride = async () => {
+  // Shared writer for both kinds of override (working date / day off).
+  const saveOverride = async (
+    kind: 'available' | 'off',
+    date: string,
+    start: string | null,
+    end: string | null,
+  ) => {
     if (!staffId) return;
-    if (!ovDate) {
+    if (selfEdit) {
+      await addOwnClinicianOverride({ date, kind, start, end });
+    } else {
+      await addClinicianOverride({ staffMemberId: staffId, date, kind, start, end });
+    }
+    const s = await fetchClinicianSchedule(staffId);
+    setOverrides(s.overrides);
+  };
+
+  const addWorkingDate = async () => {
+    if (!staffId) return;
+    if (!workDate) {
       setToast({ tone: 'error', title: 'Pick a date first' });
       return;
     }
-    const useWindow = ovKind === 'available' || !ovAllDay;
-    if (useWindow && ovEnd <= ovStart) {
+    if (workEnd <= workStart) {
       setToast({ tone: 'error', title: 'End time must be after the start' });
       return;
     }
-    setOvBusy(true);
+    setWorkBusy(true);
     try {
-      if (selfEdit) {
-        await addOwnClinicianOverride({
-          date: ovDate,
-          kind: ovKind,
-          start: useWindow ? ovStart : null,
-          end: useWindow ? ovEnd : null,
-        });
-      } else {
-        await addClinicianOverride({
-          staffMemberId: staffId,
-          date: ovDate,
-          kind: ovKind,
-          start: useWindow ? ovStart : null,
-          end: useWindow ? ovEnd : null,
-        });
-      }
-      const s = await fetchClinicianSchedule(staffId);
-      setOverrides(s.overrides);
-      setOvDate('');
-      setToast({ tone: 'success', title: 'One-off saved' });
+      await saveOverride('available', workDate, workStart, workEnd);
+      setWorkDate('');
+      setToast({ tone: 'success', title: 'Working date added' });
     } catch (e) {
       onError(e instanceof Error ? e.message : String(e));
     } finally {
-      setOvBusy(false);
+      setWorkBusy(false);
+    }
+  };
+
+  const addDayOff = async () => {
+    if (!staffId) return;
+    if (!offDate) {
+      setToast({ tone: 'error', title: 'Pick a date first' });
+      return;
+    }
+    if (!offAllDay && offEnd <= offStart) {
+      setToast({ tone: 'error', title: 'End time must be after the start' });
+      return;
+    }
+    setOffBusy(true);
+    try {
+      await saveOverride('off', offDate, offAllDay ? null : offStart, offAllDay ? null : offEnd);
+      setOffDate('');
+      setToast({ tone: 'success', title: 'Day off added' });
+    } catch (e) {
+      onError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setOffBusy(false);
     }
   };
 
@@ -5007,152 +5028,69 @@ export function ClinicianHoursSheet({
       onClose={savingHours ? () => undefined : onClose}
       title={title}
       footer={
-        mode === 'weekly' ? (
-          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: theme.space[2] }}>
-            <Button variant="tertiary" onClick={onClose} disabled={savingHours}>
-              Close
-            </Button>
-            <Button variant="primary" onClick={saveHours} disabled={savingHours || loading}>
-              {savingHours ? 'Saving…' : 'Save weekly hours'}
-            </Button>
-          </div>
-        ) : (
-          // Specific dates save the moment they're added, so there's
-          // nothing to commit here — just close.
-          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-            <Button variant="primary" onClick={onClose}>
-              Done
-            </Button>
-          </div>
-        )
+        // Weekly hours commit with this button; specific dates and days
+        // off save the moment they're added.
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: theme.space[2] }}>
+          <Button variant="tertiary" onClick={onClose} disabled={savingHours}>
+            Close
+          </Button>
+          <Button variant="primary" onClick={saveHours} disabled={savingHours || loading}>
+            {savingHours ? 'Saving…' : 'Save weekly hours'}
+          </Button>
+        </div>
       }
     >
       {loading ? (
         <Skeleton height={320} radius={12} />
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[5] }}>
-          {/* Choose the approach first: a repeating weekly pattern, or
-              availability set per specific date. Plus a persistent
-              reminder that every time on this sheet is UK time (BST) —
-              a clinician may be working from another timezone. */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
-            <div>
-              <h3 style={{ margin: 0, fontSize: theme.type.size.md, fontWeight: theme.type.weight.semibold }}>
-                How would you like to set {selfEdit ? 'your' : 'these'} hours?
-              </h3>
-              <p style={{ margin: `${theme.space[1]}px 0 0`, fontSize: theme.type.size.sm, color: theme.color.inkMuted, maxWidth: 560 }}>
-                Use a repeating weekly pattern, or set availability for specific dates only.
-              </p>
-            </div>
-            <SegmentedControl<'weekly' | 'dates'>
-              options={[
-                { value: 'weekly', label: 'Repeating weekly' },
-                { value: 'dates', label: 'Specific dates' },
-              ]}
-              value={mode}
-              onChange={setMode}
-              fullWidth
-            />
-            <div
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: theme.space[2],
-                padding: `${theme.space[2]}px ${theme.space[3]}px`,
-                borderRadius: theme.radius.input,
-                background: theme.color.accentBg,
-                color: theme.color.accent,
-                fontSize: theme.type.size.sm,
-                fontWeight: theme.type.weight.medium,
-              }}
-            >
-              <Clock size={15} aria-hidden /> All times are UK time (BST).
-            </div>
+          {/* Persistent reminder that every time on this sheet is UK time
+              (BST) — a clinician may be working from another timezone. */}
+          <div
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: theme.space[2],
+              padding: `${theme.space[2]}px ${theme.space[3]}px`,
+              borderRadius: theme.radius.input,
+              background: theme.color.accentBg,
+              color: theme.color.accent,
+              fontSize: theme.type.size.sm,
+              fontWeight: theme.type.weight.medium,
+            }}
+          >
+            <Clock size={15} aria-hidden /> All times are UK time (BST).
           </div>
 
-          {mode === 'weekly' ? (
+          {/* 1. Weekly hours — the usual working week. */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
             <div>
               <h3 style={{ margin: 0, fontSize: theme.type.size.md, fontWeight: theme.type.weight.semibold }}>
-                Repeating weekly hours
+                {selfEdit ? 'Your weekly hours' : 'Weekly hours'}
               </h3>
               <p style={{ margin: `${theme.space[1]}px 0 0`, fontSize: theme.type.size.sm, color: theme.color.inkMuted, maxWidth: 560 }}>
-                Tick a day to set when {selfEdit ? 'you take' : 'this clinician takes'} virtual calls (UK time). Add a lunch break for a midday pause. A day left unticked means {selfEdit ? 'you are' : 'they are'} not working it.
+                The days and times {selfEdit ? 'you' : 'this clinician'} normally work{selfEdit ? '' : 's'} each week. Add a lunch break for a midday pause. A day left unticked means {selfEdit ? "you're" : "they're"} not working it.
               </p>
             </div>
             <WorkingHoursEditor value={week} onChange={setWeek} />
           </div>
-          ) : (
+
+          {/* 2. Specific dates — extra one-off WORKING dates, on top of
+              the weekly pattern. Working only (no toggle). */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
             <div>
               <h3 style={{ margin: 0, fontSize: theme.type.size.md, fontWeight: theme.type.weight.semibold }}>
                 Specific dates
               </h3>
               <p style={{ margin: `${theme.space[1]}px 0 0`, fontSize: theme.type.size.sm, color: theme.color.inkMuted, maxWidth: 560 }}>
-                {selfEdit
-                  ? 'Pick the dates you can take calls and set the times (UK time), or mark a date off. Anything here wins over your weekly pattern.'
-                  : 'Switch this clinician on for a single date (a picked-up shift) or off for a holiday or sick day. These win over the weekly pattern.'}
+                Working a date that isn't in {selfEdit ? 'your' : 'their'} usual week? Add it here. These are added on top of the weekly hours above.
               </p>
             </div>
 
-            {overrides.length > 0 ? (
+            {overrides.filter((o) => o.kind === 'available').length > 0 ? (
               <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
-                {overrides.map((ov) => (
-                  <li
-                    key={ov.id}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      gap: theme.space[3],
-                      padding: `${theme.space[3]}px ${theme.space[4]}px`,
-                      borderRadius: theme.radius.input,
-                      border: `1px solid ${theme.color.border}`,
-                      background: theme.color.surface,
-                    }}
-                  >
-                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2], fontSize: theme.type.size.sm, color: theme.color.ink }}>
-                      <span
-                        style={{
-                          fontSize: theme.type.size.xs,
-                          fontWeight: theme.type.weight.semibold,
-                          color: ov.kind === 'available' ? theme.color.accent : theme.color.warn,
-                          background: ov.kind === 'available' ? theme.color.accentBg : 'rgba(179, 104, 21, 0.1)',
-                          padding: '2px 8px',
-                          borderRadius: theme.radius.pill,
-                          textTransform: 'uppercase',
-                          letterSpacing: theme.type.tracking.wide,
-                        }}
-                      >
-                        {ov.kind === 'available' ? 'Available' : 'Off'}
-                      </span>
-                      <strong>{formatOvDate(ov.override_date)}</strong>
-                      <span style={{ color: theme.color.inkMuted }}>
-                        {ov.start_local && ov.end_local ? `${ov.start_local} to ${ov.end_local}` : 'all day'}
-                      </span>
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => removeOverride(ov)}
-                      aria-label="Remove one-off"
-                      style={{
-                        appearance: 'none',
-                        border: `1px solid ${theme.color.border}`,
-                        background: theme.color.surface,
-                        color: theme.color.alert,
-                        cursor: 'pointer',
-                        width: 30,
-                        height: 30,
-                        borderRadius: theme.radius.pill,
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        fontFamily: 'inherit',
-                      }}
-                    >
-                      <Trash2 size={14} aria-hidden />
-                    </button>
-                  </li>
+                {overrides.filter((o) => o.kind === 'available').map((ov) => (
+                  <OverrideRow key={ov.id} ov={ov} formatDate={formatOvDate} onRemove={() => removeOverride(ov)} />
                 ))}
               </ul>
             ) : null}
@@ -5168,62 +5106,69 @@ export function ClinicianHoursSheet({
                 background: theme.color.bg,
               }}
             >
+              <DateSelect value={workDate} onChange={setWorkDate} formatDate={formatOvDate} />
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: theme.space[3] }}>
-                <FieldTrigger
-                  ref={ovDateRef}
-                  label="Date"
-                  icon={<CalendarClock size={16} aria-hidden />}
-                  value={ovDate ? formatOvDate(ovDate) : ''}
-                  placeholder="Pick a date"
-                  open={ovDateOpen}
-                  onClick={() => setOvDateOpen((v) => !v)}
-                />
-                <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[1] }}>
-                  <span style={{ fontSize: theme.type.size.xs, color: theme.color.inkMuted, fontWeight: theme.type.weight.medium }}>
-                    Working or off
-                  </span>
-                  <SegmentedControl<'available' | 'off'>
-                    options={[
-                      { value: 'available', label: 'Working' },
-                      { value: 'off', label: 'Off' },
-                    ]}
-                    value={ovKind}
-                    onChange={setOvKind}
-                    size="sm"
-                    fullWidth
-                  />
-                </div>
+                <TimeSelect label="From" value={workStart} onChange={setWorkStart} ariaLabel="Working start time" />
+                <TimeSelect label="To" value={workEnd} onChange={setWorkEnd} ariaLabel="Working end time" />
               </div>
-              <DatePicker
-                open={ovDateOpen}
-                onClose={() => setOvDateOpen(false)}
-                value={ovDate}
-                onChange={(iso) => setOvDate(iso)}
-                anchorRef={ovDateRef}
-                title="Pick the date"
-                minIso={todayIso()}
-              />
-              {ovKind === 'off' ? (
-                <Checkbox checked={ovAllDay} onChange={setOvAllDay} size={18} label="Off the whole day" />
-              ) : null}
-              {ovKind === 'available' || !ovAllDay ? (
-                <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[2] }}>
-                  <span style={{ fontSize: theme.type.size.sm, color: theme.color.inkMuted, width: 48 }}>From</span>
-                  <TimeField value={ovStart} onChange={setOvStart} ariaLabel="Override start time" />
-                  <span aria-hidden style={{ color: theme.color.inkSubtle }}>—</span>
-                  <TimeField value={ovEnd} onChange={setOvEnd} ariaLabel="Override end time" />
-                </div>
-              ) : null}
               <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-                <Button variant="secondary" size="sm" onClick={addOverride} disabled={ovBusy}>
+                <Button variant="secondary" size="sm" onClick={addWorkingDate} disabled={workBusy}>
                   <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
-                    <Plus size={15} aria-hidden /> {ovBusy ? 'Adding…' : 'Add one-off'}
+                    <Plus size={15} aria-hidden /> {workBusy ? 'Adding…' : 'Add working date'}
                   </span>
                 </Button>
               </div>
             </div>
           </div>
-          )}
+
+          {/* 3. Days off — holidays / time off that override the weekly
+              pattern so the clinician isn't booked. */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
+            <div>
+              <h3 style={{ margin: 0, fontSize: theme.type.size.md, fontWeight: theme.type.weight.semibold }}>
+                Days off
+              </h3>
+              <p style={{ margin: `${theme.space[1]}px 0 0`, fontSize: theme.type.size.sm, color: theme.color.inkMuted, maxWidth: 560 }}>
+                Taking a holiday or a day off that {selfEdit ? 'your' : 'their'} weekly hours cover? Mark it here so {selfEdit ? "you're" : "they're"} not booked. This overrides the weekly hours for that date.
+              </p>
+            </div>
+
+            {overrides.filter((o) => o.kind === 'off').length > 0 ? (
+              <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
+                {overrides.filter((o) => o.kind === 'off').map((ov) => (
+                  <OverrideRow key={ov.id} ov={ov} formatDate={formatOvDate} onRemove={() => removeOverride(ov)} />
+                ))}
+              </ul>
+            ) : null}
+
+            <div
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: theme.space[3],
+                padding: theme.space[4],
+                borderRadius: theme.radius.input,
+                border: `1px solid ${theme.color.border}`,
+                background: theme.color.bg,
+              }}
+            >
+              <DateSelect value={offDate} onChange={setOffDate} formatDate={formatOvDate} />
+              <Checkbox checked={offAllDay} onChange={setOffAllDay} size={18} label="Off the whole day" />
+              {!offAllDay ? (
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: theme.space[3] }}>
+                  <TimeSelect label="From" value={offStart} onChange={setOffStart} ariaLabel="Time off start" />
+                  <TimeSelect label="To" value={offEnd} onChange={setOffEnd} ariaLabel="Time off end" />
+                </div>
+              ) : null}
+              <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                <Button variant="secondary" size="sm" onClick={addDayOff} disabled={offBusy}>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
+                    <Plus size={15} aria-hidden /> {offBusy ? 'Adding…' : 'Add day off'}
+                  </span>
+                </Button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
       {toast ? (
@@ -5232,6 +5177,139 @@ export function ClinicianHoursSheet({
         </div>
       ) : null}
     </BottomSheet>
+  );
+}
+
+// Date trigger + calendar popover, self-contained (its own open state) so
+// the parent form stays flat. Matches the booking sheets' date control.
+function DateSelect({
+  value,
+  onChange,
+  formatDate,
+}: {
+  value: string;
+  onChange: (iso: string) => void;
+  formatDate: (iso: string) => string;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLButtonElement>(null);
+  return (
+    <>
+      <FieldTrigger
+        ref={ref}
+        label="Date"
+        icon={<CalendarClock size={16} aria-hidden />}
+        value={value ? formatDate(value) : ''}
+        placeholder="Pick a date"
+        open={open}
+        onClick={() => setOpen((v) => !v)}
+      />
+      <DatePicker
+        open={open}
+        onClose={() => setOpen(false)}
+        value={value}
+        onChange={(iso) => onChange(iso)}
+        anchorRef={ref}
+        title="Pick the date"
+        minIso={todayIso()}
+      />
+    </>
+  );
+}
+
+// Time trigger + the app's polished time popover (replaces the native
+// <input type="time">, which rendered an off-brand OS picker).
+function TimeSelect({
+  label,
+  value,
+  onChange,
+  ariaLabel,
+}: {
+  label: string;
+  value: string;
+  onChange: (t: string) => void;
+  ariaLabel: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLButtonElement>(null);
+  return (
+    <>
+      <FieldTrigger
+        ref={ref}
+        label={label}
+        icon={<Clock size={15} aria-hidden />}
+        value={value}
+        placeholder="--:--"
+        open={open}
+        onClick={() => setOpen((v) => !v)}
+      />
+      <TimePicker
+        open={open}
+        onClose={() => setOpen(false)}
+        value={value}
+        onChange={onChange}
+        anchorRef={ref}
+        title={ariaLabel}
+        step={15}
+        startHour={6}
+        endHour={22}
+      />
+    </>
+  );
+}
+
+// One override row — a specific working date or a day off. The kind is
+// conveyed by the section it sits in, so the row stays clean.
+function OverrideRow({
+  ov,
+  formatDate,
+  onRemove,
+}: {
+  ov: ClinicianOverride;
+  formatDate: (iso: string) => string;
+  onRemove: () => void;
+}) {
+  return (
+    <li
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: theme.space[3],
+        padding: `${theme.space[3]}px ${theme.space[4]}px`,
+        borderRadius: theme.radius.input,
+        border: `1px solid ${theme.color.border}`,
+        background: theme.color.surface,
+      }}
+    >
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2], fontSize: theme.type.size.sm, color: theme.color.ink }}>
+        <strong>{formatDate(ov.override_date)}</strong>
+        <span style={{ color: theme.color.inkMuted }}>
+          {ov.start_local && ov.end_local ? `${ov.start_local} to ${ov.end_local}` : 'all day'}
+        </span>
+      </span>
+      <button
+        type="button"
+        onClick={onRemove}
+        aria-label="Remove"
+        style={{
+          appearance: 'none',
+          border: `1px solid ${theme.color.border}`,
+          background: theme.color.surface,
+          color: theme.color.alert,
+          cursor: 'pointer',
+          width: 30,
+          height: 30,
+          borderRadius: theme.radius.pill,
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          fontFamily: 'inherit',
+        }}
+      >
+        <Trash2 size={14} aria-hidden />
+      </button>
+    </li>
   );
 }
 
