@@ -5074,7 +5074,7 @@ export function ClinicianHoursSheet({
             Close
           </Button>
           <Button variant="primary" onClick={saveHours} disabled={savingHours || loading}>
-            {savingHours ? 'Saving…' : 'Save weekly hours'}
+            {savingHours ? 'Saving…' : 'Save hours'}
           </Button>
         </div>
       }
