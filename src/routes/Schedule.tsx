@@ -1236,9 +1236,13 @@ export function Schedule() {
                         ? 'Marked as a no-show. Re-join the meeting if they turn up late, then tap "Patient attended" to amend.'
                         : 'Marked as a no-show. If the patient turned up late, tap "Patient attended" to flip them back to arrived and open the appointment.'
                       : selected.status === 'rescheduled'
-                        ? 'This booking was rescheduled in Calendly.'
+                        ? selected.source === 'calendly'
+                          ? 'This booking was rescheduled in Calendly.'
+                          : 'This booking was rescheduled.'
                         : selected.status === 'cancelled'
-                          ? 'This booking was cancelled in Calendly.'
+                          ? selected.source === 'calendly'
+                            ? 'This booking was cancelled in Calendly.'
+                            : 'This booking was cancelled.'
                           : ''}
               </p>
 
