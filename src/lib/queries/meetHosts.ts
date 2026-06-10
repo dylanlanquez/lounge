@@ -194,6 +194,31 @@ export async function addStaffMeetHost(args: {
 }): Promise<void> {
   const displayName = args.displayName.trim();
   if (!displayName) throw new Error('Staff member has no name to match against');
+  // A staff member can only ever have one lng_meet_hosts row (unique on
+  // staff_member_id). One can already exist — they were added then
+  // deactivated (the active-only list no longer shows them, so the picker
+  // still offers them), or they connected a Google account. Re-inserting
+  // would violate the constraint and surface a raw DB error. Instead,
+  // reactivate the existing row so "add" is idempotent.
+  const { data: existing, error: selErr } = await supabase
+    .from('lng_meet_hosts')
+    .select('id, kind')
+    .eq('staff_member_id', args.staffMemberId)
+    .maybeSingle();
+  if (selErr) throw new Error(selErr.message);
+  if (existing) {
+    const row = existing as { id: string; kind: string };
+    const patch: Record<string, unknown> = { is_active: true };
+    // Only relabel a staff-kind row; never overwrite an OAuth host's
+    // own Google display name.
+    if (row.kind === 'staff') patch.display_name = displayName;
+    const { error: updErr } = await supabase
+      .from('lng_meet_hosts')
+      .update(patch)
+      .eq('id', row.id);
+    if (updErr) throw new Error(updErr.message);
+    return;
+  }
   const { error } = await supabase.from('lng_meet_hosts').insert({
     kind: 'staff',
     staff_member_id: args.staffMemberId,
