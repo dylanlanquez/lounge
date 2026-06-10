@@ -230,6 +230,10 @@ export async function rescheduleAppointment(input: {
   appointmentId: string;
   newStartAt: string; // ISO timestamptz
   reason?: string;
+  // Virtual impressions only: reassign the new row to a different
+  // clinician (staff can move a booking onto another clinician while
+  // rescheduling). Undefined keeps the booking's existing clinician.
+  clinicianStaffMemberId?: string | null;
 }): Promise<RescheduleResult> {
   // ── 1. Read existing appointment ────────────────────────────────
   // Pulls every column that needs to migrate to the rescheduled
@@ -247,6 +251,14 @@ export async function rescheduleAppointment(input: {
   if (readErr) throw new Error(`Couldn't read appointment: ${readErr.message}`);
   if (!existingRaw) throw new Error('Appointment not found.');
   const existing = existingRaw as AppointmentRowMin & { status: string };
+
+  // The clinician the new row lands on: a caller-supplied reassignment
+  // (staff moving the booking onto another clinician) when provided,
+  // otherwise the booking's existing clinician.
+  const targetClinicianId =
+    input.clinicianStaffMemberId !== undefined
+      ? input.clinicianStaffMemberId
+      : existing.clinician_staff_member_id;
 
   // ── 2. Source / status guards ──────────────────────────────────
   if (existing.source === 'calendly') {
@@ -333,10 +345,11 @@ export async function rescheduleAppointment(input: {
       // lets reports walk the chain in either direction without
       // scanning the table.
       reschedule_from_id: existing.id,
-      // Carry the clinician forward so the new row keeps the same
-      // virtual impression clinician (the availability + no-double-book
-      // key), and meet-create-space resolves the same room owner.
-      clinician_staff_member_id: existing.clinician_staff_member_id,
+      // The virtual impression clinician for the new row (the
+      // availability + no-double-book key); meet-create-space resolves
+      // the room owner from it. Same as the old booking unless staff
+      // reassigned it during reschedule.
+      clinician_staff_member_id: targetClinicianId,
       // Booking-time data the patient committed to. Preserved across
       // the reschedule so the new appointment surfaces the same
       // intake answers, deposit credit (so the till still nets it
@@ -447,7 +460,7 @@ export async function rescheduleAppointment(input: {
     // insert above). meet-create-space resolves the room owner from the
     // clinician — their own connected Google account if linked, else the
     // default active OAuth host.
-    const clinicianId = existing.clinician_staff_member_id;
+    const clinicianId = targetClinicianId;
     if (clinicianId) {
       try {
         await supabase.functions.invoke('meet-create-space', {
