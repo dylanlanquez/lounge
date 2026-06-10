@@ -199,15 +199,38 @@ Deno.serve(async (req) => {
     return jsonResponse(409, { error: 'slot_unavailable' });
   }
 
+  // ── Staff-only clinician guard ──────────────────────────────
+  // A booking deliberately placed with a staff-only (special) clinician
+  // must NOT be self-rescheduled by the customer — that would either
+  // strand them or silently move them off the clinician they were placed
+  // with. Block here so the special placement is preserved; staff can
+  // still reschedule it in-app. The Manage UI maps this code to a
+  // "contact the clinic" message.
+  if (
+    existing.service_type === 'virtual_impression_appointment' &&
+    existing.clinician_staff_member_id
+  ) {
+    const { data: clin, error: clinErr } = await supabase
+      .from('lng_staff_members')
+      .select('clinician_self_serve')
+      .eq('id', existing.clinician_staff_member_id)
+      .maybeSingle();
+    if (clinErr) {
+      await logFailure('clinician_self_serve_check_failed', { error: clinErr.message });
+      return jsonResponse(500, { error: 'availability_check_failed' });
+    }
+    if (clin && clin.clinician_self_serve === false) {
+      return jsonResponse(409, { error: 'staff_only_clinician' });
+    }
+  }
+
   // ── Virtual clinician availability gate + clinician pick ────
   // Self-serve reschedule of a virtual impression must land on a
   // self-serve clinician who is on shift AND free at the new time
   // (lng_clinicians_available, p_self_serve_only=true, excluding the
-  // original row). Staff-only clinicians (clinician_self_serve=false)
-  // are not in this list, so a booking originally placed with one moves
-  // to a general clinician here — the agreed behaviour for a customer
-  // self-rescheduling a special-clinician appointment. An empty list
-  // means no clinician is free; refuse with a dedicated code.
+  // original row). Bookings on a staff-only clinician were already
+  // refused above. An empty list means no clinician is free; refuse
+  // with a dedicated code.
   let availableClinicianIds: string[] = [];
   if (existing.service_type === 'virtual_impression_appointment') {
     const { data: availRows, error: availErr } = await supabase.rpc('lng_clinicians_available', {
