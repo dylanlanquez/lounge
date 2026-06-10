@@ -221,13 +221,12 @@ export function Schedule() {
   // the full set is the resting "no filter" state. Kept in component
   // state (not the URL) so it persists as the operator flicks between
   // days but never leaks into a shared / bookmarked link.
+  // Empty set is the default "All booking types" state (no filter).
+  // A non-empty set narrows the day to just those types.
   const [shownCategories, setShownCategories] = useState<Set<AppointmentCategory>>(
-    () => new Set(APPOINTMENT_CATEGORY_ORDER)
+    () => new Set()
   );
-  const showAllCategories = useCallback(
-    () => setShownCategories(new Set(APPOINTMENT_CATEGORY_ORDER)),
-    []
-  );
+  const clearCategoryFilter = useCallback(() => setShownCategories(new Set()), []);
 
   // Filter the day's appointments to the staff member's bound
   // location. Without this, a staff member with cross-location RLS
@@ -247,9 +246,13 @@ export function Schedule() {
     return counts;
   }, [day.data]);
 
-  // The rows actually rendered, narrowed to the shown categories.
+  // The rows actually rendered. Empty filter = the whole day; otherwise
+  // narrowed to the ticked categories.
   const visibleRows = useMemo(
-    () => day.data.filter((r) => shownCategories.has(appointmentCategory(r))),
+    () =>
+      shownCategories.size === 0
+        ? day.data
+        : day.data.filter((r) => shownCategories.has(appointmentCategory(r))),
     [day.data, shownCategories]
   );
   // The filter only counts as "active" when it's actually hiding
@@ -654,7 +657,7 @@ export function Schedule() {
             </p>
             <button
               type="button"
-              onClick={showAllCategories}
+              onClick={clearCategoryFilter}
               style={{
                 appearance: 'none',
                 flexShrink: 0,
@@ -672,7 +675,7 @@ export function Schedule() {
                 WebkitTapHighlightColor: 'transparent',
               }}
             >
-              Show all
+              Clear filter
             </button>
           </div>
         ) : null}
@@ -737,8 +740,8 @@ export function Schedule() {
               title="No matching bookings"
               description="No bookings on this day match the booking-type filter."
               action={
-                <Button variant="secondary" onClick={showAllCategories}>
-                  Show all types
+                <Button variant="secondary" onClick={clearCategoryFilter}>
+                  Clear filter
                 </Button>
               }
             />

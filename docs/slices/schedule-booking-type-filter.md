@@ -22,12 +22,12 @@
 
 **One category derivation drives everything.** `appointmentCategory(row)` returns one of the six buckets that line up 1:1 with `theme.category`: `repair`, `sameDay`, `appliance`, `impression`, `virtualImpression`, `consult`. It reads `service_type` first (axis-pinned native / staff bookings), then falls back to parsing `event_type_label` (Calendly). The same function colours the row bar and powers the filter, so a row's bar colour and its filter bucket can never disagree.
 
-- Filter state is a `Set<AppointmentCategory>` of the categories **shown**. The full set is the resting "no filter" state.
+- Filter state is a `Set<AppointmentCategory>` of the categories the operator picked to show. The **empty set is the default** "All booking types" state (no filter); a non-empty set narrows the day to just those types.
 - State lives in `Schedule.tsx` component state, not the URL — it persists as the operator flicks between days but doesn't leak into a shared link.
-- The popover lists **only the types that occur today** (zero-count types are omitted, not dimmed), each with a live count.
-- Three one-tap moves: **All booking types** (reset / show everything), a row's **Only** button (isolate to just that type), or a row's **checkbox** (add / remove).
-- "Active" means a type that *exists today* is being hidden — the only state that changes the list. Deselecting a type with no bookings today hides nothing and does not raise the filter-on signals.
-- **Safety:** whenever the filter is hiding bookings, a loud accent banner sits above the list — "Filter on. Showing only X. N appointments hidden." with a **Show all** button — and the toolbar pill switches to "Filter on" + a count badge. The operator can never be unaware that appointments are hidden.
+- The popover lists **only the types that occur today** (zero-count types are omitted, not dimmed), each with a live count and a category-tinted checkbox.
+- Two moves: tick one or more **types** (shows only those), or tick **All booking types** to clear back to the whole day. Unticking the last type also clears back to All.
+- "Active" means a type that *exists today* is being hidden — the only state that changes the list. Ticking a type with no bookings today hides everything else; ticking none hides nothing.
+- **Safety:** whenever the filter is hiding bookings, a loud accent banner sits above the list — "Filter on. Showing only X. N appointments hidden." with a **Clear filter** button — and the toolbar pill switches to "Filter on" + a count badge. The operator can never be unaware that appointments are hidden.
 
 ---
 
@@ -35,14 +35,14 @@
 
 1. Sign in, land on the schedule for a day that has several booking types.
 2. The action row shows three matched pills — **Filter**, **Jump to today** (when not on today), **New booking** — all the same height (44px), same pill shape, evenly spaced.
-3. Tap **Filter**. A popover opens, right-aligned under the pill. The top row is **All booking types** (ticked while nothing is filtered); below it, one row per type that occurs today — a category-tinted checkbox, the type name, and today's count. Types with no bookings today are not listed at all.
-4. Tap **Only** on the **Impressions** row → the strip instantly shows just impressions. An accent banner appears above the list: "Filter on. Showing only Impressions. N appointments hidden." with a **Show all** button. The toolbar pill reads "Filter on" with a count badge.
-5. Re-open Filter and tick another type's checkbox to add it back. The banner updates to "Showing 2 booking types."
-6. Tap **All booking types** (or **Show all** on the banner / Escape then the pill) → back to the full day; banner and badge clear.
+3. Tap **Filter**. A popover opens, right-aligned under the pill. The top row is **All booking types**, ticked by default (nothing else is ticked). Below it, one row per type that occurs today — a category-tinted checkbox, the type name, and today's count. Types with no bookings today are not listed at all.
+4. Tick the **Denture repairs** checkbox → the strip instantly shows only repairs (All booking types un-ticks itself). An accent banner appears above the list: "Filter on. Showing only Denture repairs. N appointments hidden." with a **Clear filter** button. The toolbar pill reads "Filter on" with a count badge.
+5. Tick a second type → the banner updates to "Showing 2 booking types"; both kinds show.
+6. Tap **All booking types** (or **Clear filter** on the banner) → back to the full day; banner and badge clear. Unticking the last ticked type does the same.
 7. Tap outside the popover (or press Escape). It closes; the filter stays applied. Flick to the next day — the filter persists and the popover's rows/counts update to that day.
-8. Isolate a type, then navigate to a day where that type has no bookings → the card shows "No matching bookings" with **Show all types**, and the banner reads "All booking types are hidden." Tap either to recover.
+8. Tick a type, then navigate to a day where that type has no bookings → the card shows "No matching bookings" with **Clear filter**, and the banner reads "All booking types are hidden." Tap either to recover.
 9. On a day with no appointments at all, the Filter pill is not rendered.
-10. iPad/tablet width: pills wrap cleanly, the popover never bleeds off either screen edge, and the banner reflows without clipping the **Show all** button.
+10. iPad/tablet width: pills wrap cleanly, the popover never bleeds off either screen edge, and the banner reflows without clipping the **Clear filter** button.
 
 ---
 
