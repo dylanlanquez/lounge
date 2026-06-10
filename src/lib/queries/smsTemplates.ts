@@ -153,6 +153,20 @@ export const SMS_TEMPLATE_VARIABLES: ReadonlyArray<SmsTemplateVariable> = [
     sample: 'LWO-12345',
   },
   {
+    name: 'returnsLink',
+    label: 'DPD returns link',
+    description:
+      'The prepaid DPD returns URL set in Admin (returns.link). Used in the returns message so the patient can create their return label. Empty until configured.',
+    sample: 'our-returns.dpd.co.uk/VENNEIR',
+  },
+  {
+    name: 'authorisationCode',
+    label: 'Your authorisation code',
+    description:
+      "The code of the staff member SENDING the message (set per staff in Admin > Staff). Inserted into the returns message so the return is authorised. Empty when the sender has no code on file.",
+    sample: 'H809K8',
+  },
+  {
     name: 'joinUrl',
     label: 'Virtual meeting join link',
     description:
@@ -411,6 +425,7 @@ export function humaniseSmsKey(key: string): string {
     running_late: 'Clinician running late',
     reminder_to_attend: 'Reminder to attend',
     virtual_call_waiting: 'Patient not on the virtual call',
+    returns: 'Returns label & authorisation code',
     payment_receipt: 'Payment receipt',
   };
   return map[key] ?? key.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());

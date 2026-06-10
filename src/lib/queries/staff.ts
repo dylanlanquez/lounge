@@ -34,6 +34,9 @@ export interface StaffRow {
   clinician_self_serve: boolean;
   // When true the clinician may edit their own availability (no admin).
   clinician_can_edit_own_hours: boolean;
+  // Free-text code inserted into the returns message sent to patients
+  // (DPD return authorisation). The sending staff member's code is used.
+  authorisation_code: string | null;
   // Granular permission flags introduced alongside Reports + Financials.
   // Reports defaults true (every staff member sees operational reports);
   // Financials and cash counting default false (super-admin grants
@@ -107,6 +110,7 @@ interface RawJoinedRow {
   is_virtual_impression_clinician: boolean | null;
   clinician_self_serve: boolean | null;
   clinician_can_edit_own_hours: boolean | null;
+  authorisation_code: string | null;
   can_view_reports: boolean | null;
   can_view_financials: boolean | null;
   can_count_cash: boolean | null;
@@ -162,6 +166,7 @@ function mapRow(r: RawJoinedRow): StaffRow {
     is_virtual_impression_clinician: r.is_virtual_impression_clinician === true,
     clinician_self_serve: r.clinician_self_serve !== false,
     clinician_can_edit_own_hours: r.clinician_can_edit_own_hours === true,
+    authorisation_code: (r.authorisation_code as string | null) ?? null,
     can_view_reports: r.can_view_reports === true,
     can_view_financials: r.can_view_financials === true,
     can_count_cash: r.can_count_cash === true,
@@ -191,7 +196,7 @@ function mapRow(r: RawJoinedRow): StaffRow {
 }
 
 const STAFF_SELECT =
-  'id, account_id, is_admin, is_manager, is_customer_service, is_virtual_impression_clinician, clinician_self_serve, clinician_can_edit_own_hours, can_view_reports, can_view_financials, can_count_cash, require_2fa, admin_page_access, role_id, status, hired_at, deactivated_at, invite_sent_at, invite_expires_at, invite_accepted_at, last_sign_in_at, account:accounts!account_id(id, first_name, last_name, name, login_email, location_id, location:locations!location_id(id, name, type, city)), role:lng_staff_roles!role_id(id, name)';
+  'id, account_id, is_admin, is_manager, is_customer_service, is_virtual_impression_clinician, clinician_self_serve, clinician_can_edit_own_hours, authorisation_code, can_view_reports, can_view_financials, can_count_cash, require_2fa, admin_page_access, role_id, status, hired_at, deactivated_at, invite_sent_at, invite_expires_at, invite_accepted_at, last_sign_in_at, account:accounts!account_id(id, first_name, last_name, name, login_email, location_id, location:locations!location_id(id, name, type, city)), role:lng_staff_roles!role_id(id, name)';
 
 // Lists every staff member, active and inactive, sorted alphabetically
 // by display name. Inactive rows render with a "Deactivated" badge in
@@ -325,6 +330,20 @@ export async function setCanCountCash(staffMemberId: string, value: boolean): Pr
   const { error } = await supabase
     .from('lng_staff_members')
     .update({ can_count_cash: value })
+    .eq('id', staffMemberId);
+  if (error) throw new Error(error.message);
+}
+
+// Per-staff returns authorisation code. Free text, inserted into the
+// returns message ({{authorisationCode}}) sent to patients from the
+// virtual appointment page. Empty clears it back to null.
+export async function setStaffAuthorisationCode(
+  staffMemberId: string,
+  code: string | null,
+): Promise<void> {
+  const { error } = await supabase
+    .from('lng_staff_members')
+    .update({ authorisation_code: code?.trim() || null })
     .eq('id', staffMemberId);
   if (error) throw new Error(error.message);
 }

@@ -887,6 +887,38 @@ const SHIPPING_VARIABLES: ReadonlyArray<EmailTemplateVariable> = [
   },
 ];
 
+// Returns email — only the four variables the send-returns-info edge
+// function resolves, so the picker never offers a token that renders as
+// literal {{...}} in the patient's inbox.
+const RETURNS_VARIABLES: ReadonlyArray<EmailTemplateVariable> = [
+  {
+    name: 'patientFirstName',
+    label: "Patient's first name",
+    description: 'Falls back to "there" when the patient has no first name on file.',
+    sample: 'Sarah',
+  },
+  {
+    name: 'clinicName',
+    label: 'Clinic name',
+    description: 'The clinic name from the appointment\'s location. Falls back to "the clinic".',
+    sample: 'Venneir Lounge',
+  },
+  {
+    name: 'returnsLink',
+    label: 'DPD returns link',
+    description:
+      'The prepaid DPD returns URL (set in Admin, returns.link). Paste inside a button: [button:Create your return label|#0E1414|#FFFFFF|999|22|12]({{returnsLink}}).',
+    sample: 'https://our-returns.dpd.co.uk/VENNEIR',
+  },
+  {
+    name: 'authorisationCode',
+    label: 'Your authorisation code',
+    description:
+      "The code of the staff member sending the message (set per staff in Admin, Staff). Inserted so the return is authorised.",
+    sample: 'H809K8',
+  },
+];
+
 export const EMAIL_TEMPLATE_DEFINITIONS: ReadonlyArray<EmailTemplateDefinition> = [
   {
     key: 'booking_confirmation',
@@ -951,6 +983,14 @@ export const EMAIL_TEMPLATE_DEFINITIONS: ReadonlyArray<EmailTemplateDefinition> 
     description:
       'Sent automatically 24 hours before a virtual impression appointment. Join link is the primary CTA.',
     variables: VIRTUAL_APPOINTMENT_VARIABLES,
+  },
+  {
+    key: 'returns',
+    label: 'Return label · Virtual impression',
+    group: 'Virtual appointments',
+    description:
+      'Sent to the patient from a virtual impression appointment so they can mail their impression kit back: a prepaid DPD return label plus the sending staff member\'s authorisation code.',
+    variables: RETURNS_VARIABLES,
   },
   {
     key: 'visit_shipped',

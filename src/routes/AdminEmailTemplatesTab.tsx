@@ -113,6 +113,7 @@ const KEYS_FOR_SERVICE: Record<string, ReadonlySet<string>> = {
     'booking_cancellation',
     'appointment_no_show',
     'appointment_reminder_virtual',
+    'returns',
   ]),
 };
 

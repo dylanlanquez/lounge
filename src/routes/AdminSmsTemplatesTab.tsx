@@ -56,6 +56,7 @@ const SMS_TEMPLATE_KEYS: ReadonlyArray<string> = [
   'running_late',
   'reminder_to_attend',
   'virtual_call_waiting',
+  'returns',
   'payment_receipt',
 ];
 
@@ -73,9 +74,10 @@ const SMS_KEYS_FOR_SERVICE: Record<string, ReadonlySet<string>> = {
     'please_call',
     'running_late',
     'reminder_to_attend',
+    'returns',
     'payment_receipt',
   ]),
-  virtual_impression_appointment: new Set(['virtual_call_waiting']),
+  virtual_impression_appointment: new Set(['virtual_call_waiting', 'returns']),
   click_in_veneers: new Set([
     'visit_ready',
     'please_return',

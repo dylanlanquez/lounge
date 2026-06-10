@@ -1,6 +1,6 @@
 import { type CSSProperties, Fragment, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, useNavigate, useParams } from 'react-router-dom';
-import { AlertTriangle, ArchiveRestore, ArrowDown, ArrowUp, BarChart3, Briefcase, CalendarCheck, CalendarClock, Check, ChevronUp, Clock, CreditCard, FileSignature, FlaskConical, GripVertical, Image as ImageIcon, KeyRound, Layers, Mail, Package, Pencil, Plus, RefreshCw, Rocket, RotateCcw, Settings, Link2, ShieldAlert, ShieldCheck, ShoppingBag, Trash2, UserPlus, Users, Video, Wallet, X } from 'lucide-react';
+import { AlertTriangle, ArchiveRestore, ArrowDown, ArrowUp, BarChart3, Briefcase, CalendarCheck, CalendarClock, Check, ChevronUp, Clock, CreditCard, FileSignature, FlaskConical, GripVertical, Image as ImageIcon, KeyRound, Layers, Mail, Package, Pencil, Plus, RefreshCw, Rocket, RotateCcw, Settings, Link2, PackageCheck, ShieldAlert, ShieldCheck, ShoppingBag, Trash2, UserPlus, Users, Video, Wallet, X } from 'lucide-react';
 import {
   Button,
   Card,
@@ -55,6 +55,7 @@ import {
   setIsManager,
   setIsVirtualImpressionClinician,
   setRequire2fa,
+  setStaffAuthorisationCode,
   setStaffLocation,
   setStaffName,
   setStaffRole,
@@ -2267,6 +2268,8 @@ function StaffTab() {
   const [draftFirst, setDraftFirst] = useState('');
   const [draftLast, setDraftLast] = useState('');
   const [nameBusy, setNameBusy] = useState(false);
+  const [draftAuthCode, setDraftAuthCode] = useState('');
+  const [authCodeBusy, setAuthCodeBusy] = useState(false);
   const [confirmDeactivate, setConfirmDeactivate] = useState(false);
   const [deactivateBusy, setDeactivateBusy] = useState(false);
   const [actionBusy, setActionBusy] = useState<
@@ -2454,6 +2457,7 @@ function StaffTab() {
     setManaging(row);
     setDraftFirst(row.first_name ?? '');
     setDraftLast(row.last_name ?? '');
+    setDraftAuthCode(row.authorisation_code ?? '');
     setActionFeedback(null);
     setConfirmReset2fa(false);
     setConfirmDeactivate(false);
@@ -2484,6 +2488,22 @@ function StaffTab() {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setNameBusy(false);
+    }
+  };
+
+  const saveAuthCode = async () => {
+    if (!managing) return;
+    const trimmed = draftAuthCode.trim();
+    if (trimmed === (managing.authorisation_code ?? '')) return;
+    setAuthCodeBusy(true);
+    setError(null);
+    try {
+      await setStaffAuthorisationCode(managing.staff_member_id, trimmed);
+      staff.refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setAuthCodeBusy(false);
     }
   };
 
@@ -3245,6 +3265,33 @@ function StaffTab() {
                     disabled={!nameDirty || nameBusy}
                   >
                     Save name
+                  </Button>
+                </div>
+              </div>
+            </ManageSection>
+
+            <ManageSection
+              title="Returns authorisation code"
+              description="Free-text code sent to the patient in the returns message (the DPD return authorisation). When this person sends a return label from a virtual appointment, their code is the one inserted."
+              icon={<PackageCheck size={14} aria-hidden />}
+            >
+              <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
+                <Input
+                  label="Authorisation code"
+                  value={draftAuthCode}
+                  onChange={(e) => setDraftAuthCode(e.target.value)}
+                  placeholder="e.g. H809K8"
+                  maxLength={40}
+                />
+                <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={saveAuthCode}
+                    loading={authCodeBusy}
+                    disabled={authCodeBusy || draftAuthCode.trim() === (managing.authorisation_code ?? '')}
+                  >
+                    Save code
                   </Button>
                 </div>
               </div>

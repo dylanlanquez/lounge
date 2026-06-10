@@ -17,6 +17,7 @@ import {
   History,
   Mail,
   MapPin,
+  PackageCheck,
   RotateCcw,
   User as UserIcon,
   UserCheck,
@@ -40,6 +41,7 @@ import {
   EmptyState,
   PhaseTimeline,
   RescheduleSheet,
+  ReturnsSendSheet,
   Section,
   Skeleton,
   SmilePhotosCard,
@@ -370,6 +372,7 @@ function Loaded({
   // upgrades/repair extras card.
   const { items: bookedItems } = useAppointmentItems(appt.id);
   const [rescheduling, setRescheduling] = useState(false);
+  const [returnsOpen, setReturnsOpen] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [reversingCancellation, setReversingCancellation] = useState(false);
   const [reversingNoShow, setReversingNoShow] = useState(false);
@@ -856,6 +859,7 @@ function Loaded({
         onMarkVirtualComplete={handleMarkVirtualComplete}
         onMarkNoShow={() => setConfirmNoShowOpen(true)}
         onReschedule={() => setRescheduling(true)}
+        onSendReturns={() => setReturnsOpen(true)}
         onCancel={() => setCancelling(true)}
         onResendConfirmation={handleResendConfirmation}
         onReverseCancellation={() => setConfirmReverseCancelOpen(true)}
@@ -951,6 +955,15 @@ function Loaded({
           }}
         />
       ) : null}
+
+      <ReturnsSendSheet
+        open={returnsOpen}
+        onClose={() => setReturnsOpen(false)}
+        appointmentId={appt.id}
+        patientFirstName={appt.patient.first_name}
+        patientEmail={appt.patient.email}
+        patientPhone={appt.patient.phone}
+      />
 
       {cancelling ? (
         <CancelDialog
@@ -2772,6 +2785,7 @@ function Actions({
   onMarkVirtualComplete,
   onMarkNoShow,
   onReschedule,
+  onSendReturns,
   onCancel,
   onResendConfirmation,
   onReverseCancellation,
@@ -2795,6 +2809,7 @@ function Actions({
   onMarkVirtualComplete: () => void;
   onMarkNoShow: () => void;
   onReschedule: () => void;
+  onSendReturns: () => void;
   onCancel: () => void;
   onResendConfirmation: () => void;
   onReverseCancellation: () => void;
@@ -2875,6 +2890,17 @@ function Actions({
       ) : null}
       {has('reschedule') ? (
         <ActionRow icon={<CalendarClock size={16} aria-hidden />} label="Reschedule" onClick={onReschedule} />
+      ) : null}
+      {/* Returns are a virtual-impression thing: the patient mails their
+          impression kit back, so the DPD return label only makes sense
+          here. */}
+      {appt.join_url ? (
+        <ActionRow
+          icon={<PackageCheck size={16} aria-hidden />}
+          label="Send return label"
+          description="Email or SMS the DPD return label and authorisation code"
+          onClick={onSendReturns}
+        />
       ) : null}
       {has('mark_virtual_complete') ? (
         <ActionRow
