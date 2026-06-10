@@ -165,6 +165,14 @@ interface SubmitBody {
    *  lng_appointments.source='manual' since a staff member is
    *  acting on the patient's behalf. */
   source?: 'widget' | 'checkpoint' | null;
+  /** Virtual impressions only. The clinician (lng_staff_members.id) the
+   *  staff booker explicitly picked from the available list. Honoured
+   *  only after verifying the clinician is genuinely free for the slot.
+   *  The public widget omits it (auto-assigns the first free self-serve
+   *  clinician); Checkpoint's staff picker sends it and may pick a
+   *  staff-only clinician (self_serve_only is relaxed for source
+   *  'checkpoint'). */
+  clinicianStaffMemberId?: string | null;
   /** Display name of the staff member who initiated the booking
    *  from an external surface. Only meaningful when source is set
    *  to a non-widget origin; persisted to
@@ -378,21 +386,35 @@ Deno.serve(async (req) => {
   // by name) is assigned to the booking.
   let chosenClinicianId: string | null = null;
   if (body.serviceType === 'virtual_impression_appointment') {
+    // The public widget only offers self-serve clinicians; the
+    // Checkpoint staff booker may place a staff-only clinician too.
+    const selfServeOnly = body.source !== 'checkpoint';
+    // When the caller picked a specific clinician we pass it as the
+    // filter so lng_clinicians_available both restricts to that one AND
+    // confirms they are on shift + free for the slot. No pick (public
+    // widget) → null filter → auto-assign the first free clinician.
+    const requestedClinicianId = body.clinicianStaffMemberId ?? null;
     const { data: availRows, error: availErr } = await supabase.rpc('lng_clinicians_available', {
       p_start_at: startAt.toISOString(),
       p_end_at: endAt.toISOString(),
-      p_self_serve_only: true,
+      p_self_serve_only: selfServeOnly,
       p_exclude_appointment_id: null,
-      p_staff_member_id: null,
+      p_staff_member_id: requestedClinicianId,
     });
     if (availErr) {
       await logFailure('clinicians_available_failed', { error: availErr.message, body });
       return jsonResponse(500, { error: 'availability_check_failed' });
     }
     if (!Array.isArray(availRows) || availRows.length === 0) {
-      return jsonResponse(409, { error: 'no_clinician_available' });
+      // Distinguish "the clinician you picked is no longer free" from
+      // "nobody is free" so the caller can message it precisely.
+      return jsonResponse(409, {
+        error: requestedClinicianId ? 'clinician_not_available' : 'no_clinician_available',
+      });
     }
-    chosenClinicianId = (availRows[0] as { staff_member_id: string }).staff_member_id;
+    chosenClinicianId = requestedClinicianId
+      ? requestedClinicianId
+      : (availRows[0] as { staff_member_id: string }).staff_member_id;
   }
 
   // ── Shopify order verification ─────────────────────────────────
