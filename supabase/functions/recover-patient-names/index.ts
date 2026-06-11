@@ -165,6 +165,12 @@ Deno.serve(async (req) => {
       return json(200, { ok: true, ...out });
     }
 
+    if (body.mode === 'recover_phone') {
+      if (!body.patient_id) return json(400, { ok: false, error: 'patient_id required' });
+      const out = await recoverPhone(admin, body.patient_id);
+      return json(200, { ok: true, ...out });
+    }
+
     if (body.mode === 'harvest') {
       // Efficient path: the store has only a few hundred ORDERS, so
       // instead of querying Shopify once per polluted patient (~29k
@@ -361,6 +367,59 @@ function pushAddressCand(
   }
   const sp = splitName(name);
   if (sp.first || sp.last) cands.push({ ...sp, source });
+}
+
+// ── Recover a real phone for a patient stuck on the dummy ──
+// The One Click checkout writes "+44000000000" as the Shopify customer
+// phone; the real number is on the order address. Prefer the BILLING
+// phone (the cardholder = account holder) over shipping (the delivery
+// recipient, who may differ). Only fills when the patient's current
+// phone is a placeholder/dummy.
+function isDummyPhone(v: string | null | undefined): boolean {
+  const digits = (v ?? '').replace(/\D/g, '');
+  if (digits.length < 7) return true;
+  if (/^(\d)\1+$/.test(digits)) return true;
+  if (/^(?:44|0)?0+$/.test(digits)) return true;
+  return false;
+}
+async function recoverPhone(admin: SupabaseClient, patientId: string): Promise<Record<string, unknown>> {
+  const { data: p } = await admin
+    .from('patients')
+    .select('id, phone, shopify_customer_id')
+    .eq('id', patientId)
+    .maybeSingle();
+  if (!p) return { patient_id: patientId, status: 'not_found' };
+  const patient = p as { id: string; phone: string | null; shopify_customer_id: string | null };
+  if (!isDummyPhone(patient.phone)) {
+    return { patient_id: patientId, status: 'already_real', phone: patient.phone };
+  }
+  if (!patient.shopify_customer_id) return { patient_id: patientId, status: 'no_shopify_link' };
+
+  const data = await shopifyGraphql(
+    `query($id: ID!) {
+      customer(id: $id) {
+        phone
+        orders(first: 10, sortKey: CREATED_AT, reverse: true) {
+          nodes { billingAddress { phone } shippingAddress { phone } }
+        }
+      }
+    }`,
+    { id: `gid://shopify/Customer/${patient.shopify_customer_id}` },
+  );
+  const c = data?.data?.customer;
+  if (!c) return { patient_id: patientId, status: 'no_customer' };
+
+  const candidates: { phone: string; source: string }[] = [];
+  if (!isDummyPhone(c.phone)) candidates.push({ phone: c.phone, source: 'customer' });
+  for (const o of c.orders?.nodes ?? []) {
+    if (o.billingAddress?.phone && !isDummyPhone(o.billingAddress.phone)) candidates.push({ phone: o.billingAddress.phone, source: 'billing' });
+    if (o.shippingAddress?.phone && !isDummyPhone(o.shippingAddress.phone)) candidates.push({ phone: o.shippingAddress.phone, source: 'shipping' });
+  }
+  const picked = candidates[0];
+  if (!picked) return { patient_id: patientId, status: 'no_real_phone_found' };
+
+  await admin.from('patients').update({ phone: picked.phone }).eq('id', patientId);
+  return { patient_id: patientId, status: 'recovered', phone: picked.phone, source: picked.source };
 }
 
 // ── Harvest account-holder names from orders' customer profiles ──

@@ -38,6 +38,7 @@ import { getValidAccessToken, type MeetHostRow } from '../_shared/meetHostToken.
 import { invokeAppointmentConfirmation } from '../_shared/invokeAppointmentConfirmation.ts';
 import { resolveWidgetFullPricePence } from '../_shared/widgetFullPrice.ts';
 import { isPlaceholderName } from '../_shared/patientName.ts';
+import { isPlaceholderPhone, usablePhone } from '../_shared/phone.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -651,13 +652,19 @@ Deno.serve(async (req) => {
       // a Shopify-seeded placeholder. See _shared/patientName.ts.
       if (isPlaceholderName(cur.first_name) && firstName) patch.first_name = firstName;
       if (isPlaceholderName(cur.last_name) && lastName) patch.last_name = lastName;
-      if (cur.phone == null && phone) patch.phone = phone;
+      // Fill-blanks the phone, treating the One Click "+44000000000"
+      // dummy (and other junk) as blank so a real number passed by this
+      // booking overwrites it. Without this, a patient seeded with the
+      // dummy keeps it forever even when Checkpoint / the widget supply
+      // the real number. See _shared/phone.ts.
+      const incomingPhone = usablePhone(phone);
+      if (isPlaceholderPhone(cur.phone) && incomingPhone) patch.phone = incomingPhone;
       if (Object.keys(patch).length > 0) {
         await supabase.from('patients').update(patch).eq('id', patientId);
       }
     }
   }
-  if (!patientId && phone) {
+  if (!patientId && usablePhone(phone)) {
     const { data: existingByPhone } = await supabase
       .from('patients')
       .select('id, first_name, last_name, email')
@@ -690,7 +697,8 @@ Deno.serve(async (req) => {
         first_name: firstName,
         last_name: lastName,
         email: email || null,
-        phone: phone || null,
+        // never store the +44000000000 dummy as a new patient's phone
+        phone: usablePhone(phone),
       })
       .select('id')
       .single();
