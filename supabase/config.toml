@@ -54,3 +54,11 @@ verify_jwt = false
 #   silently reverting it to true (which is what broke delivery status).
 [functions.twilio-sms-status]
 verify_jwt = false
+
+# reconcile-sms-status
+#   One-shot backfill that re-queries Twilio for lng_sms_messages rows
+#   stranded on 'pending' by the twilio-sms-status 401 outage. Its own
+#   gate is the SMS_RECONCILE_TOKEN secret checked against the
+#   x-reconcile-token header, so the platform JWT check is redundant.
+[functions.reconcile-sms-status]
+verify_jwt = false
