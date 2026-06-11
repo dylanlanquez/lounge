@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Navigate, useNavigate, useParams } from 'react-router-dom';
-import { Plus, Receipt, RotateCcw, ShoppingBag } from 'lucide-react';
+import { Mail, Plus, RotateCcw, ShoppingBag, UserRound } from 'lucide-react';
 import {
   Avatar,
   Button,
@@ -311,9 +311,17 @@ export function SaleDetail() {
 
             {/* Actions */}
             <div style={{ display: 'flex', gap: theme.space[3], flexWrap: 'wrap' }}>
+              {/* A walk-up sale has no real customer record; only offer
+                  the profile link when a customer is attached. */}
+              {!isWalkUp && patient ? (
+                <Button variant="secondary" onClick={() => navigate(`/patient/${patient.id}`)}>
+                  <UserRound size={16} />
+                  View profile
+                </Button>
+              ) : null}
               {amountPaidPence > 0 ? (
                 <Button variant="secondary" onClick={() => setReceiptOpen(true)}>
-                  <Receipt size={16} />
+                  <Mail size={16} />
                   Send receipt
                 </Button>
               ) : null}
