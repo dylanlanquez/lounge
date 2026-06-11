@@ -231,6 +231,19 @@ export function VisitDetail() {
     for (const r of catalogueRows) m.set(r.id, r);
     return m;
   }, [catalogueRows]);
+  // Distinct catalogue ids already in the basket — drives the picker's
+  // cart-aware suggestion carousel. Order preserved (first seen wins).
+  const cartCatalogueIds = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          items
+            .map((it) => it.catalogue_id)
+            .filter((id): id is string => id != null),
+        ),
+      ),
+    [items],
+  );
   // Live id → display_position lookup so cart subtitle + LWO can place
   // each upgrade where admin wants it. Upgrades are now per-product, but
   // this map is just by id so a flat fetch of all active rows is fine.
@@ -2144,8 +2157,7 @@ export function VisitDetail() {
         open={pickerOpen}
         onClose={() => setPickerOpen(false)}
         cartId={cart?.id ?? null}
-        intake={appointment?.intake ?? null}
-        eventTypeLabel={appointment?.event_type_label ?? null}
+        cartCatalogueIds={cartCatalogueIds}
         onItemAdded={refresh}
       />
 

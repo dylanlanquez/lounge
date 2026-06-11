@@ -149,6 +149,12 @@ import {
   type UpgradeDisplayPosition,
   type UpgradeRow,
 } from '../lib/queries/upgrades.ts';
+import {
+  addSuggestion,
+  removeSuggestion,
+  reorderSuggestions,
+  useSuggestionsForCatalogue,
+} from '../lib/queries/suggestions.ts';
 import { supabase } from '../lib/supabase.ts';
 import { useCurrentAccount } from '../lib/queries/currentAccount.tsx';
 import { useLocations } from '../lib/queries/locations.ts';
@@ -7176,6 +7182,15 @@ function ServiceForm({
           </p>
         )}
 
+        {/* 7. Suggested companions */}
+        {draft.id ? (
+          <SuggestedCompanionsEditor catalogueId={draft.id} />
+        ) : (
+          <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkMuted, fontStyle: 'italic' }}>
+            Save the service first to choose suggested companions.
+          </p>
+        )}
+
       </div>
 
       {/* ── Footer ── */}
@@ -7633,6 +7648,21 @@ function CatalogueRowEditor({
           Save the product first to attach upgrades.
         </p>
       )}
+
+      {draft.id ? (
+        <SuggestedCompanionsEditor catalogueId={draft.id} />
+      ) : (
+        <p
+          style={{
+            margin: 0,
+            fontSize: theme.type.size.sm,
+            color: theme.color.inkMuted,
+            fontStyle: 'italic',
+          }}
+        >
+          Save the product first to choose suggested companions.
+        </p>
+      )}
       <div style={{ display: 'flex', gap: theme.space[2], justifyContent: 'flex-end', marginTop: theme.space[2] }}>
         <Button variant="tertiary" onClick={onCancel} disabled={busy}>
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
@@ -7846,6 +7876,259 @@ function ProductUpgradesEditor({
         </div>
       ) : null}
     </section>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Per-product suggested-companions editor — sits inside CatalogueRowEditor
+// beneath the upgrades editor. Curates which OTHER catalogue rows the
+// picker offers in its "Suggested for this booking" carousel when THIS
+// row is already in the basket (e.g. a retainer in the basket suggests a
+// case + cleaning tablets). Reads/writes lng_catalogue_suggestions.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function SuggestedCompanionsEditor({ catalogueId }: { catalogueId: string }) {
+  const { rows: suggestionRows, loading, error, refresh } = useSuggestionsForCatalogue(catalogueId);
+  const { rows: allRows } = useCatalogueAll();
+  const [busy, setBusy] = useState(false);
+  const [adding, setAdding] = useState(false);
+  const [toast, setToast] = useState<{ tone: 'success' | 'error'; title: string; description?: string } | null>(null);
+
+  const rowById = useMemo(() => {
+    const m = new Map<string, CatalogueRow>();
+    for (const r of allRows) m.set(r.id, r);
+    return m;
+  }, [allRows]);
+
+  // Candidates: every active row except this one and the ones already
+  // suggested, alphabetised so the dropdown is easy to scan.
+  const candidates = useMemo(() => {
+    const existing = new Set(suggestionRows.map((s) => s.suggested_catalogue_id));
+    return allRows
+      .filter((r) => r.active && r.id !== catalogueId && !existing.has(r.id))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [allRows, catalogueId, suggestionRows]);
+
+  const onAdd = async (suggestedId: string) => {
+    if (!suggestedId) return;
+    setBusy(true);
+    try {
+      await addSuggestion(catalogueId, suggestedId, suggestionRows.length);
+      refresh();
+      setAdding(false);
+      setToast({ tone: 'success', title: 'Added.' });
+    } catch (e) {
+      setToast({ tone: 'error', title: 'Could not add', description: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onRemove = async (id: string) => {
+    setBusy(true);
+    try {
+      await removeSuggestion(id);
+      refresh();
+      setToast({ tone: 'success', title: 'Removed.' });
+    } catch (e) {
+      setToast({ tone: 'error', title: 'Could not remove', description: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onMove = async (index: number, dir: -1 | 1) => {
+    const target = index + dir;
+    if (target < 0 || target >= suggestionRows.length) return;
+    const next = [...suggestionRows];
+    const moved = next[index];
+    const swapped = next[target];
+    if (!moved || !swapped) return;
+    next[index] = swapped;
+    next[target] = moved;
+    setBusy(true);
+    try {
+      await reorderSuggestions(next.map((s) => s.id));
+      refresh();
+    } catch (e) {
+      setToast({ tone: 'error', title: 'Could not reorder', description: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section
+      style={{
+        borderTop: `1px solid ${theme.color.border}`,
+        paddingTop: theme.space[4],
+        display: 'flex',
+        flexDirection: 'column',
+        gap: theme.space[3],
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: theme.space[3], flexWrap: 'wrap' }}>
+        <div>
+          <h3 style={{ margin: 0, fontSize: theme.type.size.base, fontWeight: theme.type.weight.semibold, color: theme.color.ink }}>
+            Suggested companions
+          </h3>
+          <p style={{ margin: `${theme.space[1]}px 0 0`, fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>
+            Shown in the picker's Suggested carousel when this is in the basket. Use the arrows to set the order they appear.
+          </p>
+        </div>
+        <Button variant="secondary" size="sm" onClick={() => setAdding(true)} disabled={adding || candidates.length === 0}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
+            <Plus size={16} /> Add companion
+          </span>
+        </Button>
+      </div>
+
+      {error ? (
+        <p style={{ color: theme.color.alert, margin: 0, fontSize: theme.type.size.sm }}>
+          Could not load suggestions: {error}
+        </p>
+      ) : loading ? (
+        <Skeleton height={56} radius={12} />
+      ) : (
+        <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
+          {suggestionRows.map((s, i) => {
+            const target = rowById.get(s.suggested_catalogue_id);
+            return (
+              <li
+                key={s.id}
+                style={{
+                  border: `1px solid ${theme.color.border}`,
+                  borderRadius: 14,
+                  padding: theme.space[3],
+                  background: target?.active === false ? 'rgba(14, 20, 20, 0.02)' : theme.color.surface,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: theme.space[3],
+                }}
+              >
+                <SuggestionThumb src={target?.image_url ?? null} alt={target?.name ?? ''} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <span
+                    style={{
+                      display: 'block',
+                      fontWeight: theme.type.weight.semibold,
+                      fontSize: theme.type.size.base,
+                      color: theme.color.ink,
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {target ? target.name : 'Unavailable product'}
+                  </span>
+                  <span style={{ fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>
+                    {target == null
+                      ? 'No longer in the catalogue.'
+                      : target.active === false
+                        ? 'Inactive — hidden from the picker until reactivated.'
+                        : formatPounds(target.unit_price)}
+                  </span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[1], flexShrink: 0 }}>
+                  <IconButton ariaLabel="Move up" disabled={busy || i === 0} onClick={() => onMove(i, -1)}>
+                    <ArrowUp size={15} />
+                  </IconButton>
+                  <IconButton ariaLabel="Move down" disabled={busy || i === suggestionRows.length - 1} onClick={() => onMove(i, 1)}>
+                    <ArrowDown size={15} />
+                  </IconButton>
+                  <IconButton ariaLabel="Remove companion" disabled={busy} onClick={() => onRemove(s.id)}>
+                    <Trash2 size={15} color={theme.color.alert} />
+                  </IconButton>
+                </div>
+              </li>
+            );
+          })}
+
+          {adding ? (
+            <li>
+              <div
+                style={{
+                  border: `1px solid ${theme.color.ink}`,
+                  borderRadius: 14,
+                  padding: theme.space[3],
+                  background: theme.color.surface,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: theme.space[3],
+                }}
+              >
+                <DropdownSelect<string>
+                  ariaLabel="Choose a product or service to suggest"
+                  placeholder="Choose a product or service"
+                  value=""
+                  options={candidates.map((c) => ({ value: c.id, label: c.name }))}
+                  onChange={(id) => onAdd(id)}
+                  disabled={busy}
+                />
+                <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                  <Button variant="tertiary" size="sm" onClick={() => setAdding(false)} disabled={busy}>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                      <X size={16} /> Cancel
+                    </span>
+                  </Button>
+                </div>
+              </div>
+            </li>
+          ) : null}
+
+          {!adding && suggestionRows.length === 0 ? (
+            <li>
+              <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkMuted, fontStyle: 'italic' }}>
+                No companions yet. Tap Add companion to suggest products when this is in the basket.
+              </p>
+            </li>
+          ) : null}
+        </ul>
+      )}
+
+      {toast ? (
+        <div style={{ position: 'fixed', bottom: theme.space[6], left: '50%', transform: 'translateX(-50%)', zIndex: 100 }}>
+          <Toast tone={toast.tone} title={toast.title} description={toast.description} duration={4000} onDismiss={() => setToast(null)} />
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+// Square thumbnail for the companions list — image with a Package
+// fallback, matching the catalogue picker's thumb language.
+function SuggestionThumb({ src, alt }: { src: string | null; alt: string }) {
+  return (
+    <span
+      aria-hidden={alt === '' ? true : undefined}
+      style={{
+        flexShrink: 0,
+        width: 40,
+        height: 40,
+        borderRadius: 10,
+        overflow: 'hidden',
+        background: src ? theme.color.surface : 'rgba(14, 20, 20, 0.04)',
+        border: `1px solid ${theme.color.border}`,
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        color: theme.color.inkSubtle,
+      }}
+    >
+      {src ? (
+        <img
+          src={src}
+          alt={alt}
+          loading="lazy"
+          style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+          onError={(e) => {
+            (e.currentTarget as HTMLElement).style.display = 'none';
+          }}
+        />
+      ) : (
+        <Package size={18} />
+      )}
+    </span>
   );
 }
 

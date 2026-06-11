@@ -1,4 +1,4 @@
-import { type CSSProperties, useEffect, useMemo, useRef, useState } from 'react';
+import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, Minus, Package, Plus, Search, ShoppingBag, Sparkles, X } from 'lucide-react';
 import { BottomSheet } from '../BottomSheet/BottomSheet.tsx';
 import { Button } from '../Button/Button.tsx';
@@ -10,16 +10,7 @@ import {
   type CatalogueRow,
   useCatalogueActive,
 } from '../../lib/queries/catalogue.ts';
-import {
-  findMatches,
-  type MatchCriteria,
-  totalForQtyWithArch,
-} from '../../lib/catalogueMatch.ts';
-import {
-  type IntakeAnswer,
-  archToAnatomy,
-  filterCareIntake,
-} from '../../lib/queries/appointments.ts';
+import { totalForQtyWithArch } from '../../lib/catalogueMatch.ts';
 import {
   addCatalogueItemsToCart,
   formatPounds,
@@ -30,6 +21,10 @@ import {
   useAllActiveUpgrades,
   type UpgradeRow,
 } from '../../lib/queries/upgrades.ts';
+import {
+  resolveCartSuggestions,
+  useAllSuggestions,
+} from '../../lib/queries/suggestions.ts';
 
 // Vertical travel for the close-button slide. Same value applied
 // in opposite signs to the rest-state and inline X so they appear
@@ -88,8 +83,11 @@ export interface CataloguePickerProps {
   onClose: () => void;
   cartId?: string | null;
   onStage?: (row: CatalogueRow, qty: number, options: CatalogueAddOptions) => void;
-  intake: IntakeAnswer[] | null;
-  eventTypeLabel: string | null;
+  // Catalogue ids already in the basket (cart lines on the visit page,
+  // staged items in the arrival wizard). Drives the "Suggested for this
+  // booking" carousel: companions configured against these items, or
+  // every active row when the basket is empty.
+  cartCatalogueIds: string[];
   onItemAdded: () => void;
 }
 
@@ -98,13 +96,19 @@ export function CataloguePicker({
   onClose,
   cartId,
   onStage,
-  intake,
-  eventTypeLabel,
+  cartCatalogueIds,
   onItemAdded,
 }: CataloguePickerProps) {
   const { rows, loading, error } = useCatalogueActive();
   const { rows: upgrades } = useAllActiveUpgrades();
+  const { rows: suggestionRules } = useAllSuggestions();
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
+  // The suggestion carousel's open configurator. Tracked separately
+  // from `expandedKey` (the main accordion list) so the two never
+  // collide on a shared catalogue id: tapping a suggested card opens
+  // ONLY its own configurator, never the duplicate row in the list
+  // below, and never triggers that row's scroll-into-view.
+  const [activeSuggestedId, setActiveSuggestedId] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [toast, setToast] = useState<{ tone: 'success' | 'error'; title: string } | null>(null);
 
@@ -151,11 +155,14 @@ export function CataloguePicker({
     return m;
   }, [upgrades]);
 
-  const criteria = useMemo(
-    () => criteriaFromAppointment(intake, eventTypeLabel),
-    [intake, eventTypeLabel]
+  // Cart-aware suggestions. With items in the basket, show the
+  // companions an admin configured for those items (deduped, basket
+  // items themselves excluded). With an empty basket, show every active
+  // row so the carousel still gives the receptionist a fast way in.
+  const suggestions = useMemo(
+    () => resolveCartSuggestions(rows, suggestionRules, cartCatalogueIds),
+    [rows, suggestionRules, cartCatalogueIds]
   );
-  const suggestions = useMemo(() => findMatches(rows, criteria), [rows, criteria]);
 
   // Reset state when the sheet closes / re-opens. Without this the
   // previously-expanded row would still be open the next time the
@@ -163,9 +170,22 @@ export function CataloguePicker({
   useEffect(() => {
     if (!open) {
       setExpandedKey(null);
+      setActiveSuggestedId(null);
       setSearch('');
     }
   }, [open]);
+
+  // One configurator open at a time across the whole sheet. Opening a
+  // main-list row closes the suggestion configurator; opening a
+  // suggestion closes the main-list row.
+  const toggleMainRow = useCallback((id: string) => {
+    setActiveSuggestedId(null);
+    setExpandedKey((cur) => (cur === id ? null : id));
+  }, []);
+  const selectSuggestion = useCallback((id: string | null) => {
+    setExpandedKey(null);
+    setActiveSuggestedId(id);
+  }, []);
 
   // Filter rows by case-insensitive substring across name + description
   // + sku. Search overrides the suggested + grouped layout to a flat
@@ -221,7 +241,7 @@ export function CataloguePicker({
           row={row}
           rowUpgrades={rowUpgrades}
           expanded={expandedKey === row.id}
-          onToggle={() => setExpandedKey(expandedKey === row.id ? null : row.id)}
+          onToggle={() => toggleMainRow(row.id)}
           cartId={cartId ?? null}
           onStage={onStage}
           onAdded={handleAdded}
@@ -403,9 +423,16 @@ export function CataloguePicker({
           ) : (
             <>
               {suggestions.length > 0 ? (
-                <Section title="Suggested for this booking" accent>
-                  <ul className="lng-picker-list" style={listStyle}>{suggestions.map(renderRow)}</ul>
-                </Section>
+                <SuggestionSection
+                  rows={suggestions}
+                  upgradesByCatalogue={upgradesByCatalogue}
+                  activeId={activeSuggestedId}
+                  onSelect={selectSuggestion}
+                  cartId={cartId ?? null}
+                  onStage={onStage}
+                  onAdded={handleAdded}
+                  onError={(msg) => setToast({ tone: 'error', title: msg })}
+                />
               ) : null}
               {servicesGrouped.length > 0 ? (
                 <TopGroup title="Services">
@@ -475,6 +502,18 @@ export function CataloguePicker({
       <style>{`
         .lng-picker-list > li:not(:last-child) > .lng-product-row { border-bottom: 1px solid ${theme.color.border}; }
         .lng-product-row:not(.lng-product-row--expanded):hover { background: rgba(14, 20, 20, 0.025); }
+        /* Suggestion carousel: hide the scrollbar (swipe / trackpad only)
+           and give the cards a calm press response. */
+        .lng-sug-scroll { scrollbar-width: none; -ms-overflow-style: none; }
+        .lng-sug-scroll::-webkit-scrollbar { display: none; }
+        .lng-sug-card { transition:
+          transform ${theme.motion.duration.fast}ms ${theme.motion.easing.spring},
+          box-shadow ${theme.motion.duration.base}ms ${theme.motion.easing.standard},
+          border-color ${theme.motion.duration.base}ms ${theme.motion.easing.standard}; }
+        .lng-sug-card:active { transform: scale(0.975); }
+        @media (hover: hover) {
+          .lng-sug-card:not(.lng-sug-card--active):hover { border-color: rgba(14, 20, 20, 0.16); }
+        }
       `}</style>
     </>
   );
@@ -585,50 +624,10 @@ function TopGroup({ title, children }: { title: string; children: React.ReactNod
   );
 }
 
-function Section({
-  title,
-  accent = false,
-  children,
-}: {
-  title: string;
-  accent?: boolean;
-  children: React.ReactNode;
-}) {
-  return (
-    <section style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
-      <header
-        style={{
-          display: 'inline-flex',
-          alignItems: 'center',
-          gap: theme.space[2],
-        }}
-      >
-        {accent ? <Sparkles size={14} color={theme.color.accent} aria-hidden /> : null}
-        <h3
-          style={{
-            margin: 0,
-            fontSize: theme.type.size.sm,
-            fontWeight: theme.type.weight.semibold,
-            color: accent ? theme.color.accent : theme.color.inkMuted,
-            letterSpacing: theme.type.tracking.tight,
-          }}
-        >
-          {title}
-        </h3>
-      </header>
-      {children}
-    </section>
-  );
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
-// ProductRow — the accordion's atomic unit.
-//
-// Header (always visible): thumbnail + name + price + caret.
-// Body (visible when expanded): qty + arch + shade + upgrades + Add CTA.
-// CSS Grid trick: grid-template-rows transitions from 0fr → 1fr to give
-// a smooth height animation without measuring DOM. Inner div has
-// overflow: hidden so the content clips during the transition.
+// Shared line helpers — used by the accordion rows, the suggestion
+// cards, and the suggestion configurator so the "add to bag" semantics
+// stay identical everywhere.
 // ─────────────────────────────────────────────────────────────────────────────
 
 // Click-in veneers picker shade options. Restricted set per Dylan's
@@ -636,63 +635,125 @@ function Section({
 // adds new shades later, extend this list (or move it to lng_settings).
 const CLICK_IN_VENEER_SHADES = ['BL1', 'A1', 'A2'] as const;
 
-function ProductRow({
+const FORMLESS_OPTIONS: CatalogueAddOptions = {
+  arch: null,
+  shade: null,
+  notes: null,
+  upgrades: [],
+};
+
+// Where a line commits to: stage it (arrival wizard, no cart yet) or
+// write it straight to the open cart (visit page).
+interface LineCommitCtx {
+  cartId: string | null;
+  onStage?: (row: CatalogueRow, qty: number, options: CatalogueAddOptions) => void;
+}
+
+async function commitLine(
+  row: CatalogueRow,
+  qty: number,
+  options: CatalogueAddOptions,
+  ctx: LineCommitCtx
+): Promise<void> {
+  if (ctx.onStage) {
+    ctx.onStage(row, qty, options);
+    return;
+  }
+  if (!ctx.cartId) throw new Error('No cart to add to');
+  await addCatalogueItemsToCart(ctx.cartId, row, qty, options);
+}
+
+// A row with nothing to configure (no arch question, no shade, no
+// upgrades, qty stepper disabled) adds straight to the bag on a single
+// tap — no expansion, no configurator.
+function isFormlessRow(row: CatalogueRow, rowUpgrades: UpgradeRow[]): boolean {
+  const askArch = row.arch_match === 'single';
+  const showShade = row.service_type === 'click_in_veneers';
+  return !askArch && !showShade && rowUpgrades.length === 0 && !row.quantity_enabled;
+}
+
+// Lowest per-instance price for a row + whether it needs a "From "
+// prefix (arch-priced rows where upper/lower and both differ).
+function headerPrice(row: CatalogueRow): { price: number; fromPrefix: boolean } {
+  const askArch = row.arch_match === 'single';
+  const hasBoth = row.both_arches_price != null;
+  const price =
+    askArch && hasBoth
+      ? Math.min(row.unit_price, row.both_arches_price ?? row.unit_price)
+      : row.arch_match === 'both' && row.both_arches_price != null
+        ? row.both_arches_price
+        : row.unit_price;
+  const fromPrefix = askArch && hasBoth && row.unit_price !== row.both_arches_price;
+  return { price, fromPrefix };
+}
+
+// Direct-add for form-less rows. Owns a tiny busy flag so the tap
+// target can dim while the write lands; the picker closes on success
+// so the flag rarely lingers.
+function useFormlessAdd(
+  row: CatalogueRow,
+  ctx: LineCommitCtx,
+  { onAdded, onError }: { onAdded: () => void; onError: (msg: string) => void }
+) {
+  const [busy, setBusy] = useState(false);
+  const add = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await commitLine(row, 1, FORMLESS_OPTIONS, ctx);
+      onAdded();
+    } catch (e) {
+      onError(e instanceof Error ? e.message : 'Could not add item');
+    } finally {
+      setBusy(false);
+    }
+  };
+  return { busy, add };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// LineConfigurator — the per-line form: qty + arch + shade + upgrades +
+// Total/Add footer. Owns its own draft state and the add submit. Used
+// both inside the accordion ProductRow (active = expanded; resets when
+// the row collapses) and standalone under the suggestion carousel
+// (mounted fresh per pick, so it starts clean).
+// ─────────────────────────────────────────────────────────────────────────────
+
+function LineConfigurator({
   row,
   rowUpgrades,
-  expanded,
-  onToggle,
   cartId,
   onStage,
   onAdded,
   onError,
+  active,
 }: {
   row: CatalogueRow;
   rowUpgrades: UpgradeRow[];
-  expanded: boolean;
-  onToggle: () => void;
   cartId: string | null;
   onStage?: (row: CatalogueRow, qty: number, options: CatalogueAddOptions) => void;
   onAdded: () => void;
   onError: (msg: string) => void;
+  active: boolean;
 }) {
-  const headerId = `picker-row-header-${row.id}`;
-  const panelId = `picker-row-panel-${row.id}`;
-  const articleRef = useRef<HTMLElement | null>(null);
-
   const [qty, setQty] = useState(1);
   const [arch, setArch] = useState<'upper' | 'lower' | 'both' | null>(null);
   const [shade, setShade] = useState('');
   const [selectedUpgradeIds, setSelectedUpgradeIds] = useState<Set<string>>(() => new Set());
   const [busy, setBusy] = useState(false);
 
-  // Reset the per-line form whenever the row collapses so the next
-  // expansion starts clean.
+  // Reset the draft whenever the line goes inactive (the accordion row
+  // collapsed) so the next activation starts clean. Standalone use
+  // mounts fresh per pick, so this is a no-op there.
   useEffect(() => {
-    if (!expanded) {
+    if (!active) {
       setQty(1);
       setArch(null);
       setShade('');
       setSelectedUpgradeIds(new Set());
       setBusy(false);
     }
-  }, [expanded]);
-
-  // When a row expands, scroll it into the centre of the BottomSheet's
-  // scroll viewport. Without this, opening a card near the bottom of
-  // the list leaves the form below the fold and the user has to chase
-  // the content. We wait one frame so the panel's grid-rows transition
-  // has begun expanding before we measure — otherwise scrollIntoView
-  // targets the still-collapsed (zero-height) bounding box and lands
-  // short.
-  useEffect(() => {
-    if (!expanded) return;
-    const el = articleRef.current;
-    if (!el) return;
-    const id = window.requestAnimationFrame(() => {
-      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    });
-    return () => window.cancelAnimationFrame(id);
-  }, [expanded]);
+  }, [active]);
 
   // arch_match='single' means the receptionist is picking the arch.
   // 'both' on a row means it's preset (legacy duplicate row); the
@@ -736,49 +797,23 @@ function ProductRow({
   const baseLineTotal = totalForQtyWithArch(row, qty, archForLine);
   const lineTotal = baseLineTotal + upgradePerInstance * qty;
 
-  // Header price hint: row's lowest possible per-instance price. Lets
-  // the receptionist see "From £X" for arch-priced rows without
-  // expanding the row first.
-  const minHeaderPrice =
-    askArch && hasBothArchesPrice
-      ? Math.min(row.unit_price, row.both_arches_price ?? row.unit_price)
-      : row.arch_match === 'both' && row.both_arches_price != null
-        ? row.both_arches_price
-        : row.unit_price;
-  const showFromPrefix = askArch && hasBothArchesPrice && row.unit_price !== row.both_arches_price;
-
   const canAdd =
     (cartId != null || onStage != null) &&
     qty >= 1 &&
     (!askArch || arch !== null) &&
     (!showShade || shade.trim() !== '');
 
-  // Form-less rows have nothing to configure: no arch pick, no shade
-  // pick, no upgrades, and quantity_enabled=false on the row so the
-  // Quantity stepper is hidden too. Tapping the header adds them
-  // straight to the bag. Schema-driven via the explicit
-  // quantity_enabled flag (admin-controlled), not inferred from
-  // unit_label.
-  const isFormless =
-    !askArch && !showShade && rowUpgrades.length === 0 && !row.quantity_enabled;
-
   const submit = async () => {
-    if (!canAdd) return;
+    if (!canAdd || busy) return;
     const opts: CatalogueAddOptions = {
       arch: archForLine,
       shade: showShade ? shade.trim() || null : null,
       notes: null,
       upgrades: appliedUpgrades,
     };
-    if (onStage) {
-      onStage(row, qty, opts);
-      onAdded();
-      return;
-    }
-    if (!cartId) return;
     setBusy(true);
     try {
-      await addCatalogueItemsToCart(cartId, row, qty, opts);
+      await commitLine(row, qty, opts, { cartId, onStage });
       onAdded();
     } catch (e) {
       onError(e instanceof Error ? e.message : 'Could not add item');
@@ -796,19 +831,9 @@ function ProductRow({
     });
   };
 
-  const handleHeaderClick = () => {
-    if (busy) return;
-    if (isFormless) {
-      void submit();
-      return;
-    }
-    onToggle();
-  };
-
-  // Which configurator section renders first inside the expansion
-  // panel? The first one drops its top border so it sits flush
-  // against the panel's top whitespace instead of doubling against
-  // the header.
+  // Which configurator section renders first? The first one drops its
+  // top border so it sits flush against the panel's top whitespace
+  // instead of doubling against the header.
   const firstSection: 'qty' | 'arch' | 'shade' | 'upgrades' | null =
     row.quantity_enabled
       ? 'qty'
@@ -821,12 +846,235 @@ function ProductRow({
             : null;
 
   return (
+    <div
+      style={{
+        padding: `${theme.space[1]}px ${theme.space[5]}px ${theme.space[4]}px`,
+        display: 'flex',
+        flexDirection: 'column',
+      }}
+    >
+      {row.quantity_enabled ? (
+        <ConfigRow
+          label={row.unit_label ? `Quantity (${row.unit_label})` : 'Quantity'}
+          first={firstSection === 'qty'}
+        >
+          <PillStepper value={qty} onChange={setQty} />
+        </ConfigRow>
+      ) : null}
+
+      {askArch ? (
+        <ConfigRow label="Arch" required first={firstSection === 'arch'}>
+          <Segmented
+            ariaLabel="Arch"
+            value={arch}
+            onChange={setArch}
+            options={
+              hasBothArchesPrice
+                ? [
+                    { value: 'upper', label: 'Upper' },
+                    { value: 'lower', label: 'Lower' },
+                    { value: 'both', label: 'Both' },
+                  ]
+                : [
+                    { value: 'upper', label: 'Upper' },
+                    { value: 'lower', label: 'Lower' },
+                  ]
+            }
+          />
+        </ConfigRow>
+      ) : null}
+
+      {showShade ? (
+        <ConfigRow label="Shade" required first={firstSection === 'shade'}>
+          <Segmented
+            ariaLabel="Shade"
+            value={shade}
+            onChange={setShade}
+            options={CLICK_IN_VENEER_SHADES.map((s) => ({ value: s, label: s }))}
+          />
+        </ConfigRow>
+      ) : null}
+
+      {rowUpgrades.length > 0 ? (
+        <ConfigRow label="Upgrades" hint="optional" stack first={firstSection === 'upgrades'}>
+          <div style={{ display: 'flex', flexDirection: 'column' }}>
+            {rowUpgrades.map((upgrade, i) => {
+              const checked = selectedUpgradeIds.has(upgrade.id);
+              const tierPrice =
+                isBothArches && upgrade.both_arches_price != null
+                  ? upgrade.both_arches_price
+                  : upgrade.price;
+              return (
+                <label
+                  key={upgrade.id}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: theme.space[3],
+                    padding: `${theme.space[3]}px 0`,
+                    borderTop: i === 0 ? 'none' : `1px solid ${theme.color.border}`,
+                    cursor: 'pointer',
+                  }}
+                >
+                  <Checkbox
+                    checked={checked}
+                    onChange={() => toggleUpgrade(upgrade.id)}
+                    ariaLabel={upgrade.name}
+                  />
+                  <span
+                    style={{
+                      flex: 1,
+                      fontSize: theme.type.size.base,
+                      fontWeight: theme.type.weight.medium,
+                      color: theme.color.ink,
+                    }}
+                  >
+                    {upgrade.name}
+                  </span>
+                  <span
+                    style={{
+                      fontSize: theme.type.size.sm,
+                      color: theme.color.inkMuted,
+                      fontVariantNumeric: 'tabular-nums',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    +{formatPounds(tierPrice)}
+                  </span>
+                </label>
+              );
+            })}
+          </div>
+        </ConfigRow>
+      ) : null}
+
+      {/* Footer — calm summary on the left, primary action on the
+          right. Matches the Wise/Stripe summary-then-CTA pattern:
+          small "Total" eyebrow + a single big tabular value that
+          doesn't compete with the button label. */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: theme.space[4],
+          marginTop: theme.space[2],
+          paddingTop: theme.space[4],
+          borderTop: `1px solid ${theme.color.border}`,
+        }}
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+          <span
+            style={{
+              fontSize: theme.type.size.xs,
+              color: theme.color.inkMuted,
+              fontWeight: theme.type.weight.medium,
+              letterSpacing: 0,
+            }}
+          >
+            Total
+          </span>
+          <span
+            style={{
+              fontSize: theme.type.size.xl,
+              fontWeight: theme.type.weight.semibold,
+              fontVariantNumeric: 'tabular-nums',
+              color: theme.color.ink,
+              letterSpacing: theme.type.tracking.tight,
+              lineHeight: 1,
+            }}
+          >
+            {formatPounds(lineTotal)}
+          </span>
+        </div>
+        <Button
+          variant="primary"
+          size="md"
+          onClick={submit}
+          disabled={!canAdd || busy}
+          loading={busy}
+          showArrow={!busy}
+        >
+          Add to bag
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ProductRow — the accordion's atomic unit (the grouped Services /
+// Products lists below the suggestion carousel).
+//
+// Header (always visible): thumbnail + name + price + caret.
+// Body (visible when expanded): the shared LineConfigurator.
+// CSS Grid trick: grid-template-rows transitions from 0fr → 1fr to give
+// a smooth height animation without measuring DOM. Inner div has
+// overflow: hidden so the content clips during the transition.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function ProductRow({
+  row,
+  rowUpgrades,
+  expanded,
+  onToggle,
+  cartId,
+  onStage,
+  onAdded,
+  onError,
+}: {
+  row: CatalogueRow;
+  rowUpgrades: UpgradeRow[];
+  expanded: boolean;
+  onToggle: () => void;
+  cartId: string | null;
+  onStage?: (row: CatalogueRow, qty: number, options: CatalogueAddOptions) => void;
+  onAdded: () => void;
+  onError: (msg: string) => void;
+}) {
+  const headerId = `picker-row-header-${row.id}`;
+  const panelId = `picker-row-panel-${row.id}`;
+  const articleRef = useRef<HTMLElement | null>(null);
+
+  const isFormless = isFormlessRow(row, rowUpgrades);
+  const { busy: formlessBusy, add: formlessAdd } = useFormlessAdd(
+    row,
+    { cartId, onStage },
+    { onAdded, onError }
+  );
+  const { price: minHeaderPrice, fromPrefix: showFromPrefix } = headerPrice(row);
+
+  // When a row expands, scroll it into the centre of the BottomSheet's
+  // scroll viewport. Without this, opening a card near the bottom of
+  // the list leaves the form below the fold and the user has to chase
+  // the content. We wait one frame so the panel's grid-rows transition
+  // has begun expanding before we measure — otherwise scrollIntoView
+  // targets the still-collapsed (zero-height) bounding box and lands
+  // short.
+  useEffect(() => {
+    if (!expanded) return;
+    const el = articleRef.current;
+    if (!el) return;
+    const id = window.requestAnimationFrame(() => {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+    return () => window.cancelAnimationFrame(id);
+  }, [expanded]);
+
+  const handleHeaderClick = () => {
+    if (formlessBusy) return;
+    if (isFormless) {
+      void formlessAdd();
+      return;
+    }
+    onToggle();
+  };
+
+  return (
     <article
       ref={articleRef}
       className={
-        expanded
-          ? 'lng-product-row lng-product-row--expanded'
-          : 'lng-product-row'
+        expanded ? 'lng-product-row lng-product-row--expanded' : 'lng-product-row'
       }
       style={{
         // borderBottom is set in CSS, not inline — inline styles
@@ -900,182 +1148,466 @@ function ProductRow({
         >
           {showFromPrefix ? 'From ' : ''}{formatPounds(minHeaderPrice)}
         </span>
-        <RowActionBox
-          isFormless={isFormless}
-          expanded={expanded}
-          busy={busy}
-        />
+        <RowActionBox isFormless={isFormless} expanded={expanded} busy={formlessBusy} />
       </button>
 
-      {/* Animated panel — grid-template-rows transition. */}
+      {/* Animated panel — grid-template-rows transition. Form-less rows
+          have no panel; they add straight from the header tap. */}
+      {!isFormless ? (
+        <div
+          id={panelId}
+          role="region"
+          aria-labelledby={headerId}
+          style={{
+            display: 'grid',
+            gridTemplateRows: expanded ? '1fr' : '0fr',
+            transition: `grid-template-rows ${theme.motion.duration.base}ms ${theme.motion.easing.spring}`,
+          }}
+        >
+          <div style={{ overflow: 'hidden' }}>
+            <LineConfigurator
+              row={row}
+              rowUpgrades={rowUpgrades}
+              cartId={cartId}
+              onStage={onStage}
+              onAdded={onAdded}
+              onError={onError}
+              active={expanded}
+            />
+          </div>
+        </div>
+      ) : null}
+    </article>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SuggestionSection — accent eyebrow + swipable card carousel + an
+// inline configurator that opens directly beneath the cards. Keeping
+// the configurator here (not in the grouped lists below) means tapping
+// a suggested card never expands the duplicate row further down and
+// never scrolls the sheet away from the top.
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface SuggestionHandlers {
+  cartId: string | null;
+  onStage?: (row: CatalogueRow, qty: number, options: CatalogueAddOptions) => void;
+  onAdded: () => void;
+  onError: (msg: string) => void;
+}
+
+function SuggestionSection({
+  rows,
+  upgradesByCatalogue,
+  activeId,
+  onSelect,
+  cartId,
+  onStage,
+  onAdded,
+  onError,
+}: {
+  rows: CatalogueRow[];
+  upgradesByCatalogue: Map<string, UpgradeRow[]>;
+  activeId: string | null;
+  onSelect: (id: string | null) => void;
+} & SuggestionHandlers) {
+  const handlers: SuggestionHandlers = { cartId, onStage, onAdded, onError };
+  const activeRow = activeId ? rows.find((r) => r.id === activeId) ?? null : null;
+  const activeUpgrades = activeRow ? upgradesByCatalogue.get(activeRow.id) ?? [] : [];
+
+  return (
+    <section style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3], minWidth: 0 }}>
+      <header style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
+        <Sparkles size={14} color={theme.color.accent} aria-hidden />
+        <h3
+          style={{
+            margin: 0,
+            fontSize: theme.type.size.sm,
+            fontWeight: theme.type.weight.semibold,
+            color: theme.color.accent,
+            letterSpacing: theme.type.tracking.tight,
+          }}
+        >
+          Suggested for this booking
+        </h3>
+      </header>
+
+      <SuggestionCarousel
+        rows={rows}
+        upgradesByCatalogue={upgradesByCatalogue}
+        activeId={activeId}
+        onSelect={onSelect}
+        {...handlers}
+      />
+
+      {/* Inline configurator — slides open beneath the cards. */}
       <div
-        id={panelId}
-        role="region"
-        aria-labelledby={headerId}
         style={{
           display: 'grid',
-          gridTemplateRows: expanded ? '1fr' : '0fr',
+          gridTemplateRows: activeRow ? '1fr' : '0fr',
           transition: `grid-template-rows ${theme.motion.duration.base}ms ${theme.motion.easing.spring}`,
         }}
       >
         <div style={{ overflow: 'hidden' }}>
-          <div
-            style={{
-              padding: `${theme.space[1]}px ${theme.space[5]}px ${theme.space[4]}px`,
-              display: 'flex',
-              flexDirection: 'column',
-            }}
-          >
-            {row.quantity_enabled ? (
-              <ConfigRow
-                label={row.unit_label ? `Quantity (${row.unit_label})` : 'Quantity'}
-                first={firstSection === 'qty'}
-              >
-                <PillStepper value={qty} onChange={setQty} />
-              </ConfigRow>
-            ) : null}
-
-            {askArch ? (
-              <ConfigRow label="Arch" required first={firstSection === 'arch'}>
-                <Segmented
-                  ariaLabel="Arch"
-                  value={arch}
-                  onChange={setArch}
-                  options={
-                    hasBothArchesPrice
-                      ? [
-                          { value: 'upper', label: 'Upper' },
-                          { value: 'lower', label: 'Lower' },
-                          { value: 'both', label: 'Both' },
-                        ]
-                      : [
-                          { value: 'upper', label: 'Upper' },
-                          { value: 'lower', label: 'Lower' },
-                        ]
-                  }
-                />
-              </ConfigRow>
-            ) : null}
-
-            {showShade ? (
-              <ConfigRow label="Shade" required first={firstSection === 'shade'}>
-                <Segmented
-                  ariaLabel="Shade"
-                  value={shade}
-                  onChange={setShade}
-                  options={CLICK_IN_VENEER_SHADES.map((s) => ({ value: s, label: s }))}
-                />
-              </ConfigRow>
-            ) : null}
-
-            {rowUpgrades.length > 0 ? (
-              <ConfigRow label="Upgrades" hint="optional" stack first={firstSection === 'upgrades'}>
-                <div style={{ display: 'flex', flexDirection: 'column' }}>
-                  {rowUpgrades.map((upgrade, i) => {
-                    const checked = selectedUpgradeIds.has(upgrade.id);
-                    const tierPrice =
-                      isBothArches && upgrade.both_arches_price != null
-                        ? upgrade.both_arches_price
-                        : upgrade.price;
-                    return (
-                      <label
-                        key={upgrade.id}
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: theme.space[3],
-                          padding: `${theme.space[3]}px 0`,
-                          borderTop:
-                            i === 0 ? 'none' : `1px solid ${theme.color.border}`,
-                          cursor: 'pointer',
-                        }}
-                      >
-                        <Checkbox
-                          checked={checked}
-                          onChange={() => toggleUpgrade(upgrade.id)}
-                          ariaLabel={upgrade.name}
-                        />
-                        <span
-                          style={{
-                            flex: 1,
-                            fontSize: theme.type.size.base,
-                            fontWeight: theme.type.weight.medium,
-                            color: theme.color.ink,
-                          }}
-                        >
-                          {upgrade.name}
-                        </span>
-                        <span
-                          style={{
-                            fontSize: theme.type.size.sm,
-                            color: theme.color.inkMuted,
-                            fontVariantNumeric: 'tabular-nums',
-                            whiteSpace: 'nowrap',
-                          }}
-                        >
-                          +{formatPounds(tierPrice)}
-                        </span>
-                      </label>
-                    );
-                  })}
-                </div>
-              </ConfigRow>
-            ) : null}
-
-            {/* Footer — calm summary on the left, primary action on the
-                right. Matches the Wise/Stripe summary-then-CTA pattern:
-                small "Total" eyebrow + a single big tabular value that
-                doesn't compete with the button label. */}
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                gap: theme.space[4],
-                marginTop: theme.space[2],
-                paddingTop: theme.space[4],
-                borderTop: `1px solid ${theme.color.border}`,
-              }}
-            >
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                <span
-                  style={{
-                    fontSize: theme.type.size.xs,
-                    color: theme.color.inkMuted,
-                    fontWeight: theme.type.weight.medium,
-                    letterSpacing: 0,
-                  }}
-                >
-                  Total
-                </span>
-                <span
-                  style={{
-                    fontSize: theme.type.size.xl,
-                    fontWeight: theme.type.weight.semibold,
-                    fontVariantNumeric: 'tabular-nums',
-                    color: theme.color.ink,
-                    letterSpacing: theme.type.tracking.tight,
-                    lineHeight: 1,
-                  }}
-                >
-                  {formatPounds(lineTotal)}
-                </span>
-              </div>
-              <Button
-                variant="primary"
-                size="md"
-                onClick={submit}
-                disabled={!canAdd || busy}
-                loading={busy}
-                showArrow={!busy}
-              >
-                Add to bag
-              </Button>
-            </div>
-          </div>
+          {activeRow ? (
+            <SuggestionConfigurator
+              key={activeRow.id}
+              row={activeRow}
+              rowUpgrades={activeUpgrades}
+              onClose={() => onSelect(null)}
+              {...handlers}
+            />
+          ) : null}
         </div>
       </div>
-    </article>
+    </section>
+  );
+}
+
+// Card width / image height — tuned so ~3 cards plus a peek of the
+// fourth are visible on an iPad sheet, signalling the row swipes.
+const SUGGESTION_CARD_WIDTH = 168;
+const SUGGESTION_CARD_IMAGE_HEIGHT = 112;
+
+function SuggestionCarousel({
+  rows,
+  upgradesByCatalogue,
+  activeId,
+  onSelect,
+  cartId,
+  onStage,
+  onAdded,
+  onError,
+}: {
+  rows: CatalogueRow[];
+  upgradesByCatalogue: Map<string, UpgradeRow[]>;
+  activeId: string | null;
+  onSelect: (id: string | null) => void;
+} & SuggestionHandlers) {
+  const handlers: SuggestionHandlers = { cartId, onStage, onAdded, onError };
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  // Edge fades: on when there's hidden content in that direction, so
+  // the carousel quietly advertises that it scrolls without a
+  // permanent scrollbar.
+  const [edges, setEdges] = useState({ start: false, end: false });
+  const updateEdges = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const start = el.scrollLeft > 2;
+    const end = el.scrollLeft + el.clientWidth < el.scrollWidth - 2;
+    setEdges((prev) => (prev.start === start && prev.end === end ? prev : { start, end }));
+  }, []);
+  // Re-measure when the card set changes (cart edits change suggestions).
+  useEffect(() => {
+    updateEdges();
+  }, [rows, updateEdges]);
+
+  return (
+    <div style={{ position: 'relative', minWidth: 0 }}>
+      <div
+        ref={scrollRef}
+        className="lng-sug-scroll"
+        onScroll={updateEdges}
+        style={{
+          display: 'flex',
+          gap: theme.space[3],
+          overflowX: 'auto',
+          scrollSnapType: 'x mandatory',
+          // Vertical breathing room so the cards' shadows and the
+          // active card's accent ring aren't clipped by the row.
+          padding: `${theme.space[1]}px 0 ${theme.space[2]}px`,
+        }}
+      >
+        {rows.map((r) => (
+          <SuggestionCard
+            key={r.id}
+            row={r}
+            rowUpgrades={upgradesByCatalogue.get(r.id) ?? []}
+            active={activeId === r.id}
+            onSelect={() => onSelect(r.id)}
+            {...handlers}
+          />
+        ))}
+      </div>
+      <CarouselFade side="left" show={edges.start} />
+      <CarouselFade side="right" show={edges.end} />
+    </div>
+  );
+}
+
+// Soft surface-to-transparent gradient over each carousel edge. The
+// transparent stop must use the surface colour at alpha 0 (not the
+// `transparent` keyword) to avoid the grey-fade artefact some engines
+// produce when interpolating to transparent-black.
+function CarouselFade({ side, show }: { side: 'left' | 'right'; show: boolean }) {
+  return (
+    <div
+      aria-hidden
+      style={{
+        position: 'absolute',
+        top: 0,
+        bottom: 0,
+        [side]: 0,
+        width: 40,
+        pointerEvents: 'none',
+        background: `linear-gradient(to ${side === 'left' ? 'right' : 'left'}, ${theme.color.surface}, rgba(255, 255, 255, 0))`,
+        opacity: show ? 1 : 0,
+        transition: `opacity ${theme.motion.duration.base}ms ${theme.motion.easing.standard}`,
+      }}
+    />
+  );
+}
+
+// A single swipable suggestion card: hero image + accent add badge,
+// then name + price. Form-less products add on tap; configurable ones
+// open the inline configurator below the carousel.
+function SuggestionCard({
+  row,
+  rowUpgrades,
+  active,
+  onSelect,
+  cartId,
+  onStage,
+  onAdded,
+  onError,
+}: {
+  row: CatalogueRow;
+  rowUpgrades: UpgradeRow[];
+  active: boolean;
+  onSelect: () => void;
+} & SuggestionHandlers) {
+  const formless = isFormlessRow(row, rowUpgrades);
+  const { busy, add } = useFormlessAdd(row, { cartId, onStage }, { onAdded, onError });
+  const { price, fromPrefix } = headerPrice(row);
+
+  const handleClick = () => {
+    if (busy) return;
+    if (formless) void add();
+    else onSelect();
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={handleClick}
+      className={active ? 'lng-sug-card lng-sug-card--active' : 'lng-sug-card'}
+      aria-pressed={formless ? undefined : active}
+      aria-label={formless ? `Add ${row.name} to bag` : `Configure ${row.name}`}
+      style={{
+        appearance: 'none',
+        fontFamily: 'inherit',
+        textAlign: 'left',
+        cursor: 'pointer',
+        flexShrink: 0,
+        width: SUGGESTION_CARD_WIDTH,
+        scrollSnapAlign: 'start',
+        display: 'flex',
+        flexDirection: 'column',
+        padding: 0,
+        background: theme.color.surface,
+        border: `1px solid ${active ? theme.color.accent : theme.color.border}`,
+        borderRadius: theme.radius.card,
+        boxShadow: active ? theme.shadow.raised : theme.shadow.card,
+        overflow: 'hidden',
+        opacity: busy ? 0.7 : 1,
+        WebkitTapHighlightColor: 'transparent',
+      }}
+    >
+      {/* Hero image */}
+      <span
+        style={{
+          position: 'relative',
+          display: 'block',
+          width: '100%',
+          height: SUGGESTION_CARD_IMAGE_HEIGHT,
+          background: row.image_url ? theme.color.surface : 'rgba(14, 20, 20, 0.04)',
+        }}
+      >
+        {row.image_url ? (
+          <img
+            src={row.image_url}
+            alt={row.name}
+            loading="lazy"
+            style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+            onError={(e) => {
+              (e.currentTarget as HTMLElement).style.display = 'none';
+            }}
+          />
+        ) : (
+          <span
+            aria-hidden
+            style={{
+              position: 'absolute',
+              inset: 0,
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: theme.color.inkSubtle,
+            }}
+          >
+            <Package size={28} />
+          </span>
+        )}
+        {/* Add badge — accent circle, white glyph. Form-less adds on
+            tap; configurable opens options. */}
+        <span
+          aria-hidden
+          style={{
+            position: 'absolute',
+            right: theme.space[2],
+            bottom: theme.space[2],
+            width: 34,
+            height: 34,
+            borderRadius: theme.radius.pill,
+            background: theme.color.accent,
+            color: theme.color.surface,
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            boxShadow: '0 2px 6px rgba(14, 20, 20, 0.18)',
+          }}
+        >
+          {formless ? <ShoppingBag size={17} /> : <Plus size={18} strokeWidth={2.5} />}
+        </span>
+      </span>
+
+      {/* Body */}
+      <span
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          gap: theme.space[1],
+          padding: theme.space[3],
+        }}
+      >
+        <span
+          style={{
+            fontSize: theme.type.size.sm,
+            fontWeight: theme.type.weight.semibold,
+            color: theme.color.ink,
+            lineHeight: 1.3,
+            // Two-line clamp with a fixed min-height so every card in
+            // the row is the same height (symmetry across the carousel).
+            display: '-webkit-box',
+            WebkitLineClamp: 2,
+            WebkitBoxOrient: 'vertical',
+            overflow: 'hidden',
+            minHeight: 36,
+          }}
+        >
+          {row.name}
+        </span>
+        <span
+          style={{
+            fontSize: theme.type.size.sm,
+            fontWeight: theme.type.weight.semibold,
+            color: theme.color.ink,
+            fontVariantNumeric: 'tabular-nums',
+          }}
+        >
+          {fromPrefix ? 'From ' : ''}
+          {formatPounds(price)}
+        </span>
+      </span>
+    </button>
+  );
+}
+
+// Standalone configurator shown beneath the carousel when a
+// configurable suggested card is tapped. A compact identity header
+// (thumb + name + close) sits above the shared LineConfigurator.
+function SuggestionConfigurator({
+  row,
+  rowUpgrades,
+  cartId,
+  onStage,
+  onAdded,
+  onError,
+  onClose,
+}: {
+  row: CatalogueRow;
+  rowUpgrades: UpgradeRow[];
+  onClose: () => void;
+} & SuggestionHandlers) {
+  const { price, fromPrefix } = headerPrice(row);
+  return (
+    <div
+      style={{
+        marginTop: theme.space[1],
+        border: `1px solid ${theme.color.border}`,
+        borderRadius: theme.radius.card,
+        background: theme.color.bg,
+        overflow: 'hidden',
+      }}
+    >
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: theme.space[3],
+          padding: `${theme.space[4]}px ${theme.space[4]}px 0`,
+        }}
+      >
+        <Thumb src={row.image_url} alt={row.name} size={40} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <p
+            style={{
+              margin: 0,
+              fontSize: theme.type.size.base,
+              fontWeight: theme.type.weight.semibold,
+              color: theme.color.ink,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {row.name}
+          </p>
+          <p
+            style={{
+              margin: `2px 0 0`,
+              fontSize: theme.type.size.sm,
+              color: theme.color.inkMuted,
+              fontVariantNumeric: 'tabular-nums',
+            }}
+          >
+            {fromPrefix ? 'From ' : ''}
+            {formatPounds(price)}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Close options"
+          style={{
+            appearance: 'none',
+            border: 'none',
+            background: 'transparent',
+            color: theme.color.inkSubtle,
+            cursor: 'pointer',
+            height: 36,
+            width: 36,
+            borderRadius: theme.radius.pill,
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            flexShrink: 0,
+            WebkitTapHighlightColor: 'transparent',
+          }}
+        >
+          <X size={18} />
+        </button>
+      </div>
+      <LineConfigurator
+        row={row}
+        rowUpgrades={rowUpgrades}
+        cartId={cartId}
+        onStage={onStage}
+        onAdded={onAdded}
+        onError={onError}
+        active
+      />
+    </div>
   );
 }
 
@@ -1413,65 +1945,3 @@ const listStyle: CSSProperties = {
   gap: 0,
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Criteria-from-appointment helper — unchanged from the previous
-// version. Maps an appointment's intake answers + Calendly event type
-// to MatchCriteria for the catalogue match function.
-// ─────────────────────────────────────────────────────────────────────────────
-
-export function criteriaFromAppointment(
-  intake: IntakeAnswer[] | null,
-  eventTypeLabel: string | null
-): MatchCriteria {
-  const filtered = filterCareIntake(intake);
-  const service_type = inferServiceType(eventTypeLabel);
-
-  const repairAns = filtered.find((a) =>
-    /\brepair[\s_]*type\b/i.test(a.question ?? '')
-  );
-  const repair_variant = repairAns?.answer.split(/\r?\n+/)[0]?.trim() || null;
-
-  const subjectAns = filtered.find((a) =>
-    /\b(appliance|product|service|treatment)\b/i.test(a.question ?? '')
-  );
-  const product_key = subjectAns ? normaliseProductKey(subjectAns.answer) : null;
-
-  const archAns = filtered.find((a) =>
-    /\b(arch|jaw|upper\s*or\s*lower|top\s*or\s*bottom)\b/i.test(a.question ?? '')
-  );
-  const archLabel = archAns ? archToAnatomy(archAns.answer) : undefined;
-  const arch =
-    archLabel === 'Upper'
-      ? 'upper'
-      : archLabel === 'Lower'
-        ? 'lower'
-        : archLabel === 'Upper and Lower'
-          ? 'both'
-          : null;
-
-  return { service_type, product_key, repair_variant, arch };
-}
-
-function inferServiceType(label: string | null): string | null {
-  if (!label) return null;
-  const l = label.toLowerCase();
-  if (/denture\s+repair|repair/i.test(l)) return 'denture_repair';
-  if (/click[\s-]?in\s+veneer|veneer/i.test(l)) return 'click_in_veneers';
-  if (/same[\s-]?day\s+appliance|appliance|impression|aligner|retainer|guard|whitening/i.test(l))
-    return 'same_day_appliance';
-  return null;
-}
-
-function normaliseProductKey(answer: string): string | null {
-  const a = answer.split(/\r?\n+/)[0]?.toLowerCase().trim() ?? '';
-  if (!a) return null;
-  if (/retainer/.test(a)) return 'retainer';
-  if (/aligner/.test(a)) return 'aligner';
-  if (/night[\s-]?guard/.test(a)) return 'night_guard';
-  if (/day[\s-]?guard/.test(a)) return 'day_guard';
-  if (/whitening\s*kit/.test(a)) return 'whitening_kit';
-  if (/whitening/.test(a)) return 'whitening_tray';
-  if (/missing\s*tooth/.test(a)) return 'missing_tooth';
-  if (/click[\s-]?in\s*veneer|veneer/.test(a)) return 'click_in_veneers';
-  return null;
-}

@@ -446,6 +446,12 @@ export function Arrival() {
     () => recognisedServiceTypes(stagedItems),
     [stagedItems]
   );
+  // Distinct catalogue ids staged so far — drives the picker's
+  // cart-aware suggestion carousel before a cart exists.
+  const stagedCatalogueIds = useMemo(
+    () => Array.from(new Set(stagedItems.map((it) => it.catalogue.id))),
+    [stagedItems]
+  );
 
   const eventTypeLabel = useMemo(() => {
     if (mode === 'appointment') return appointment?.event_type_label ?? null;
@@ -1427,8 +1433,7 @@ export function Arrival() {
       <CataloguePicker
         open={pickerOpen}
         onClose={() => setPickerOpen(false)}
-        intake={appointment?.intake ?? null}
-        eventTypeLabel={eventTypeLabel}
+        cartCatalogueIds={stagedCatalogueIds}
         onStage={(cat, qty, opts) =>
           setStagedItems((s) => [
             ...s,
