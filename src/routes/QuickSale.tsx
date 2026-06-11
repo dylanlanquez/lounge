@@ -194,8 +194,10 @@ export function QuickSale() {
                 </div>
                 <div style={{ marginTop: theme.space[4] }}>
                   <Button variant="secondary" onClick={() => setPickerOpen(true)}>
-                    <Plus size={18} />
-                    Add more products
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
+                      <Plus size={18} aria-hidden />
+                      Add more products
+                    </span>
                   </Button>
                 </div>
               </Card>
@@ -361,8 +363,10 @@ function CustomerCard({
           </Button>
         ) : (
           <Button variant="secondary" size="sm" onClick={onAdd}>
-            <UserPlus size={16} />
-            Add customer
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
+              <UserPlus size={16} aria-hidden />
+              Add customer
+            </span>
           </Button>
         )}
       </div>

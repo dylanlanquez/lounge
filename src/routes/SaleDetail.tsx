@@ -37,6 +37,16 @@ import { COUNTER_SALE_EMAIL, patientFullName, type PatientRow } from '../lib/que
 // mounts. The visit id is the route param (retail sales reuse the
 // visit/cart/payment substrate under the hood).
 
+// Button label + leading icon need their own gap: the Button component
+// wraps all children in a single span, so the leading icon must sit in
+// an inline-flex wrapper to space off the label (matches every other
+// icon button in the app, e.g. "Add tech note", "Print LWO").
+const btnInner = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: theme.space[2],
+} as const;
+
 // Compact, retail-friendly payment-method copy.
 function methodLabel(method: CartPaymentRow['method']): string {
   switch (method) {
@@ -315,25 +325,33 @@ export function SaleDetail() {
                   the profile link when a customer is attached. */}
               {!isWalkUp && patient ? (
                 <Button variant="secondary" onClick={() => navigate(`/patient/${patient.id}`)}>
-                  <UserRound size={16} />
-                  View profile
+                  <span style={btnInner}>
+                    <UserRound size={16} aria-hidden />
+                    View profile
+                  </span>
                 </Button>
               ) : null}
               {amountPaidPence > 0 ? (
                 <Button variant="secondary" onClick={() => setReceiptOpen(true)}>
-                  <Mail size={16} />
-                  Send receipt
+                  <span style={btnInner}>
+                    <Mail size={16} aria-hidden />
+                    Send receipt
+                  </span>
                 </Button>
               ) : null}
               {amountPaidPence > 0 ? (
                 <Button variant="secondary" onClick={() => setRefundOpen(true)}>
-                  <RotateCcw size={16} />
-                  Refund
+                  <span style={btnInner}>
+                    <RotateCcw size={16} aria-hidden />
+                    Refund
+                  </span>
                 </Button>
               ) : null}
               <Button variant="primary" onClick={() => navigate('/quick-sale')} showArrow>
-                <Plus size={16} />
-                New sale
+                <span style={btnInner}>
+                  <Plus size={16} aria-hidden />
+                  New sale
+                </span>
               </Button>
             </div>
 
