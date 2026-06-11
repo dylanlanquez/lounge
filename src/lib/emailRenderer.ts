@@ -194,14 +194,23 @@ export function parseFormatting(syntax: string): string {
   for (const line of lines) {
     if (line === '') {
       flushBuffer();
-      flushList();
+      // Don't flush the list on a blank line: blank lines between bullet
+      // items are cosmetic editor whitespace and must not break a list
+      // into separate one-item lists with big gaps. The list is flushed
+      // when a non-bullet line arrives, or at the end. Keep in lockstep
+      // with supabase/functions/_shared/emailRenderer.ts.
       emptyStreak++;
       continue;
     }
+    // A bullet that follows blank lines while a list is open continues
+    // that same list: absorb the blank gap (no spacers, no list break).
+    const continuingList = listItems.length > 0 && /^- (.+)$/.test(line);
     // Each empty line *beyond the first* in a streak becomes one
     // empty paragraph spacer — that's how the user buys extra
-    // vertical space by pressing Enter more than once.
-    if (emptyStreak > 1) {
+    // vertical space by pressing Enter more than once. Skipped when a
+    // bullet is continuing a list.
+    if (emptyStreak > 1 && !continuingList) {
+      flushList();
       for (let i = 0; i < emptyStreak - 1; i++) {
         blocks.push(`<p style="${STYLE_PARA}">&nbsp;</p>`);
       }

@@ -163,11 +163,20 @@ export function parseFormatting(syntax: string): string {
   for (const line of lines) {
     if (line === '') {
       flushBuffer();
-      flushList();
+      // Do NOT flush the list here. Blank lines between bullet items are
+      // cosmetic editor whitespace (staff routinely space out bullets
+      // when editing a template) and must not break a list into separate
+      // one-item lists with big gaps between them. The list is flushed
+      // when a non-bullet line arrives (below) or at the very end.
       emptyStreak++;
       continue;
     }
-    if (emptyStreak > 1) {
+    // A bullet that follows blank lines while a list is already open is a
+    // continuation of that same list: absorb the blank gap (no &nbsp
+    // spacers, no list break) so the bullets render tight.
+    const continuingList = listItems.length > 0 && /^- (.+)$/.test(line);
+    if (emptyStreak > 1 && !continuingList) {
+      flushList();
       for (let i = 0; i < emptyStreak - 1; i++) blocks.push(`<p style="${_STYLE_PARA}">&nbsp;</p>`);
     }
     emptyStreak = 0;
