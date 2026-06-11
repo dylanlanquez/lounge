@@ -23,6 +23,7 @@ import { LifetimeValueTab } from './LifetimeValueTab.tsx';
 import { OnlineOrdersTab } from './OnlineOrdersTab.tsx';
 import { OverviewTab as FinancialOverviewTab } from '../Financials/OverviewTab.tsx';
 import { SalesTab } from '../Financials/SalesTab.tsx';
+import { RetailSalesTab } from '../Financials/RetailSalesTab.tsx';
 import { DiscountsTab } from '../Financials/DiscountsTab.tsx';
 import { VoidsTab } from '../Financials/VoidsTab.tsx';
 import { AnomaliesTab } from '../Financials/AnomaliesTab.tsx';
@@ -53,6 +54,7 @@ type Tab =
   // ── Financial (gated by can_view_financials) ────────────────────
   | 'fin_overview'
   | 'sales'
+  | 'retail_sales'
   | 'cash_drawer'
   | 'discounts'
   | 'voids'
@@ -77,6 +79,7 @@ const OPERATIONAL_TABS: { value: Tab; label: string }[] = [
 const FINANCIAL_TABS: { value: Tab; label: string }[] = [
   { value: 'fin_overview', label: 'Financial overview' },
   { value: 'sales', label: 'Sales' },
+  { value: 'retail_sales', label: 'Retail sales' },
   { value: 'cash_drawer', label: 'Cash drawer' },
   { value: 'discounts', label: 'Discounts' },
   { value: 'voids', label: 'Voids' },
@@ -186,6 +189,8 @@ export function Reports() {
           <FinancialOverviewTab range={range} />
         ) : tab === 'sales' ? (
           <SalesTab range={range} />
+        ) : tab === 'retail_sales' ? (
+          <RetailSalesTab range={range} />
         ) : tab === 'cash_drawer' ? (
           <CashDrawerTab range={range} />
         ) : tab === 'discounts' ? (

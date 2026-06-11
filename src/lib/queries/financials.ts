@@ -900,3 +900,218 @@ export function useFinancialsSales(range: DateRange, filters: SalesFilters): Sal
 
   return { data, loading, error };
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Retail (Quick Sale) report
+//
+// Backs Reports → Retail sales. Retail Quick Sales are walk-ins whose
+// lng_walk_ins.service_type='retail'. We reuse the same visit-embed
+// shape as the Sales tab (it already embeds walk_in + cart + items +
+// payments) but promote the walk-in join to !inner and filter it to
+// 'retail' so only counter sales come back. Everything is aggregated
+// client-side, same posture as the rest of Reports.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface RetailTopProduct {
+  catalogue_id: string | null;
+  name: string;
+  units: number;
+  revenue_pence: number;
+}
+
+export interface RetailSaleRow {
+  visit_id: string;
+  sale_date: string;
+  customer: string;
+  items_summary: string;
+  total_pence: number;
+  cart_status: string;
+  payment_methods: string;
+}
+
+export interface RetailData {
+  sales_count: number; // retail carts in range
+  paid_count: number; // carts settled in full
+  revenue_pence: number; // sum of succeeded payments
+  average_sale_pence: number | null;
+  units_sold: number;
+  top_products: RetailTopProduct[];
+  rows: RetailSaleRow[];
+}
+
+interface RawRetailVisit {
+  id: string;
+  opened_at: string;
+  patient:
+    | { first_name: string | null; last_name: string | null }
+    | { first_name: string | null; last_name: string | null }[]
+    | null;
+  cart:
+    | {
+        id: string;
+        status: string;
+        subtotal_pence: number | null;
+        discount_pence: number | null;
+        total_pence: number | null;
+        items:
+          | { name: string; catalogue_id: string | null; quantity: number; line_total_pence: number; removed_at: string | null }[]
+          | null;
+        payments: { method: string; amount_pence: number; status: string }[] | null;
+      }
+    | {
+        id: string;
+        status: string;
+        subtotal_pence: number | null;
+        discount_pence: number | null;
+        total_pence: number | null;
+        items:
+          | { name: string; catalogue_id: string | null; quantity: number; line_total_pence: number; removed_at: string | null }[]
+          | null;
+        payments: { method: string; amount_pence: number; status: string }[] | null;
+      }[]
+    | null;
+}
+
+const RETAIL_METHOD_LABEL: Record<string, string> = {
+  cash: 'Cash',
+  card_terminal: 'Card',
+  card_moto: 'Card (phone)',
+  gift_card: 'Gift card',
+  account_credit: 'Account credit',
+  klarna: 'Klarna',
+};
+
+// Pure aggregation, exported for unit tests.
+export function aggregateRetail(visits: RawRetailVisit[]): RetailData {
+  const rows: RetailSaleRow[] = [];
+  let revenue_pence = 0;
+  let units_sold = 0;
+  const paidCartIds = new Set<string>();
+  const productAgg = new Map<string, RetailTopProduct>();
+
+  for (const v of visits) {
+    const cart = pickOne(v.cart);
+    if (!cart) continue;
+    const p = pickOne(v.patient);
+    const first = p?.first_name?.trim() ?? '';
+    const last = p?.last_name?.trim() ?? '';
+    // The anonymous Counter Sale system patient reads as a walk-up.
+    const customer =
+      first === 'Counter' && last === 'Sale'
+        ? 'Walk-up sale'
+        : `${first} ${last}`.trim() || 'Walk-up sale';
+
+    const items = (cart.items ?? []).filter((it) => !it.removed_at);
+    const succeeded = (cart.payments ?? []).filter((pay) => pay.status === 'succeeded');
+    revenue_pence += succeeded.reduce((s, pay) => s + pay.amount_pence, 0);
+    if (cart.status === 'paid') paidCartIds.add(cart.id);
+
+    for (const it of items) {
+      units_sold += it.quantity;
+      const key = it.catalogue_id ?? `__ad_hoc__${it.name}`;
+      const prior = productAgg.get(key);
+      if (prior) {
+        prior.units += it.quantity;
+        prior.revenue_pence += it.line_total_pence;
+      } else {
+        productAgg.set(key, {
+          catalogue_id: it.catalogue_id,
+          name: it.name,
+          units: it.quantity,
+          revenue_pence: it.line_total_pence,
+        });
+      }
+    }
+
+    const methods = Array.from(
+      new Set(succeeded.map((pay) => RETAIL_METHOD_LABEL[pay.method] ?? pay.method)),
+    );
+    rows.push({
+      visit_id: v.id,
+      sale_date: v.opened_at,
+      customer,
+      items_summary: items.length > 0 ? items.map((it) => it.name).join(', ') : '—',
+      total_pence: cart.total_pence ?? 0,
+      cart_status: cart.status,
+      payment_methods: methods.join(' + '),
+    });
+  }
+
+  // Newest sale first.
+  rows.sort((a, b) => (a.sale_date < b.sale_date ? 1 : a.sale_date > b.sale_date ? -1 : 0));
+  const top_products = Array.from(productAgg.values())
+    .sort((a, b) => b.revenue_pence - a.revenue_pence)
+    .slice(0, 8);
+  const paid_count = paidCartIds.size;
+
+  return {
+    sales_count: rows.length,
+    paid_count,
+    revenue_pence,
+    average_sale_pence: paid_count > 0 ? Math.round(revenue_pence / paid_count) : null,
+    units_sold,
+    top_products,
+    rows,
+  };
+}
+
+interface RetailResult {
+  data: RetailData | null;
+  loading: boolean;
+  error: string | null;
+}
+
+export function useFinancialsRetail(range: DateRange): RetailResult {
+  const [data, setData] = useState<RetailData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    const { fromIso, toIso } = dateRangeToUtcBounds(range);
+    (async () => {
+      try {
+        const visitsRes = await supabase
+          .from('lng_visits')
+          .select(
+            `id, opened_at,
+             patient:patients ( first_name, last_name ),
+             walk_in:lng_walk_ins!inner ( service_type ),
+             cart:lng_carts (
+               id, status, subtotal_pence, discount_pence, total_pence,
+               items:lng_cart_items ( name, catalogue_id, quantity, line_total_pence, removed_at ),
+               payments:lng_payments ( method, amount_pence, status )
+             )`,
+          )
+          .eq('walk_in.service_type', 'retail')
+          .gte('opened_at', fromIso)
+          .lte('opened_at', toIso);
+        if (cancelled) return;
+        if (visitsRes.error) throw new Error(`retail: ${visitsRes.error.message}`);
+        const visits = (visitsRes.data ?? []) as RawRetailVisit[];
+        const out = aggregateRetail(visits);
+        if (cancelled) return;
+        setData(out);
+        setLoading(false);
+      } catch (e: unknown) {
+        if (cancelled) return;
+        const message = e instanceof Error ? e.message : 'Could not load retail sales';
+        setError(message);
+        setLoading(false);
+        await logFailure({
+          source: 'financials.retail',
+          severity: 'error',
+          message,
+          context: { range },
+        });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [range]);
+
+  return { data, loading, error };
+}
