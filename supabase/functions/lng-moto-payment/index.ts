@@ -294,6 +294,12 @@ function mapOutcome(code?: string, declineCode?: string): { status: Outcome; mes
       return { status: 'requires_fallback', message: 'This card needs the patient to approve the payment themselves. Use Send payment link so they can confirm.', next_action: 'fallback' };
     case 'processing_error':
       return { status: 'failed', message: 'Something went wrong on the card network, not your end. Wait a moment and try again.', next_action: 'retry' };
+    case 'parameter_unknown':
+      // Stripe reports the MOTO flag as an unknown parameter until MOTO is
+      // enabled on the account. Until then, retrying cannot succeed, so send
+      // staff straight to the payment link. Once MOTO is granted this stops
+      // occurring.
+      return { status: 'requires_fallback', message: 'Phone card payments are not switched on for this account yet. Use Send payment link so the patient can pay.', next_action: 'fallback' };
     case 'card_declined':
     case 'generic_decline':
     case 'do_not_honor':
