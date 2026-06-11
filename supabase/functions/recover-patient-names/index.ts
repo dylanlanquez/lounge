@@ -180,7 +180,7 @@ async function recoverOne(
 ): Promise<Record<string, unknown>> {
   const { data: p } = await admin
     .from('patients')
-    .select('id, first_name, last_name, email, shopify_customer_id, portal_ship_name')
+    .select('id, first_name, last_name, email, shopify_customer_id')
     .eq('id', patientId)
     .maybeSingle();
   if (!p) return { patient_id: patientId, status: 'not_found' };
@@ -191,7 +191,6 @@ async function recoverOne(
     last_name: string | null;
     email: string | null;
     shopify_customer_id: string | null;
-    portal_ship_name: string | null;
   };
 
   const firstBlank = isBlankName(patient.first_name);
@@ -202,13 +201,13 @@ async function recoverOne(
 
   const candidates: NameCandidate[] = [];
 
-  // 0) portal_ship_name — seeded from the order shipping address at
-  // creation. Free internal source, no API. Skip if it's just the email
-  // or carries no letters.
-  const ship = (patient.portal_ship_name ?? '').trim();
-  if (ship && ship.toLowerCase() !== (patient.email ?? '').trim().toLowerCase() && /[a-z]/i.test(ship)) {
-    candidates.push({ ...splitName(ship), source: 'portal_ship_name' });
-  }
+  // IMPORTANT: only ACCOUNT-HOLDER name sources are allowed. A shipping
+  // or billing ADDRESS name is the recipient, which is often a different
+  // person (gift orders, a relative), so it must NEVER be used as the
+  // patient's name (Dylan, 11 Jun 2026). Permitted sources: the customer
+  // their own card billing name (the cardholder) and the Shopify customer
+  // PROFILE name. portal_ship_name and any order/default-address name are
+  // deliberately excluded.
 
   // 1) Stripe billing name from the most recent deposit PaymentIntent.
   if (allowStripe && STRIPE_SECRET_KEY) {
@@ -413,64 +412,22 @@ async function stripeNameByEmail(email: string): Promise<{ first: string; last: 
   return null;
 }
 
-// ── Shopify: order addresses (by email) + customer record ──
-// Orders-by-email first: for express/guest checkouts the customer record
-// is nameless and carries no linked orders, but the order itself holds
-// the real name on its shipping/billing address.
+// ── Shopify: ACCOUNT-HOLDER name only ──
+// Only the customer PROFILE first/last name (the account holder). Order
+// and default-ADDRESS names are deliberately NOT used: an address name
+// is the recipient, who may be someone other than the patient.
 async function shopifyNameCandidates(
   customerId: string | null,
-  email: string | null,
+  _email: string | null,
 ): Promise<NameCandidate[]> {
   const cands: NameCandidate[] = [];
-
-  if (email && email.trim()) {
-    // Escape double-quotes in the search term.
-    const safe = email.trim().replace(/"/g, '\\"');
-    const data = await shopifyGraphql(
-      `query($q: String!) {
-        orders(first: 5, query: $q, sortKey: CREATED_AT, reverse: true) {
-          nodes {
-            shippingAddress { firstName lastName name }
-            billingAddress { firstName lastName name }
-            customer { firstName lastName }
-          }
-        }
-      }`,
-      { q: `email:"${safe}"` },
-    );
-    for (const o of data?.data?.orders?.nodes ?? []) {
-      if (o.shippingAddress) pushAddressCand(cands, o.shippingAddress.firstName, o.shippingAddress.lastName, o.shippingAddress.name, 'shopify_order_shipping');
-      if (o.billingAddress) pushAddressCand(cands, o.billingAddress.firstName, o.billingAddress.lastName, o.billingAddress.name, 'shopify_order_billing');
-      if (o.customer) pushAddressCand(cands, o.customer.firstName, o.customer.lastName, null, 'shopify_order_customer');
-    }
-    if (pickName(cands)) return cands;
-  }
-
-  // Fallback: the customer record + default address + its linked orders.
-  if (customerId) {
-    const data = await shopifyGraphql(
-      `query($id: ID!) {
-        customer(id: $id) {
-          firstName lastName
-          defaultAddress { firstName lastName name }
-          orders(first: 5, sortKey: CREATED_AT, reverse: true) {
-            nodes { shippingAddress { firstName lastName name } billingAddress { firstName lastName name } }
-          }
-        }
-      }`,
-      { id: `gid://shopify/Customer/${customerId}` },
-    );
-    const c = data?.data?.customer;
-    if (c) {
-      pushAddressCand(cands, c.firstName, c.lastName, null, 'shopify_customer');
-      if (c.defaultAddress) pushAddressCand(cands, c.defaultAddress.firstName, c.defaultAddress.lastName, c.defaultAddress.name, 'shopify_default_address');
-      for (const o of c.orders?.nodes ?? []) {
-        if (o.shippingAddress) pushAddressCand(cands, o.shippingAddress.firstName, o.shippingAddress.lastName, o.shippingAddress.name, 'shopify_order_shipping');
-        if (o.billingAddress) pushAddressCand(cands, o.billingAddress.firstName, o.billingAddress.lastName, o.billingAddress.name, 'shopify_order_billing');
-      }
-    }
-  }
-
+  if (!customerId) return cands;
+  const data = await shopifyGraphql(
+    `query($id: ID!) { customer(id: $id) { firstName lastName } }`,
+    { id: `gid://shopify/Customer/${customerId}` },
+  );
+  const c = data?.data?.customer;
+  if (c) pushAddressCand(cands, c.firstName, c.lastName, null, 'shopify_customer');
   return cands;
 }
 
