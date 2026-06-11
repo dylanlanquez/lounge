@@ -39,3 +39,18 @@ verify_jwt = false
 #   is the actual gate.
 [functions.meet-attendance-sweep]
 verify_jwt = false
+
+# twilio-sms-status
+#   Public delivery-status webhook Twilio POSTs to on every SMS state
+#   change (queued -> sent -> delivered / failed). Twilio sends no
+#   Authorization header, so the platform's `verify_jwt = true`
+#   rejects every callback with 401 and the row stays stuck on
+#   'pending' forever (the "Sending..." panel never resolves). The
+#   function's own auth is the gate: the unguessable project subdomain
+#   in the URL plus a twilio_message_sid lookup (it only ever updates
+#   rows we already created), and an optional X-Twilio-Signature check
+#   when TWILIO_AUTH_TOKEN is set. This was deployed with
+#   --no-verify-jwt originally; pinning it here stops a plain redeploy
+#   silently reverting it to true (which is what broke delivery status).
+[functions.twilio-sms-status]
+verify_jwt = false
