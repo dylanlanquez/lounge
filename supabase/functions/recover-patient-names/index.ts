@@ -104,6 +104,47 @@ Deno.serve(async (req) => {
       return json(200, { ok: true, ...result });
     }
 
+    if (body.mode === 'stripe_shape') {
+      // Sample recent Stripe charges to see whether billing_details
+      // carries name + email (would make an enumeration recovery viable).
+      const res = await fetch('https://api.stripe.com/v1/charges?limit=20', {
+        headers: { Authorization: `Bearer ${STRIPE_SECRET_KEY}` },
+      });
+      const data = res.ok ? await res.json() : { error: res.status };
+      const rows = (data?.data ?? []).map((c: any) => ({
+        created: c.created,
+        bemail: c?.billing_details?.email ?? null,
+        bname: c?.billing_details?.name ?? null,
+        remail: c?.receipt_email ?? null,
+      }));
+      const withName = rows.filter((r: any) => r.bname).length;
+      const withEmailAndName = rows.filter((r: any) => r.bname && r.bemail).length;
+      return json(200, { ok: true, sampled: rows.length, withName, withEmailAndName, sample: rows.slice(0, 8) });
+    }
+
+    if (body.mode === 'diag') {
+      // Diagnostics: granted Shopify scopes + per-customer order counts,
+      // so we can tell "no Shopify order at all" from "orders hidden by
+      // the 60-day / read_all_orders limit".
+      const cid = body.patient_id ?? null;
+      const scopesRes = await fetch(
+        `https://${SHOPIFY_SHOP}/admin/oauth/access_scopes.json`,
+        { headers: { 'X-Shopify-Access-Token': SHOPIFY_TOKEN } },
+      );
+      const scopes = scopesRes.ok ? await scopesRes.json() : { error: scopesRes.status };
+      let customer: unknown = null;
+      if (cid) {
+        const d = await shopifyGraphql(
+          `query($id: ID!){ customer(id:$id){ numberOfOrders firstName lastName email
+             orders(first:3, sortKey: CREATED_AT, reverse:true){ nodes{ createdAt
+               shippingAddress{ firstName lastName name } billingAddress{ firstName lastName name } } } } }`,
+          { id: `gid://shopify/Customer/${cid}` },
+        );
+        customer = d?.data?.customer ?? d?.errors ?? null;
+      }
+      return json(200, { ok: true, shop: SHOPIFY_SHOP, scopes, customer });
+    }
+
     if (body.mode === 'probe') {
       // Debug: name candidates for a customer id and/or email, across
       // Shopify (orders/customer) and Stripe (charges by email).
