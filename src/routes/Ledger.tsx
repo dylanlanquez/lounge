@@ -72,6 +72,7 @@ import { LEDGER_EXTRA_PRESETS, type DateRange } from '../lib/dateRange.ts';
 const STATUS_OPTIONS: ReadonlyArray<{ value: LedgerStatus; label: string }> = [
   { value: 'booked', label: 'Booked' },
   { value: 'arrived', label: 'Arrived' },
+  { value: 'draft', label: 'Draft (unpaid sale)' },
   { value: 'joined', label: 'Joined' },
   { value: 'complete', label: 'Complete' },
   { value: 'no_show', label: 'No-show' },
@@ -136,6 +137,7 @@ const STATUS_TO_TONE: Record<LedgerStatus, StatusTone> = {
   rescheduled: 'cancelled',
   unsuitable: 'unsuitable',
   ended_early: 'unsuitable',
+  draft: 'neutral',
 };
 
 export function Ledger() {
@@ -614,7 +616,11 @@ function Row({ row, onPick }: { row: LedgerRow; onPick: () => void }) {
     : null;
   const serviceLabel =
     composedLabel ?? humaniseEventTypeLabel(row.service_label) ?? defaultServiceLabel(row);
-  const tone = STATUS_TO_TONE[row.status];
+  // A retail Quick Sale that's started but unpaid reads as "Draft", not
+  // the clinical "Arrived" — it hasn't been followed through to payment.
+  const isDraftSale = row.service_type === 'retail' && row.status === 'arrived';
+  const statusLabel = isDraftSale ? 'Draft' : humaniseLedgerStatus(row.status);
+  const tone = isDraftSale ? 'neutral' : STATUS_TO_TONE[row.status];
   // Source label + glyph honour created_via — Checkpoint bookings
   // are stored as source='native' but should read as Checkpoint
   // with the sparkles glyph, matching the AppointmentDetail hero.
@@ -731,7 +737,7 @@ function Row({ row, onPick }: { row: LedgerRow; onPick: () => void }) {
           }}
         >
           <StatusPill tone={tone} size="sm">
-            {humaniseLedgerStatus(row.status)}
+            {statusLabel}
           </StatusPill>
           <ChevronRight
             size={16}
@@ -852,7 +858,7 @@ function Row({ row, onPick }: { row: LedgerRow; onPick: () => void }) {
         </div>
         <div style={{ justifySelf: 'end' }}>
           <StatusPill tone={tone} size="sm">
-            {humaniseLedgerStatus(row.status)}
+            {statusLabel}
           </StatusPill>
         </div>
       </div>

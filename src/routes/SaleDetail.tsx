@@ -13,6 +13,7 @@ import {
   type StatusTone,
 } from '../components/index.ts';
 import { CartLineItem } from '../components/CartLineItem/CartLineItem.tsx';
+import { CataloguePicker } from '../components/CataloguePicker/CataloguePicker.tsx';
 import { RefundSheet } from '../components/RefundSheet/RefundSheet.tsx';
 import { SendReceiptSheet } from '../components/SendReceiptSheet/SendReceiptSheet.tsx';
 import { TopBar } from '../components/TopBar/TopBar.tsx';
@@ -22,7 +23,13 @@ import { theme } from '../theme/index.ts';
 import { useAuth } from '../lib/auth.tsx';
 import { useIsMobile } from '../lib/useIsMobile.ts';
 import { endVisitEarly, useVisitDetail } from '../lib/queries/visits.ts';
-import { useCart, formatPence } from '../lib/queries/carts.ts';
+import {
+  useCart,
+  formatPence,
+  computeCartSubtotal,
+  removeCartLine,
+  updateCartItemQuantity,
+} from '../lib/queries/carts.ts';
 import {
   useCartPayments,
   useVisitPaidStatus,
@@ -88,7 +95,7 @@ export function SaleDetail() {
   const { id } = useParams<{ id: string }>();
   const { user, loading: authLoading } = useAuth();
   const { visit, patient, loading: visitLoading } = useVisitDetail(id);
-  const { cart, items, loading: cartLoading } = useCart(id);
+  const { cart, items, loading: cartLoading, refresh: refreshCart } = useCart(id);
   const { data: payments } = useCartPayments(cart?.id ?? null);
   const { data: paidStatus, refresh: refreshPaid } = useVisitPaidStatus(id);
   const { account: currentAccount } = useCurrentAccount();
@@ -99,6 +106,8 @@ export function SaleDetail() {
   const [receiptOpen, setReceiptOpen] = useState(false);
   const [discardBusy, setDiscardBusy] = useState(false);
   const [discardError, setDiscardError] = useState<string | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [busyItem, setBusyItem] = useState<string | null>(null);
 
   if (authLoading) return null;
   if (!user) return <Navigate to="/sign-in" replace />;
@@ -106,12 +115,15 @@ export function SaleDetail() {
   const loading = visitLoading || cartLoading;
 
   const succeededPayments = (payments ?? []).filter((p) => p.status === 'succeeded');
-  const totalPence = cart?.total_pence ?? 0;
+  // Derive the total from the live (non-removed) lines so it tracks edits
+  // immediately, rather than the cart's stored total which lags a soft
+  // delete until the subtotal trigger fires.
+  const totalPence = computeCartSubtotal(items, cart?.discount_pence ?? 0);
   const amountPaidPence = paidStatus?.amount_paid_pence ?? 0;
   const paidState = paidStatus?.paid_status ?? null;
-  // Only 'paid' (or a £0 free sale) is fully settled. 'owed' means money
-  // is owed back (overpaid); 'partially_paid'/null is still outstanding.
-  const isPaid = paidState === 'paid' || paidState === 'free_visit';
+  // Only 'paid' is fully settled. 'owed' is overpaid (refund due),
+  // 'partially_paid'/'free_visit'/null is not a completed sale.
+  const isPaid = paidState === 'paid';
   const outstandingPence = Math.max(0, totalPence - amountPaidPence);
   const hasPayments = amountPaidPence > 0;
 
@@ -130,7 +142,7 @@ export function SaleDetail() {
     ? { tone: 'complete', label: 'Paid in full' }
     : hasPayments
       ? { tone: 'pending', label: `Part paid · ${formatPence(outstandingPence)} due` }
-      : { tone: 'pending', label: `${formatPence(outstandingPence)} due` };
+      : { tone: 'neutral', label: 'Draft' };
 
   // Discard an open, unpaid sale (rang up but never paid). endVisitEarly
   // soft-deletes the cart lines and flips the visit to 'ended_early', so
@@ -150,6 +162,44 @@ export function SaleDetail() {
     } catch (e: unknown) {
       setDiscardError(e instanceof Error ? e.message : 'Could not discard the sale.');
       setDiscardBusy(false);
+    }
+  };
+
+  // While the sale is an unpaid draft (open visit, nothing collected) the
+  // basket is editable — add more products, change a quantity, or remove
+  // a line. Once any payment lands or the visit is finalised, the lines
+  // are frozen (refund instead). Reuses the clinical visit page's cart
+  // helpers.
+  const editable = !!cart && !loading && !hasPayments && visit?.status === 'arrived';
+  const incLine = async (lineId: string, qty: number) => {
+    setBusyItem(lineId);
+    try {
+      await updateCartItemQuantity(lineId, qty + 1);
+      refreshCart();
+      refreshPaid();
+    } finally {
+      setBusyItem(null);
+    }
+  };
+  const decLine = async (lineId: string, qty: number) => {
+    setBusyItem(lineId);
+    try {
+      if (qty > 1) await updateCartItemQuantity(lineId, qty - 1);
+      else await removeCartLine({ itemId: lineId, reason: 'mistake' });
+      refreshCart();
+      refreshPaid();
+    } finally {
+      setBusyItem(null);
+    }
+  };
+  const removeLine = async (lineId: string) => {
+    setBusyItem(lineId);
+    try {
+      await removeCartLine({ itemId: lineId, reason: 'mistake' });
+      refreshCart();
+      refreshPaid();
+    } finally {
+      setBusyItem(null);
     }
   };
 
@@ -317,13 +367,24 @@ export function SaleDetail() {
                     unitPricePence={it.unit_price_pence}
                     lineTotalPence={it.line_total_pence}
                     thumbnailUrl={it.image_url}
-                    onIncrement={() => {}}
-                    onDecrement={() => {}}
-                    onRemove={() => {}}
-                    readOnly
+                    disabled={busyItem === it.id}
+                    onIncrement={() => incLine(it.id, it.quantity)}
+                    onDecrement={() => decLine(it.id, it.quantity)}
+                    onRemove={() => removeLine(it.id)}
+                    readOnly={!editable}
                   />
                 ))}
               </div>
+              {editable ? (
+                <div style={{ marginTop: theme.space[4] }}>
+                  <Button variant="secondary" onClick={() => setPickerOpen(true)}>
+                    <span style={btnInner}>
+                      <Plus size={18} aria-hidden />
+                      Add products
+                    </span>
+                  </Button>
+                </div>
+              ) : null}
               <div
                 style={{
                   marginTop: theme.space[5],
@@ -429,6 +490,22 @@ export function SaleDetail() {
         patientEmail={receiptEmail}
         patientPhone={receiptPhone}
       />
+
+      {cart ? (
+        <CataloguePicker
+          open={pickerOpen}
+          onClose={() => setPickerOpen(false)}
+          productsOnly
+          cartId={cart.id}
+          cartCatalogueIds={items
+            .map((it) => it.catalogue_id)
+            .filter((cid): cid is string => cid != null)}
+          onItemAdded={() => {
+            refreshCart();
+            refreshPaid();
+          }}
+        />
+      ) : null}
 
       {discardError ? (
         <div
