@@ -177,7 +177,11 @@ export function parseFormatting(syntax: string): string {
     const continuingList = listItems.length > 0 && /^- (.+)$/.test(line);
     if (emptyStreak > 1 && !continuingList) {
       flushList();
-      for (let i = 0; i < emptyStreak - 1; i++) blocks.push(`<p style="${_STYLE_PARA}">&nbsp;</p>`);
+      // Cap intentional extra spacing at a SINGLE blank line. A run of
+      // blank lines from sloppy editing must never open a chasm between
+      // paragraphs (looks broken); one blank line of breathing room is
+      // the most a streak can buy.
+      blocks.push(`<p style="${_STYLE_PARA}">&nbsp;</p>`);
     }
     emptyStreak = 0;
     if (/^---+$/.test(line.trim())) {

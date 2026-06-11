@@ -211,9 +211,10 @@ export function parseFormatting(syntax: string): string {
     // bullet is continuing a list.
     if (emptyStreak > 1 && !continuingList) {
       flushList();
-      for (let i = 0; i < emptyStreak - 1; i++) {
-        blocks.push(`<p style="${STYLE_PARA}">&nbsp;</p>`);
-      }
+      // Cap intentional extra spacing at a SINGLE blank line so a run of
+      // blank lines from sloppy editing never opens a chasm between
+      // paragraphs. Keep in lockstep with the edge _shared parser.
+      blocks.push(`<p style="${STYLE_PARA}">&nbsp;</p>`);
     }
     emptyStreak = 0;
 
