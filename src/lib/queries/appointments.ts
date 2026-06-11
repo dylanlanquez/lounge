@@ -133,10 +133,21 @@ export function properCase(name: string | null | undefined): string {
     .join('');
 }
 
+// True when the stored name is the legacy "Customer" Shopify placeholder
+// (first = "Customer", no last name) or entirely blank, so it carries no
+// identifying information.
+function isPlaceholderPatientName(first: string, last: string): boolean {
+  if (!first && !last) return true;
+  return first.toLowerCase() === 'customer' && last.length === 0;
+}
+
 export function patientDisplayName(row: AppointmentRow): string {
   const first = properCase(row.patient_first_name);
   const last = properCase(row.patient_last_name);
-  if (!first && !last) return 'Patient';
+  if (isPlaceholderPatientName(first, last)) {
+    const email = row.patient_email?.trim();
+    return email || 'Patient';
+  }
   return `${first} ${last.slice(0, 1)}${last.slice(0, 1) ? '.' : ''}`.trim();
 }
 
@@ -231,7 +242,10 @@ export function humaniseStatus(status: AppointmentRow['status']): string {
 export function patientFullDisplayName(row: AppointmentRow): string {
   const first = properCase(row.patient_first_name);
   const last = properCase(row.patient_last_name);
-  if (!first && !last) return 'Patient';
+  if (isPlaceholderPatientName(first, last)) {
+    const email = row.patient_email?.trim();
+    return email || 'Patient';
+  }
   return `${first} ${last}`.trim();
 }
 

@@ -641,11 +641,13 @@ export function patientFullName(
 ): string {
   const first = properCase(p.first_name);
   const last = properCase(p.last_name);
-  const isPlaceholder =
-    first.toLowerCase() === 'customer' && last.length === 0;
+  const combined = `${first} ${last}`.trim();
   const email = p.email?.trim();
+  // A blank name, or the legacy "Customer" Shopify placeholder, carries
+  // no identifying info, so show the email instead when we have one.
+  const isPlaceholder = combined === '' || (first.toLowerCase() === 'customer' && last.length === 0);
   if (isPlaceholder && email) return email;
-  return `${first} ${last}`.trim();
+  return combined;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

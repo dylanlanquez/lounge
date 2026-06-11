@@ -37,6 +37,7 @@ import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supa
 import { getValidAccessToken, type MeetHostRow } from '../_shared/meetHostToken.ts';
 import { invokeAppointmentConfirmation } from '../_shared/invokeAppointmentConfirmation.ts';
 import { resolveWidgetFullPricePence } from '../_shared/widgetFullPrice.ts';
+import { isPlaceholderName } from '../_shared/patientName.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -644,8 +645,12 @@ Deno.serve(async (req) => {
       patientId = (existing as { id: string }).id;
       const cur = existing as { first_name: string | null; last_name: string | null; phone: string | null };
       const patch: Record<string, string> = {};
-      if (cur.first_name == null && firstName) patch.first_name = firstName;
-      if (cur.last_name == null && lastName) patch.last_name = lastName;
+      // Fill-blanks, but a placeholder ("Customer"/"Patient") or an
+      // empty-string name counts as blank — otherwise a real name the
+      // customer just typed into the widget is silently discarded over
+      // a Shopify-seeded placeholder. See _shared/patientName.ts.
+      if (isPlaceholderName(cur.first_name) && firstName) patch.first_name = firstName;
+      if (isPlaceholderName(cur.last_name) && lastName) patch.last_name = lastName;
       if (cur.phone == null && phone) patch.phone = phone;
       if (Object.keys(patch).length > 0) {
         await supabase.from('patients').update(patch).eq('id', patientId);
@@ -663,8 +668,9 @@ Deno.serve(async (req) => {
       patientId = (existingByPhone as { id: string }).id;
       const cur = existingByPhone as { first_name: string | null; last_name: string | null; email: string | null };
       const patch: Record<string, string> = {};
-      if (cur.first_name == null && firstName) patch.first_name = firstName;
-      if (cur.last_name == null && lastName) patch.last_name = lastName;
+      // Same placeholder-aware fill-blanks as the email-match branch.
+      if (isPlaceholderName(cur.first_name) && firstName) patch.first_name = firstName;
+      if (isPlaceholderName(cur.last_name) && lastName) patch.last_name = lastName;
       if (cur.email == null && email) patch.email = email;
       if (Object.keys(patch).length > 0) {
         await supabase.from('patients').update(patch).eq('id', patientId);
@@ -678,7 +684,10 @@ Deno.serve(async (req) => {
       .insert({
         account_id: accountId,
         location_id: resolvedLocationId,
-        first_name: firstName || 'Patient',
+        // first_name/last_name are NOT NULL. The widget form requires a
+        // name, so firstName is present here; write it straight rather
+        // than masking a (theoretical) blank with a fake 'Patient'.
+        first_name: firstName,
         last_name: lastName,
         email: email || null,
         phone: phone || null,
