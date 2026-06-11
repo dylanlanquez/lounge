@@ -226,23 +226,15 @@ async function recoverOne(
 
   const picked = pickName(candidates);
   if (!picked) {
-    // Nothing recoverable. Clean the 'Customer' placeholder to '' so the
-    // row reads honestly (the UI shows the email). Only touch a
-    // placeholder first name; never wipe a real value.
-    const patch: Record<string, string> = {};
-    if (patient.first_name != null && patient.first_name.trim() !== '' && firstBlank) patch.first_name = '';
-    if (Object.keys(patch).length > 0) await admin.from('patients').update(patch).eq('id', patientId);
-    return { patient_id: patientId, status: 'no_name_found', cleaned: Object.keys(patch).length > 0 };
+    // Nothing recoverable from an account-holder source. Leave the row
+    // exactly as-is (per Dylan: leave it if we can't fix it). The UI
+    // already shows the email instead of the placeholder.
+    return { patient_id: patientId, status: 'no_name_found' };
   }
 
   const patch: Record<string, string> = {};
   if (firstBlank && picked.first.trim() !== '') patch.first_name = picked.first.trim();
   if (lastBlank && picked.last.trim() !== '') patch.last_name = picked.last.trim();
-  // If we found a real first name but the placeholder first was 'Customer'
-  // and the source had no last name, also clear a leftover placeholder.
-  if (firstBlank && !('first_name' in patch) && patient.first_name && patient.first_name.trim() !== '') {
-    patch.first_name = '';
-  }
   if (Object.keys(patch).length === 0) {
     return { patient_id: patientId, status: 'no_change', source: picked.source };
   }
@@ -284,22 +276,17 @@ async function recoverBulk(
   }[];
 
   let recovered = 0;
-  let cleaned = 0;
   let noName = 0;
   for (const row of list) {
     const r = await recoverOne(admin, row.id, false);
     if (r.status === 'recovered') recovered++;
-    else if (r.status === 'no_name_found') {
-      noName++;
-      if (r.cleaned) cleaned++;
-    }
+    else if (r.status === 'no_name_found') noName++;
   }
 
   const nextAfterId = list.length === limit ? list[list.length - 1].id : null;
   return {
     processed: list.length,
     recovered,
-    cleaned,
     no_name_found: noName,
     next_after_id: nextAfterId,
     done: nextAfterId === null,
