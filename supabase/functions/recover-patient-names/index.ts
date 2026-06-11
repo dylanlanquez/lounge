@@ -58,9 +58,11 @@ function normaliseShop(raw: string): string {
 }
 
 // ── name helpers (mirror _shared/patientName.ts + the webhook) ──
+// Placeholder / non-name tokens that must never be written as a real
+// name. Includes the Shopify guest-shell name "Anonymous Customer".
+const JUNK_NAME_TOKENS = new Set(['', 'customer', 'patient', 'anonymous', 'test', 'guest', 'n/a', 'na', 'unknown']);
 function isBlankName(value: string | null | undefined): boolean {
-  const v = (value ?? '').trim().toLowerCase();
-  return v === '' || v === 'customer' || v === 'patient';
+  return JUNK_NAME_TOKENS.has((value ?? '').trim().toLowerCase());
 }
 function splitName(name: string | undefined | null): { first: string; last: string } {
   const parts = (name ?? '').trim().split(/\s+/).filter(Boolean);
@@ -389,8 +391,11 @@ async function harvestFromOrders(
       const c = o.customer;
       const id = c?.id ? String(c.id).split('/').pop() : null;
       if (!id || byId.has(id)) continue;
-      const first = (c.firstName ?? '').trim();
-      const last = (c.lastName ?? '').trim();
+      // Drop placeholder tokens ('Anonymous', 'Customer', etc.) per
+      // component so a Shopify guest shell ("Anonymous Customer") never
+      // becomes a patient name.
+      const first = isBlankName(c.firstName) ? '' : (c.firstName ?? '').trim();
+      const last = isBlankName(c.lastName) ? '' : (c.lastName ?? '').trim();
       if (!first && !last) continue;
       byId.set(id, { first, last });
     }
