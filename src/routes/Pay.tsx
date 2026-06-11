@@ -4,8 +4,9 @@ import { Banknote, CreditCard, ShoppingBag } from 'lucide-react';
 import { BOTTOM_NAV_HEIGHT } from '../components/BottomNav/BottomNav.tsx';
 import { KIOSK_STATUS_BAR_HEIGHT } from '../components/KioskStatusBar/KioskStatusBar.tsx';
 import { useIsMobile } from '../lib/useIsMobile.ts';
-import { BottomSheet, Breadcrumb, Button, Card, EmptyState, Input, Skeleton, StatusPill, Toast } from '../components/index.ts';
+import { BottomSheet, Breadcrumb, Button, Card, EmptyState, Input, SegmentedControl, Skeleton, StatusPill, Toast } from '../components/index.ts';
 import { TerminalPaymentModal } from '../components/TerminalPaymentModal/TerminalPaymentModal.tsx';
+import { MotoPaymentModal } from '../components/MotoPaymentModal/MotoPaymentModal.tsx';
 import { BNPLHelper, type BnplProvider } from '../components/BNPLHelper/BNPLHelper.tsx';
 import { KlarnaInStoreModal } from '../components/KlarnaInStoreModal/KlarnaInStoreModal.tsx';
 import { theme } from '../theme/index.ts';
@@ -99,6 +100,12 @@ export function Pay() {
   const [receiptChannel, setReceiptChannel] = useState<'email' | 'sms' | 'none'>('email');
   const [receiptRecipient, setReceiptRecipient] = useState('');
   const [terminalOpen, setTerminalOpen] = useState(false);
+  // Collection mode. 'in_person' is the existing S700 reader flow,
+  // unchanged. 'phone' swaps the method picker for the MOTO (card not
+  // present) Elements modal. The moto flag is set server-side only on
+  // the 'phone' path; the in-person path never sets it.
+  const [payMode, setPayMode] = useState<'in_person' | 'phone'>('in_person');
+  const [motoOpen, setMotoOpen] = useState(false);
   const [bnplOpen, setBnplOpen] = useState(false);
   // Klarna goes through the native In-Store API now (its own QR +
   // payment_link modal) rather than the virtual-Visa-via-S700 path
@@ -773,6 +780,19 @@ export function Pay() {
               onChange={setChargeAmountText}
             />
 
+            {/* Collection mode: In person (S700 reader) or Over the
+                phone (MOTO card entry). Defaults to in person; the
+                in-person branch below is the original picker, byte for
+                byte. The moto flag is only ever set on the phone path. */}
+            <SegmentedControl<'in_person' | 'phone'>
+              value={payMode}
+              onChange={setPayMode}
+              options={[
+                { value: 'in_person', label: 'In person' },
+                { value: 'phone', label: 'Over the phone' },
+              ]}
+            />
+
             {/* Method picker. Each card's label reflects the live
                 chargeAmountPence so the operator can see in plain
                 text exactly what the next tap will charge. Cards
@@ -780,6 +800,8 @@ export function Pay() {
                 so an accidental tap can't push something unexpected
                 through. */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
+              {payMode === 'in_person' ? (
+                <>
               <MethodCard
                 icon={<CreditCard size={20} />}
                 title="Card"
@@ -820,6 +842,16 @@ export function Pay() {
                 onClick={() => openBnpl('clearpay')}
                 disabled={!reader || chargeAmountPence <= 0}
               />
+                </>
+              ) : (
+                <MethodCard
+                  icon={<CreditCard size={20} />}
+                  title="Card over the phone"
+                  description={`Charge ${formatPence(chargeAmountPence)} to a card while the patient is on the phone`}
+                  onClick={() => setMotoOpen(true)}
+                  disabled={chargeAmountPence <= 0}
+                />
+              )}
             </div>
           </div>
         ) : stage === 'cash' ? (
@@ -1000,6 +1032,29 @@ export function Pay() {
           onSucceeded={(pid) => {
             setPaymentId(pid);
             setKlarnaOpen(false);
+            refreshPaid();
+            if (willClearBill) {
+              setStage('success');
+            } else {
+              setChargeAmountText('');
+              setStage('choose');
+            }
+          }}
+        />
+      ) : null}
+
+      {/* MOTO (over the phone) modal. Rendered outside the reader
+          guard because a card-not-present charge needs no S700; cart
+          is still required for the visit linkage. */}
+      {cart ? (
+        <MotoPaymentModal
+          open={motoOpen}
+          onClose={() => setMotoOpen(false)}
+          visitId={visit?.id ?? ''}
+          amountPence={chargeAmountPence}
+          onSucceeded={(pid) => {
+            setPaymentId(pid);
+            setMotoOpen(false);
             refreshPaid();
             if (willClearBill) {
               setStage('success');
