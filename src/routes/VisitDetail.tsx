@@ -1517,6 +1517,11 @@ export function VisitDetail() {
           <p style={{ color: theme.color.inkMuted }}>Loading appointment…</p>
         ) : !visit ? (
           <EmptyState title="Appointment not found" description="That appointment no longer exists or you do not have access." />
+        ) : appointment?.service_type === 'retail' ? (
+          // Retail Quick Sale: this is a point-of-sale receipt, not a
+          // clinical visit. Send it to the purpose-built sale view so no
+          // clinical chrome (waivers, LWO, fulfilment) ever mounts.
+          <Navigate to={`/sale/${visit.id}`} replace />
         ) : (
           <>
             {/* Unified hero — same shape AppointmentDetail uses, fed

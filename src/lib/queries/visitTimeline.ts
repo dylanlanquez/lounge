@@ -391,6 +391,7 @@ export function useVisitTimeline(visitId: string | null): UseVisitTimelineResult
           cartDiscountEvents,
           paymentEvents,
           patientEventsBundle,
+          walkInServiceType,
         ] = await Promise.all([
           fetchAppointmentEvents(visit),
           fetchWaiverEvents(visit),
@@ -398,8 +399,16 @@ export function useVisitTimeline(visitId: string | null): UseVisitTimelineResult
           fetchCartDiscountEvents(visit.id),
           fetchPaymentEvents(visit.id),
           fetchPatientEvents(visit),
+          fetchWalkInServiceType(visit),
         ]);
         const patientEvents = patientEventsBundle.events;
+        // Retail Quick Sale: the lifecycle reads "Sale started ->
+        // product added -> payment captured", so we drop the clinical
+        // "Walk-in arrived / Walked in off the street" and "Visit
+        // complete / Passed to patient on the day" synth events (the
+        // latter is also timestamped at sale creation, before payment,
+        // so it would sort out of order).
+        const isRetail = walkInServiceType === 'retail';
 
         if (cancelled) return;
 
@@ -419,20 +428,22 @@ export function useVisitTimeline(visitId: string | null): UseVisitTimelineResult
         const arrivalDetail = visit.arrival_type === 'walk_in'
           ? 'Walked in off the street'
           : 'Arrived for a scheduled appointment';
-        const visitOwnEvents: RawTimelineEvent[] = [
-          {
-            id: `visit-${visit.id}-opened`,
-            type: 'visit_opened',
-            timestamp: visit.opened_at,
-            title:
-              visit.arrival_type === 'walk_in'
-                ? 'Walk-in arrived'
-                : 'Patient checked in',
-            detail: arrivalDetail,
-            actorAccountId: visit.receptionist_id,
-            hint: 'check',
-          },
-        ];
+        const visitOwnEvents: RawTimelineEvent[] = isRetail
+          ? []
+          : [
+              {
+                id: `visit-${visit.id}-opened`,
+                type: 'visit_opened',
+                timestamp: visit.opened_at,
+                title:
+                  visit.arrival_type === 'walk_in'
+                    ? 'Walk-in arrived'
+                    : 'Patient checked in',
+                detail: arrivalDetail,
+                actorAccountId: visit.receptionist_id,
+                hint: 'check',
+              },
+            ];
         // JB lifecycle. The visit's jb_ref column is captured at
         // insert time and is immutable, so it survives the
         // close-time clearing of the source rows. Render an
@@ -472,7 +483,7 @@ export function useVisitTimeline(visitId: string | null): UseVisitTimelineResult
             });
           }
         }
-        if (visit.closed_at) {
+        if (visit.closed_at && !isRetail) {
           // Title reflects the closure type, not a blanket "Visit
           // complete". An unsuitable / ended-early visit reads
           // confusingly when the timeline says it "completed" —
@@ -654,22 +665,41 @@ async function fetchAppointmentEvents(
         repair_notes: string | null;
         appointment_ref: string | null;
       };
+      // Retail Quick Sale reads "Sale started" with no clinical booking
+      // facts; a clinical walk-in keeps the "Walk-in created" + service
+      // detail + booking facts.
+      const isRetail = wk.service_type === 'retail';
       out.push({
         id: `walk-${wk.id}-created`,
         type: 'appointment_created',
         timestamp: wk.created_at,
-        title: 'Walk-in created',
-        detail: joinDetail(
-          wk.service_type ? humaniseLikelySlug(wk.service_type) : null,
-          wk.appointment_ref
-        ),
-        facts: bookingFactsForWalkIn(wk),
+        title: isRetail ? 'Sale started' : 'Walk-in created',
+        detail: isRetail
+          ? undefined
+          : joinDetail(
+              wk.service_type ? humaniseLikelySlug(wk.service_type) : null,
+              wk.appointment_ref
+            ),
+        facts: isRetail ? undefined : bookingFactsForWalkIn(wk),
         hint: 'calendar',
       });
     }
   }
 
   return out;
+}
+
+// The walk-in's service_type ('retail' for a Quick Sale). Read on its
+// own so the visit-level synth events (arrived / complete) can switch to
+// retail-appropriate copy without threading it through every fetcher.
+async function fetchWalkInServiceType(visit: VisitRow): Promise<string | null> {
+  if (!visit.walk_in_id) return null;
+  const { data } = await supabase
+    .from('lng_walk_ins')
+    .select('service_type')
+    .eq('id', visit.walk_in_id)
+    .maybeSingle();
+  return (data as { service_type: string | null } | null)?.service_type ?? null;
 }
 
 async function fetchWaiverEvents(visit: VisitRow): Promise<RawTimelineEvent[]> {

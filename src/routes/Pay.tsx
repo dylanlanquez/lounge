@@ -29,7 +29,7 @@ import {
 import { sendManagerNotification } from '../lib/queries/managerNotifications.ts';
 import { useCurrentAccount } from '../lib/queries/currentAccount.tsx';
 import { ManagerNotificationNotice } from '../components/ManagerNotificationNotice/ManagerNotificationNotice.tsx';
-import { patientFullName } from '../lib/queries/patients.ts';
+import { COUNTER_SALE_EMAIL, patientFullName } from '../lib/queries/patients.ts';
 import { useTerminalReaders } from '../lib/queries/terminalReaders.ts';
 import { supabase } from '../lib/supabase.ts';
 import { formatDepositSourceSuffix } from '../lib/queries/visits.ts';
@@ -938,7 +938,15 @@ export function Pay() {
               <div style={{ marginTop: theme.space[4] }}>
                 <Input
                   label={receiptChannel === 'email' ? 'Email address' : 'Phone number'}
-                  placeholder={receiptChannel === 'email' ? (patient?.email ?? 'name@example.com') : (patient?.phone ?? '+44...')}
+                  placeholder={
+                    receiptChannel === 'email'
+                      ? // The anonymous Counter Sale patient holds a
+                        // non-deliverable internal email; never prefill it.
+                        (patient?.email && patient.email !== COUNTER_SALE_EMAIL
+                          ? patient.email
+                          : 'name@example.com')
+                      : (patient?.phone ?? '+44...')
+                  }
                   value={receiptRecipient}
                   onChange={(e) => setReceiptRecipient(e.target.value)}
                 />

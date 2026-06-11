@@ -276,7 +276,13 @@ export function Ledger() {
                 //   • Appointment –visit → /appointment/:id (new
                 //                          full-page detail surface)
                 if (row.visit_id) {
-                  navigate(`/visit/${row.visit_id}`, {
+                  // Retail Quick Sales open the purpose-built sale
+                  // receipt rather than the clinical visit page.
+                  const target =
+                    row.service_type === 'retail'
+                      ? `/sale/${row.visit_id}`
+                      : `/visit/${row.visit_id}`;
+                  navigate(target, {
                     state: {
                       from: 'ledger',
                       patientId: row.patient_id,

@@ -113,12 +113,28 @@ Deno.serve(async (req) => {
     receipt.recipient ??
     (receipt.channel === 'email' ? patient?.email ?? null : receipt.channel === 'sms' ? patient?.phone ?? null : null);
 
-  if (!recipient) {
+  // The anonymous Counter Sale patient (retail walk-up with no named
+  // customer) carries a non-deliverable internal email,
+  // counter-sale@lounge.internal. A receipt must never be delivered
+  // there, so treat any @lounge.internal address as "no recipient" —
+  // staff are told to enter a real address instead, and no misleading
+  // "Receipt sent" timeline event is written.
+  const isNonDeliverable =
+    receipt.channel === 'email' &&
+    !!recipient &&
+    recipient.toLowerCase().endsWith('@lounge.internal');
+
+  if (!recipient || isNonDeliverable) {
     await supabase
       .from('lng_receipts')
-      .update({ failure_reason: 'no recipient' })
+      .update({ failure_reason: isNonDeliverable ? 'no deliverable recipient' : 'no recipient' })
       .eq('id', receipt.id);
-    return jsonResponse(400, { ok: false, error: 'no recipient on receipt or patient' });
+    return jsonResponse(400, {
+      ok: false,
+      error: isNonDeliverable
+        ? 'This is a walk-up sale with no customer email. Enter a real email or phone to send a receipt.'
+        : 'no recipient on receipt or patient',
+    });
   }
 
   const totalPence = cart?.total_pence ?? payment.amount_pence;

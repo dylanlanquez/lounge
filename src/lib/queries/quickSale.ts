@@ -121,10 +121,14 @@ export async function createQuickSaleSale(params: {
     .single();
   if (walkErr || !walkIn) throw new Error(walkErr?.message ?? 'Could not open the sale.');
 
-  // 2. Visit — created `complete` + `in_person` so it never lands on
-  //    the Schedule (no lng_appointments marker is written) or the
-  //    In-clinic board (which only shows status='arrived'). Pay does
-  //    not gate on visit status, so the payment screen works as-is.
+  // 2. Visit — created `complete` so it never lands on the Schedule (no
+  //    lng_appointments marker is written) or the In-clinic board (which
+  //    only shows status='arrived'). Pay does not gate on visit status,
+  //    so the payment screen works as-is. fulfilment_method is left null:
+  //    a retail sale is handed over the counter, not "fulfilled" in the
+  //    clinical sense, and leaving it null keeps the "Passed to patient"
+  //    pill + timeline line off the visit view (which is also gated on
+  //    service_type='retail' for robustness).
   const { data: visit, error: visitErr } = await supabase
     .from('lng_visits')
     .insert({
@@ -133,7 +137,7 @@ export async function createQuickSaleSale(params: {
       walk_in_id: (walkIn as { id: string }).id,
       arrival_type: 'walk_in',
       status: 'complete',
-      fulfilment_method: 'in_person',
+      fulfilment_method: null,
       receptionist_id: (accountId as string | null) ?? null,
       closed_at: new Date().toISOString(),
     })
