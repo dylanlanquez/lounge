@@ -212,6 +212,15 @@ export function toE164(country: string | null, local: string | null): string | n
   if (raw.startsWith('0') && (country ?? 'GB') === 'GB') {
     return `+44${raw.slice(1)}`;
   }
+  // Bare UK mobile with the trunk 0 stripped. A UK mobile is
+  // 0 7xxx xxxxxx (11 digits); spreadsheet imports / Shopify often eat
+  // the leading 0, leaving a 10-digit number starting with 7
+  // ("7555382111"). Without this it falls through to the generic branch
+  // and becomes "+7555382111" (Twilio reads +7 as Russia/Kazakhstan and
+  // the SMS never reaches the UK number). Treat it as a UK mobile.
+  if (raw.length === 10 && raw.startsWith('7') && (country ?? 'GB') === 'GB') {
+    return `+44${raw}`;
+  }
   // Generic E.164 attempt for non-UK rows: prepend + and hope the
   // local part already carries the country prefix. Twilio will
   // reject malformed numbers with a 4xx, which the caller logs.
