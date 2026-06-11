@@ -48,7 +48,12 @@ type Journey = 'standard' | 'klarna' | 'clearpay';
 // payment, with each crumb popping back to the right place. Direct
 // URL pastes (no state) fall back to a sensible default chain.
 interface PayEntryState {
-  from?: 'visit';
+  // 'visit' — opened from a clinical visit's "Take payment".
+  // 'quick_sale' — opened from the retail Quick Sale flow; the post-
+  // payment "Done" returns to a fresh /quick-sale instead of a visit
+  // page, and BNPL methods are suppressed (retail sales never offer
+  // Klarna/Clearpay).
+  from?: 'visit' | 'quick_sale';
   visitId?: string;
   visitOpenedAt?: string;
   // Full preview of the visit's own entry state, mirrored from
@@ -75,9 +80,15 @@ export function Pay() {
   // it back through means the visit's breadcrumb pre-renders every
   // crumb (origin / patient / timestamp) on first paint with no
   // shimmer transition.
-  const visitState = (location.state as PayEntryState | null)?.visitEntry ?? undefined;
+  const payEntry = location.state as PayEntryState | null;
+  const visitState = payEntry?.visitEntry ?? undefined;
+  // Retail Quick Sale has no clinical visit page to return to — send the
+  // operator back to a fresh sale instead. Also gates BNPL visibility.
+  const fromQuickSale = payEntry?.from === 'quick_sale';
   const goBackToVisit = () =>
-    navigate(`/visit/${id}`, visitState ? { state: visitState } : undefined);
+    fromQuickSale
+      ? navigate('/quick-sale')
+      : navigate(`/visit/${id}`, visitState ? { state: visitState } : undefined);
   // ── URL-survives-refresh stage state ──────────────────────────
   // The success stage is the only payment stage worth preserving
   // across tab-switches / refreshes / browser back. Cash/card are
@@ -97,7 +108,14 @@ export function Pay() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [paymentId, setPaymentId] = useState<string | null>(urlPayment);
-  const [receiptChannel, setReceiptChannel] = useState<'email' | 'sms' | 'none'>('email');
+  // Retail Quick Sale defaults to "No receipt": a walk-up sale rings up
+  // against the anonymous Counter Sale patient (no real email/phone), so
+  // emailing by default would send to that system address. Staff can
+  // still pick email/SMS and type a recipient. Clinical visits keep the
+  // email default (the patient's address prefills).
+  const [receiptChannel, setReceiptChannel] = useState<'email' | 'sms' | 'none'>(
+    fromQuickSale ? 'none' : 'email',
+  );
   const [receiptRecipient, setReceiptRecipient] = useState('');
   const [terminalOpen, setTerminalOpen] = useState(false);
   // MOTO (card not present, over the phone) modal. The moto flag is set
@@ -813,25 +831,31 @@ export function Pay() {
               {/* Klarna and Clearpay sit as peers to Card and Cash
                   on the picker now. Less drilling — staff picks the
                   exact provider in one tap instead of going via a
-                  generic "Buy now, pay later" intermediate sheet. */}
-              <MethodCard
-                icon={<ShoppingBag size={20} />}
-                title="Klarna"
-                description={`Show ${formatPence(chargeAmountPence)} QR on this tablet. Customer pays in Klarna app.`}
-                onClick={() => openBnpl('klarna')}
-                disabled={chargeAmountPence <= 0}
-              />
-              <MethodCard
-                icon={<ShoppingBag size={20} />}
-                title="Clearpay"
-                description={
-                  !reader
-                    ? 'Needs a registered card reader. Customer taps phone on the reader.'
-                    : `Charge ${formatPence(chargeAmountPence)} via Clearpay. Customer taps phone on ${reader.friendly_name}.`
-                }
-                onClick={() => openBnpl('clearpay')}
-                disabled={!reader || chargeAmountPence <= 0}
-              />
+                  generic "Buy now, pay later" intermediate sheet.
+                  Suppressed on retail Quick Sale: BNPL is never offered
+                  for over-the-counter product sales. */}
+              {fromQuickSale ? null : (
+                <>
+                  <MethodCard
+                    icon={<ShoppingBag size={20} />}
+                    title="Klarna"
+                    description={`Show ${formatPence(chargeAmountPence)} QR on this tablet. Customer pays in Klarna app.`}
+                    onClick={() => openBnpl('klarna')}
+                    disabled={chargeAmountPence <= 0}
+                  />
+                  <MethodCard
+                    icon={<ShoppingBag size={20} />}
+                    title="Clearpay"
+                    description={
+                      !reader
+                        ? 'Needs a registered card reader. Customer taps phone on the reader.'
+                        : `Charge ${formatPence(chargeAmountPence)} via Clearpay. Customer taps phone on ${reader.friendly_name}.`
+                    }
+                    onClick={() => openBnpl('clearpay')}
+                    disabled={!reader || chargeAmountPence <= 0}
+                  />
+                </>
+              )}
             </div>
           </div>
         ) : stage === 'cash' ? (

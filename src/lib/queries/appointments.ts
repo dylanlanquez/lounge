@@ -738,6 +738,11 @@ export function formatCustomerServiceTitleLabel(row: {
   const service = row.service_type;
   const eventLabel = row.event_type_label?.trim() || null;
 
+  // Quick Sale retail transactions ride the walk-in arm of the Ledger
+  // with service_type='retail'. Give them a clear customer-facing label
+  // instead of falling through to the generic "Walk-in".
+  if (service === 'retail') return 'Retail sale';
+
   // Same-day appliance OR click-in veneers — both carry the
   // "Same-day " prefix on customer-facing surfaces, even though
   // click-in veneers's product name already implies same-day,

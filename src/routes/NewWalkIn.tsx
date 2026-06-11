@@ -10,11 +10,11 @@ import { theme } from '../theme/index.ts';
 import { useAuth } from '../lib/auth.tsx';
 import { useIsMobile } from '../lib/useIsMobile.ts';
 import {
+  createPatient,
   type PatientRow,
 } from '../lib/queries/patients.ts';
 import { useCurrentAccount } from '../lib/queries/currentAccount.tsx';
 import { useCurrentLocation } from '../lib/queries/locations.ts';
-import { supabase } from '../lib/supabase.ts';
 
 type Step = 'find' | 'create';
 
@@ -43,21 +43,6 @@ export function classifySearchTerm(term: string): 'email' | 'phone' | 'name' {
     return 'phone';
   }
   return 'name';
-}
-
-function humanizePatientSaveError(err: { message?: string; code?: string } | null | undefined): string {
-  const msg = err?.message ?? '';
-  const code = err?.code;
-  if (code === '23505' || /duplicate key|unique constraint/i.test(msg)) {
-    if (/email/i.test(msg)) {
-      return 'A patient with this email is already on file at this location. Use the search to find them.';
-    }
-    if (/phone/i.test(msg)) {
-      return 'A patient with this phone number is already on file at this location. Use the search to find them.';
-    }
-    return 'This person is already on file at this location. Use the search to find them.';
-  }
-  return msg || 'Could not create patient.';
 }
 
 export function NewWalkIn() {
@@ -128,29 +113,14 @@ export function NewWalkIn() {
     setSubmitting(true);
     setError(null);
     try {
-      // patients.account_id is a legacy NOT NULL column. Resolve from the
-      // signed-in user via auth_account_id() RPC.
-      const { data: accountId, error: accErr } = await supabase.rpc('auth_account_id');
-      if (accErr || !accountId) {
-        throw new Error(
-          accErr?.message ??
-            'Could not resolve your account. Make sure your accounts row is set up in Meridian.'
-        );
-      }
-      const { data, error: err } = await supabase
-        .from('patients')
-        .insert({
-          account_id: accountId,
-          location_id: location.id,
-          first_name: newPatient.first_name.trim(),
-          last_name: newPatient.last_name.trim(),
-          email: newPatient.email.trim() || null,
-          phone: newPatient.phone.trim() || null,
-        })
-        .select('*')
-        .single();
-      if (err || !data) throw new Error(humanizePatientSaveError(err));
-      navigate(`/arrival/walk-in/${(data as PatientRow).id}`);
+      const created = await createPatient({
+        location_id: location.id,
+        first_name: newPatient.first_name,
+        last_name: newPatient.last_name,
+        email: newPatient.email,
+        phone: newPatient.phone,
+      });
+      navigate(`/arrival/walk-in/${created.id}`);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Unknown error');
     } finally {

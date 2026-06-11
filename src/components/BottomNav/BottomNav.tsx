@@ -1,6 +1,6 @@
 import { type CSSProperties, type ReactNode } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { BookMarked, UserPlus, Users } from 'lucide-react';
+import { BookMarked, ShoppingBag, UserPlus, Users } from 'lucide-react';
 import { theme } from '../../theme/index.ts';
 import { useAuth } from '../../lib/auth.tsx';
 import { useKeyboardOpen } from '../../lib/useKeyboardOpen.ts';
@@ -34,9 +34,13 @@ const PILL_HEIGHT = 68;
 const PILL_BOTTOM_GAP = 10;
 const PILL_MAX_WIDTH = 600;
 
-// Floating-pill bottom nav: 5 equal nav tabs.
+// Floating-pill bottom nav: 6 equal nav tabs.
 //
-//   Schedule | Patients | Walk-in | In clinic | Ledger
+//   Schedule | Patients | Walk-in | In clinic | Ledger | Quick sale
+//
+// Quick sale is the retail counter flow — sell products and take
+// payment without a clinical visit. It sits rightmost so the clinical
+// destinations stay grouped on the left.
 //
 // Walk-in is just another tab. An earlier design lifted Walk-in
 // into a raised circular FAB; staff feedback was that it dominated
@@ -69,6 +73,7 @@ export function BottomNav() {
   const onWalkIn = () => navigate('/walk-in/new');
   const onInClinic = () => navigate('/in-clinic');
   const onLedger = () => navigate('/ledger');
+  const onQuickSale = () => navigate('/quick-sale');
 
   const isSchedule = location.pathname === '/' || location.pathname.startsWith('/schedule');
   const isPatients = location.pathname.startsWith('/patients');
@@ -79,6 +84,7 @@ export function BottomNav() {
   // doesn't drop the highlight.
   const isLedger =
     location.pathname.startsWith('/ledger') || location.pathname.startsWith('/appointments');
+  const isQuickSale = location.pathname.startsWith('/quick-sale');
 
   return (
     <>
@@ -129,7 +135,7 @@ export function BottomNav() {
               padding: 0,
               height: '100%',
               display: 'grid',
-              gridTemplateColumns: 'repeat(5, minmax(0, 1fr))',
+              gridTemplateColumns: 'repeat(6, minmax(0, 1fr))',
               alignItems: 'stretch',
               position: 'relative',
             }}
@@ -173,6 +179,14 @@ export function BottomNav() {
                 icon={<BookMarked size={22} />}
                 active={isLedger}
                 onClick={onLedger}
+              />
+            </li>
+            <li style={{ display: 'flex' }}>
+              <NavTab
+                label="Quick sale"
+                icon={<ShoppingBag size={22} />}
+                active={isQuickSale}
+                onClick={onQuickSale}
               />
             </li>
           </ul>

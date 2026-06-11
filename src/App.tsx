@@ -26,6 +26,7 @@ const Verify2fa = lazyWithRetry(() => import('./routes/Verify2fa.tsx').then((m) 
 const Schedule = lazyWithRetry(() => import('./routes/Schedule.tsx').then((m) => ({ default: m.Schedule })), 'Schedule');
 const MyAvailability = lazyWithRetry(() => import('./routes/MyAvailability.tsx').then((m) => ({ default: m.MyAvailability })), 'MyAvailability');
 const NewWalkIn = lazyWithRetry(() => import('./routes/NewWalkIn.tsx').then((m) => ({ default: m.NewWalkIn })), 'NewWalkIn');
+const QuickSale = lazyWithRetry(() => import('./routes/QuickSale.tsx').then((m) => ({ default: m.QuickSale })), 'QuickSale');
 const VisitDetail = lazyWithRetry(() => import('./routes/VisitDetail.tsx').then((m) => ({ default: m.VisitDetail })), 'VisitDetail');
 const Pay = lazyWithRetry(() => import('./routes/Pay.tsx').then((m) => ({ default: m.Pay })), 'Pay');
 const PatientProfile = lazyWithRetry(() => import('./routes/PatientProfile.tsx').then((m) => ({ default: m.PatientProfile })), 'PatientProfile');
@@ -299,6 +300,7 @@ function RoutedErrorBoundary() {
           <Route path="/schedule" element={<RequireStaff><Schedule /></RequireStaff>} />
           <Route path="/my-availability" element={<RequireStaff><MyAvailability /></RequireStaff>} />
           <Route path="/walk-in/new" element={<RequireStaff><NewWalkIn /></RequireStaff>} />
+          <Route path="/quick-sale" element={<RequireStaff><QuickSale /></RequireStaff>} />
           <Route path="/visit/:id" element={<RequireStaff><VisitDetail /></RequireStaff>} />
           <Route path="/visit/:id/pay" element={<RequireStaff><Pay /></RequireStaff>} />
           <Route path="/patient/:id" element={<RequireStaff><PatientProfile /></RequireStaff>} />

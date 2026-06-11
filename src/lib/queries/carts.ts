@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '../supabase.ts';
 import type { CatalogueRow } from './catalogue.ts';
+import { totalForQtyWithArch } from '../catalogueMatch.ts';
 import { useRealtimeRefresh } from '../useRealtimeRefresh.ts';
 import { useStaleQueryLoading } from '../useStaleQueryLoading.ts';
 
@@ -337,6 +338,26 @@ export async function updateCartItemQuantity(itemId: string, quantity: number): 
   const safeQty = Math.max(1, quantity);
   const { error } = await supabase.from('lng_cart_items').update({ quantity: safeQty }).eq('id', itemId);
   if (error) throw new Error(error.message);
+}
+
+// Pence total for a not-yet-committed catalogue line (a basket held in
+// client state before a cart exists — the arrival wizard and quick
+// sale). Reproduces exactly what addCatalogueItemsToCart will persist:
+// the arch-aware catalogue total plus upgrade pence riding every
+// quantity tick. Keeping the formula here means the staged subtotal and
+// the cart subtotal can never drift.
+export function catalogueLineTotalPence(
+  catalogue: CatalogueRow,
+  qty: number,
+  options: CatalogueAddOptions,
+): number {
+  if (qty <= 0) return 0;
+  const upgradePerInstancePence = (options.upgrades ?? []).reduce(
+    (sum, u) => sum + u.price_pence,
+    0,
+  );
+  const base = totalForQtyWithArch(catalogue, qty, options.arch ?? null);
+  return Math.round(base * 100) + upgradePerInstancePence * qty;
 }
 
 export type CartLineRemoveReason = 'mistake' | 'changed_mind' | 'unsuitable';

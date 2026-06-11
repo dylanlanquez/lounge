@@ -89,6 +89,10 @@ export interface CataloguePickerProps {
   // every active row when the basket is empty.
   cartCatalogueIds: string[];
   onItemAdded: () => void;
+  // Restrict the picker to products only (is_service=false), hiding the
+  // Services group entirely. Used by Quick Sale, which is retail-only.
+  // Suggestions are already products-only, so the carousel is unaffected.
+  productsOnly?: boolean;
 }
 
 export function CataloguePicker({
@@ -98,6 +102,7 @@ export function CataloguePicker({
   onStage,
   cartCatalogueIds,
   onItemAdded,
+  productsOnly = false,
 }: CataloguePickerProps) {
   const { rows, loading, error } = useCatalogueActive();
   const { rows: upgrades } = useAllActiveUpgrades();
@@ -191,13 +196,20 @@ export function CataloguePicker({
   // + sku. Search overrides the suggested + grouped layout to a flat
   // list — when staff are searching they want results, not categories.
   const trimmedSearch = search.trim().toLowerCase();
+  // Products-only callers (Quick Sale) never see services anywhere in
+  // the sheet — scope the source rows up front so search, grouping and
+  // counts all agree.
+  const scopedRows = useMemo(
+    () => (productsOnly ? rows.filter((r) => !r.is_service) : rows),
+    [rows, productsOnly],
+  );
   const filtered = useMemo(() => {
-    if (!trimmedSearch) return rows;
-    return rows.filter((r) => {
+    if (!trimmedSearch) return scopedRows;
+    return scopedRows.filter((r) => {
       const haystack = `${r.name} ${r.description ?? ''} ${r.code}`.toLowerCase();
       return haystack.includes(trimmedSearch);
     });
-  }, [rows, trimmedSearch]);
+  }, [scopedRows, trimmedSearch]);
 
   // Top-level grouping: Services on top, Products underneath, driven by
   // the lwo_catalogue.is_service flag. Bootstrap migration 03 backfills
@@ -291,7 +303,7 @@ export function CataloguePicker({
                 color: theme.color.ink,
               }}
             >
-              Choose product or service
+              {productsOnly ? 'Choose a product' : 'Choose product or service'}
             </h2>
             <p
               style={{
@@ -303,7 +315,9 @@ export function CataloguePicker({
             >
               {trimmedSearch
                 ? `${filtered.length} match${filtered.length === 1 ? '' : 'es'}`
-                : 'Tap a product or service to set arch, shade and quantity, then add it to the bag.'}
+                : productsOnly
+                  ? 'Tap a product to set options and quantity, then add it to the bag.'
+                  : 'Tap a product or service to set arch, shade and quantity, then add it to the bag.'}
             </p>
           </div>
           {/* Rest-state close button: lives in the title block's

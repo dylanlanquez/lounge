@@ -15,6 +15,109 @@ export interface PatientRow {
   shopify_customer_id: string | null;
 }
 
+// Sentinel email for the shared "Counter Sale" patient that anonymous
+// Quick Sale (retail) transactions ring up against. The FK chain
+// (walk-in -> visit -> cart -> payment) requires a patient_id, but a
+// walk-up product sale has no named customer, so we attach a single
+// system patient per location instead of capturing PII.
+//
+// The address is non-deliverable and reserved — no real customer can
+// own it. Crucially, the existing per-location email unique index on
+// patients (location_id, lower(email)) makes "one Counter Sale row per
+// location" a database guarantee, so get-or-create is idempotent and
+// race-safe without any new column or settings row. This sentinel is
+// also the single source of truth for hiding the system patient from
+// the Patients list / search (see useCounterSalePatientIds).
+export const COUNTER_SALE_EMAIL = 'counter-sale@lounge.internal';
+
+// The ids of every Counter Sale system patient (one per location).
+// Used to filter the system patient out of the Patients list and the
+// patient search so staff never see "Counter Sale" as a person. One
+// cheap point query, cached for the session; returns an empty set
+// until it resolves so the first paint never leaks the row.
+export function useCounterSalePatientIds(): Set<string> {
+  const [ids, setIds] = useState<Set<string>>(() => new Set());
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const { data } = await supabase
+        .from('patients')
+        .select('id')
+        .eq('email', COUNTER_SALE_EMAIL);
+      if (cancelled) return;
+      setIds(new Set((data ?? []).map((r) => (r as { id: string }).id)));
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  return ids;
+}
+
+// Turn a Postgres/PostgREST patient-save error into a sentence a
+// receptionist can act on. The per-location uniqueness indexes
+// (email, phone) surface as 23505; everything else falls through to
+// the raw message. Shared by every "create a patient" entry point so
+// the wording stays identical across walk-in and quick sale.
+export function humanizePatientSaveError(
+  err: { message?: string; code?: string } | null | undefined,
+): string {
+  const msg = err?.message ?? '';
+  const code = err?.code;
+  if (code === '23505' || /duplicate key|unique constraint/i.test(msg)) {
+    if (/email/i.test(msg)) {
+      return 'A patient with this email is already on file at this location. Use the search to find them.';
+    }
+    if (/phone/i.test(msg)) {
+      return 'A patient with this phone number is already on file at this location. Use the search to find them.';
+    }
+    return 'This person is already on file at this location. Use the search to find them.';
+  }
+  return msg || 'Could not create patient.';
+}
+
+export interface CreatePatientInput {
+  location_id: string;
+  first_name: string;
+  last_name: string;
+  email?: string | null;
+  phone?: string | null;
+}
+
+// Create a patient at a location. Resolves the legacy NOT NULL
+// account_id from the signed-in user, normalises blank contact fields
+// to null, and throws a humanised error on a uniqueness collision.
+// Single source of truth for patient creation — used by the walk-in
+// entry point and the quick-sale "Add customer" flow.
+export async function createPatient(input: CreatePatientInput): Promise<PatientRow> {
+  const first = input.first_name.trim();
+  const last = input.last_name.trim();
+  if (!first || !last) throw new Error('First name and last name are required.');
+
+  const { data: accountId, error: accErr } = await supabase.rpc('auth_account_id');
+  if (accErr || !accountId) {
+    throw new Error(
+      accErr?.message ??
+        'Could not resolve your account. Make sure your accounts row is set up in Meridian.',
+    );
+  }
+
+  const { data, error } = await supabase
+    .from('patients')
+    .insert({
+      account_id: accountId,
+      location_id: input.location_id,
+      first_name: first,
+      last_name: last,
+      email: input.email?.trim() || null,
+      phone: input.phone?.trim() || null,
+    })
+    .select('*')
+    .single();
+  if (error || !data) throw new Error(humanizePatientSaveError(error));
+  return data as PatientRow;
+}
+
 interface SearchResult {
   data: PatientRow[];
   // True for the first search on this hook (no prior results yet).
@@ -518,6 +621,10 @@ export function usePatientSearch(term: string): SearchResult {
   // reads as "no results" because the stale-while-revalidate
   // loading state never re-fires after the first settle.
   const [fetching, setFetching] = useState(false);
+  // The shared Counter Sale system patient must never surface as a
+  // searchable person (e.g. when staff tap "Add customer" on a Quick
+  // Sale). Filter it out client-side from whatever the query returns.
+  const counterSaleIds = useCounterSalePatientIds();
 
   useEffect(() => {
     const cleaned = term.trim();
@@ -581,7 +688,12 @@ export function usePatientSearch(term: string): SearchResult {
     };
   }, [term, settle]);
 
-  return { data, loading, fetching, error };
+  return {
+    data: counterSaleIds.size > 0 ? data.filter((p) => !counterSaleIds.has(p.id)) : data,
+    loading,
+    fetching,
+    error,
+  };
 }
 
 // Direct lookup by shopify_customer_id, bypassing the SHOPIFY_ACTIVE_FILTER
@@ -688,6 +800,8 @@ export function usePatientList(
   const [data, setData] = useState<PatientListRow[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(false);
+  // Keep the Counter Sale system patient out of the directory.
+  const counterSaleIds = useCounterSalePatientIds();
   // Page is part of the key — flicking pages is a real resource
   // transition (different rows). Term is NOT in the key — typing
   // keystrokes preserve the previous page of results on screen
@@ -806,7 +920,12 @@ export function usePatientList(
     };
   }, [term, page, limit, settle]);
 
-  return { data, loading, error, hasMore };
+  return {
+    data: counterSaleIds.size > 0 ? data.filter((p) => !counterSaleIds.has(p.id)) : data,
+    loading,
+    error,
+    hasMore,
+  };
 }
 
 function buildFallback(term: string) {
