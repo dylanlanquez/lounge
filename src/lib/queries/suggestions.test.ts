@@ -55,9 +55,22 @@ const rule = (
 describe('resolveCartSuggestions', () => {
   const active = [row('retainer'), row('case'), row('tablets'), row('whitening')];
 
-  it('returns every active row when the basket is empty', () => {
+  it('returns every active product when the basket is empty', () => {
     const out = resolveCartSuggestions(active, [], []);
-    expect(out).toBe(active); // identity passthrough, no copy
+    expect(out.map((r) => r.id)).toEqual(['retainer', 'case', 'tablets', 'whitening']);
+  });
+
+  it('excludes services from the empty-basket carousel', () => {
+    const withService = [...active, row('impression-appt', { is_service: true })];
+    const out = resolveCartSuggestions(withService, [], []);
+    expect(out.map((r) => r.id)).toEqual(['retainer', 'case', 'tablets', 'whitening']);
+  });
+
+  it('excludes a service even if configured as a companion', () => {
+    const withService = [...active, row('impression-appt', { is_service: true })];
+    const rules = [rule('retainer', 'impression-appt'), rule('retainer', 'case')];
+    const out = resolveCartSuggestions(withService, rules, ['retainer']);
+    expect(out.map((r) => r.id)).toEqual(['case']);
   });
 
   it('returns a trigger product\'s companions in sort order', () => {

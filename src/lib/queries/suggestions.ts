@@ -181,20 +181,24 @@ export async function reorderSuggestions(orderedIds: string[]): Promise<void> {
 // rule, and the catalogue ids currently in the basket, return the rows
 // to show in the picker's "Suggested" carousel.
 //
-//   - Empty basket  → every active row (the brief's "show them all").
+// Suggestions are upsells — add-on PRODUCTS, never bookable services —
+// so services (is_service) are excluded from the carousel in every case.
+//
+//   - Empty basket  → every active product (the brief's "show them all").
 //   - Non-empty     → the union of each basket item's configured
 //                     companions, in basket order then per-trigger sort
 //                     order, deduped, with rows already in the basket and
-//                     inactive/missing rows filtered out. May be empty,
-//                     in which case the caller hides the carousel.
+//                     inactive/missing/service rows filtered out. May be
+//                     empty, in which case the caller hides the carousel.
 export function resolveCartSuggestions(
   activeRows: CatalogueRow[],
   suggestions: SuggestionRow[],
   cartCatalogueIds: readonly string[],
 ): CatalogueRow[] {
-  if (cartCatalogueIds.length === 0) return activeRows;
+  const products = activeRows.filter((r) => !r.is_service);
+  if (cartCatalogueIds.length === 0) return products;
 
-  const rowById = new Map(activeRows.map((r) => [r.id, r]));
+  const rowById = new Map(products.map((r) => [r.id, r]));
   const cartIds = new Set(cartCatalogueIds);
 
   // Group rules by trigger, then sort each group by sort_order so the
@@ -222,7 +226,7 @@ export function resolveCartSuggestions(
       if (seen.has(suggestedId)) continue;
       if (cartIds.has(suggestedId)) continue; // already in the basket
       const row = rowById.get(suggestedId);
-      if (!row) continue; // inactive or deleted
+      if (!row) continue; // inactive, deleted, or a service (not an upsell)
       seen.add(suggestedId);
       out.push(row);
     }

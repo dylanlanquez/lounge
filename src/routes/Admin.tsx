@@ -7902,12 +7902,13 @@ function SuggestedCompanionsEditor({ catalogueId }: { catalogueId: string }) {
     return m;
   }, [allRows]);
 
-  // Candidates: every active row except this one and the ones already
-  // suggested, alphabetised so the list is easy to scan.
+  // Candidates: every active PRODUCT (services are never upsells) except
+  // this one and the ones already suggested, alphabetised so the list is
+  // easy to scan.
   const candidates = useMemo(() => {
     const existing = new Set(suggestionRows.map((s) => s.suggested_catalogue_id));
     return allRows
-      .filter((r) => r.active && r.id !== catalogueId && !existing.has(r.id))
+      .filter((r) => r.active && !r.is_service && r.id !== catalogueId && !existing.has(r.id))
       .sort((a, b) => a.name.localeCompare(b.name));
   }, [allRows, catalogueId, suggestionRows]);
 
@@ -8080,7 +8081,7 @@ function SuggestedCompanionsEditor({ catalogueId }: { catalogueId: string }) {
                 }}
               >
                 <p style={{ margin: `0 0 ${theme.space[1]}px`, fontSize: theme.type.size.sm, fontWeight: theme.type.weight.medium, color: theme.color.inkMuted }}>
-                  Tick the products and services to suggest, then add them.
+                  Tick the products to suggest, then add them.
                 </p>
                 {/* Scrollable tick list — capped height so a long
                     catalogue doesn't push the Save button off-screen. */}
