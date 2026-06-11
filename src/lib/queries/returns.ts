@@ -17,6 +17,21 @@ export interface ReturnsSendResponse {
   sms?: ReturnsChannelResult;
 }
 
+// The signed-in staff member's returns authorisation code (the one
+// that gets inserted into the message they send). Null when they have
+// none set — the send sheet uses this to block before anything is sent.
+export async function fetchMyAuthorisationCode(): Promise<string | null> {
+  const { data: accId } = await supabase.rpc('auth_account_id');
+  if (!accId) return null;
+  const { data } = await supabase
+    .from('lng_staff_members')
+    .select('authorisation_code')
+    .eq('account_id', accId as string)
+    .maybeSingle();
+  const code = (data as { authorisation_code: string | null } | null)?.authorisation_code ?? null;
+  return code && code.trim() ? code.trim() : null;
+}
+
 export async function sendReturnsInfo(args: {
   appointmentId: string;
   email: boolean;

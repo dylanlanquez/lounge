@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react';
-import { Check, Mail, MessageSquare, PackageCheck } from 'lucide-react';
+import { Check, KeyRound, Mail, MessageSquare, PackageCheck } from 'lucide-react';
 import { BottomSheet } from '../BottomSheet/BottomSheet.tsx';
 import { Button } from '../Button/Button.tsx';
 import { StatusBanner } from '../StatusBanner/StatusBanner.tsx';
 import { theme } from '../../theme/index.ts';
-import { type ReturnsChannelResult, sendReturnsInfo } from '../../lib/queries/returns.ts';
+import { type ReturnsChannelResult, fetchMyAuthorisationCode, sendReturnsInfo } from '../../lib/queries/returns.ts';
 
 export interface ReturnsSendSheetProps {
   open: boolean;
@@ -33,8 +33,12 @@ export function ReturnsSendSheet({
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<{ email?: ReturnsChannelResult; sms?: ReturnsChannelResult } | null>(null);
+  // The signed-in user's own authorisation code. undefined = still
+  // loading; null = none set (block sending); string = good to go.
+  const [myCode, setMyCode] = useState<string | null | undefined>(undefined);
 
-  // Reset to the default (both available channels ticked) each open.
+  // Reset to the default (both available channels ticked) each open, and
+  // (re)load the sender's authorisation code.
   useEffect(() => {
     if (!open) return;
     setEmail(hasEmail);
@@ -42,9 +46,18 @@ export function ReturnsSendSheet({
     setSending(false);
     setError(null);
     setResult(null);
+    setMyCode(undefined);
+    let cancelled = false;
+    fetchMyAuthorisationCode().then((c) => {
+      if (!cancelled) setMyCode(c);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [open, hasEmail, hasPhone]);
 
-  const canSend = (email && hasEmail) || (sms && hasPhone);
+  const hasMyCode = typeof myCode === 'string';
+  const canSend = hasMyCode && ((email && hasEmail) || (sms && hasPhone));
 
   const handleSend = async () => {
     if (!canSend || sending) return;
@@ -98,6 +111,33 @@ export function ReturnsSendSheet({
           <SentSummary result={result} />
         ) : (
           <>
+            {/* Guard: a return label sent without the sender's code would
+                reach the patient with a blank authorisation code. Block it
+                here, clearly, before anything is chosen or sent. */}
+            {myCode === null ? (
+              <StatusBanner tone="warning" title="No authorisation code set">
+                You have no returns authorisation code. Add yours in Admin, Staff, then you can send
+                return labels. (The patient&apos;s message includes your code, so it can&apos;t go
+                without one.)
+              </StatusBanner>
+            ) : hasMyCode ? (
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: theme.space[2],
+                  fontSize: theme.type.size.sm,
+                  color: theme.color.inkMuted,
+                }}
+              >
+                <KeyRound size={15} aria-hidden style={{ color: theme.color.inkSubtle, flexShrink: 0 }} />
+                Sending with your authorisation code{' '}
+                <span style={{ fontWeight: theme.type.weight.semibold, color: theme.color.ink, fontFamily: 'monospace' }}>
+                  {myCode}
+                </span>
+                .
+              </div>
+            ) : null}
             <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkMuted, lineHeight: theme.type.leading.normal }}>
               Choose how to send it. The message text is editable in Admin, under Emails and SMS.
             </p>
