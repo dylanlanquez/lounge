@@ -20,6 +20,7 @@ import {
 import { BOTTOM_NAV_HEIGHT } from '../components/BottomNav/BottomNav.tsx';
 import { KIOSK_STATUS_BAR_HEIGHT } from '../components/KioskStatusBar/KioskStatusBar.tsx';
 import { theme } from '../theme/index.ts';
+import { SessionsTab } from './SessionsTab.tsx';
 import { useAuth } from '../lib/auth.tsx';
 import { useIsMobile } from '../lib/useIsMobile.ts';
 import { fmtTzAbbr } from '../lib/dateFormat.ts';
@@ -188,7 +189,7 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 
-type Tab = 'devices' | 'failures' | 'reports' | 'calendly' | 'services' | 'products' | 'booking_types' | 'closures' | 'conflicts' | 'emails' | 'sms' | 'branding' | 'widget' | 'receipts' | 'testing' | 'waivers' | 'staff' | 'payments' | 'virtual_impressions';
+type Tab = 'devices' | 'failures' | 'reports' | 'calendly' | 'services' | 'products' | 'booking_types' | 'closures' | 'conflicts' | 'emails' | 'sms' | 'branding' | 'widget' | 'receipts' | 'testing' | 'waivers' | 'staff' | 'sessions' | 'payments' | 'virtual_impressions';
 
 // Canonical list of every Admin tab. Drives the SegmentedControl in
 // the Admin header, the per-staff "Admin pages" toggle list in the
@@ -221,6 +222,7 @@ const ADMIN_TABS: { key: Tab; label: string; description: string }[] = [
   { key: 'devices', label: 'Devices', description: 'Stripe Terminal readers + location pairing.' },
   { key: 'payments', label: 'Payments', description: 'Stripe payment log, reconciliation, retries.' },
   { key: 'staff', label: 'Staff', description: 'Add, deactivate, permissions, and account actions for Lounge staff.' },
+  { key: 'sessions', label: 'Sessions', description: 'Live sign-in state per staff member: where and when each is logged in, with remote sign-out.' },
   { key: 'virtual_impressions', label: 'Virtual impressions', description: 'Clinicians who run virtual impression calls, their hours, and the Google accounts that host the rooms.' },
   { key: 'failures', label: 'Failures', description: 'Unresolved system failures captured by lng_system_failures.' },
   { key: 'testing', label: 'Testing', description: 'Dev-only resets and test-harness shortcuts.' },
@@ -229,7 +231,7 @@ const ADMIN_TABS: { key: Tab; label: string; description: string }[] = [
 // Admin tabs an admin can grant a non-admin staff member access to.
 // Staff + Testing are full-admin only and never appear as toggleable
 // per-page grants — see the comment on ADMIN_TABS.
-const NON_GRANTABLE_TABS: ReadonlySet<Tab> = new Set<Tab>(['staff', 'testing']);
+const NON_GRANTABLE_TABS: ReadonlySet<Tab> = new Set<Tab>(['staff', 'sessions', 'testing']);
 const MANAGEABLE_ADMIN_TABS = ADMIN_TABS.filter((t) => !NON_GRANTABLE_TABS.has(t.key));
 
 export function Admin() {
@@ -366,6 +368,8 @@ export function Admin() {
           <PaymentsTab />
         ) : tab === 'staff' ? (
           <StaffTab />
+        ) : tab === 'sessions' ? (
+          <SessionsTab />
         ) : tab === 'virtual_impressions' ? (
           <VirtualImpressionsTab />
         ) : tab === 'testing' ? (
