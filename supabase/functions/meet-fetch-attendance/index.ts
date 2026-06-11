@@ -66,7 +66,7 @@ Deno.serve(async (req) => {
 
   const { data: apptRow, error: apptErr } = await admin
     .from('lng_appointments')
-    .select('id, meet_meeting_code, meet_host_id, end_at, google_calendar_event_id, patient_id')
+    .select('id, meet_meeting_code, meet_host_id, meet_space_id, end_at, google_calendar_event_id, patient_id')
     .eq('id', appointmentId)
     .maybeSingle();
   if (apptErr || !apptRow) return json(404, { ok: false, error: 'Appointment not found' });
@@ -74,6 +74,7 @@ Deno.serve(async (req) => {
     id: string;
     meet_meeting_code: string | null;
     meet_host_id: string | null;
+    meet_space_id: string | null;
     end_at: string;
     google_calendar_event_id: string | null;
     patient_id: string;
@@ -82,17 +83,67 @@ Deno.serve(async (req) => {
     return json(200, { ok: false, error: 'No Meet space recorded for this appointment' });
   }
 
-  const { data: hostRow } = await admin
+  // Resolve which host can actually READ the Meet room. The appointment's
+  // stored meet_host_id can drift from the Google account that CREATED the
+  // space (after a clinician/host re-assignment or a Google re-auth), and only
+  // the creating account's token can read that room's conference records. When
+  // the stored host can't, Google returns 403 and the room looks empty
+  // ("Nobody joined") even though the call happened and another host can see
+  // it. So we probe the stored host first, then every other active host, and
+  // use whichever Google actually grants access to. This makes attendance
+  // resilient to host mismatches instead of silently false-reporting no-shows.
+  const { data: allHostRows } = await admin
     .from('lng_meet_hosts')
     .select('id, display_name, google_email, access_token, refresh_token, token_expiry, is_active, oauth_client')
-    .eq('id', appt.meet_host_id)
-    .maybeSingle();
-  const host = hostRow as MeetHostRow | null;
-  if (!host) return json(404, { ok: false, error: 'Host not found' });
+    .eq('is_active', true);
+  const activeHosts = (allHostRows as MeetHostRow[] | null) ?? [];
+  const ordered = [
+    ...activeHosts.filter((h) => h.id === appt.meet_host_id),
+    ...activeHosts.filter((h) => h.id !== appt.meet_host_id),
+  ];
+  if (ordered.length === 0) return json(404, { ok: false, error: 'Host not found' });
 
-  const tokenResult = await getValidAccessToken(admin, host);
-  if (!tokenResult.ok) return json(200, { ok: false, error: tokenResult.error });
-  const accessToken = tokenResult.accessToken;
+  let host: MeetHostRow = ordered[0]!;
+  let accessToken = '';
+  let storedToken: string | null = null;
+  for (const candidate of ordered) {
+    const tr = await getValidAccessToken(admin, candidate);
+    if (!tr.ok) continue;
+    if (candidate.id === appt.meet_host_id) storedToken = tr.accessToken;
+    // No space id to probe against → keep the stored-host order.
+    if (!appt.meet_space_id) {
+      host = candidate;
+      accessToken = tr.accessToken;
+      break;
+    }
+    let canRead = false;
+    try {
+      const probe = await fetch(`https://meet.googleapis.com/v2/${appt.meet_space_id}`, {
+        headers: { Authorization: `Bearer ${tr.accessToken}` },
+      });
+      canRead = probe.ok;
+    } catch {
+      canRead = false;
+    }
+    if (canRead) {
+      host = candidate;
+      accessToken = tr.accessToken;
+      break;
+    }
+  }
+  // No active host can read the room → fall back to the stored host so the
+  // genuine "no record" result + diagnostic still run.
+  if (!accessToken) {
+    const stored = ordered.find((h) => h.id === appt.meet_host_id) ?? ordered[0]!;
+    let tok = storedToken;
+    if (!tok) {
+      const tr = await getValidAccessToken(admin, stored);
+      if (!tr.ok) return json(200, { ok: false, error: tr.error });
+      tok = tr.accessToken;
+    }
+    host = stored;
+    accessToken = tok;
+  }
 
   const knownHosts = await loadKnownHosts(admin);
 
