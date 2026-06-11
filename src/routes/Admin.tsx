@@ -150,7 +150,7 @@ import {
   type UpgradeRow,
 } from '../lib/queries/upgrades.ts';
 import {
-  addSuggestion,
+  addSuggestions,
   removeSuggestion,
   reorderSuggestions,
   useSuggestionsForCatalogue,
@@ -7892,6 +7892,8 @@ function SuggestedCompanionsEditor({ catalogueId }: { catalogueId: string }) {
   const { rows: allRows } = useCatalogueAll();
   const [busy, setBusy] = useState(false);
   const [adding, setAdding] = useState(false);
+  // Multi-select: which candidates are ticked in the add panel.
+  const [selectedToAdd, setSelectedToAdd] = useState<Set<string>>(() => new Set());
   const [toast, setToast] = useState<{ tone: 'success' | 'error'; title: string; description?: string } | null>(null);
 
   const rowById = useMemo(() => {
@@ -7901,7 +7903,7 @@ function SuggestedCompanionsEditor({ catalogueId }: { catalogueId: string }) {
   }, [allRows]);
 
   // Candidates: every active row except this one and the ones already
-  // suggested, alphabetised so the dropdown is easy to scan.
+  // suggested, alphabetised so the list is easy to scan.
   const candidates = useMemo(() => {
     const existing = new Set(suggestionRows.map((s) => s.suggested_catalogue_id));
     return allRows
@@ -7909,14 +7911,34 @@ function SuggestedCompanionsEditor({ catalogueId }: { catalogueId: string }) {
       .sort((a, b) => a.name.localeCompare(b.name));
   }, [allRows, catalogueId, suggestionRows]);
 
-  const onAdd = async (suggestedId: string) => {
-    if (!suggestedId) return;
+  const openAdd = () => {
+    setSelectedToAdd(new Set());
+    setAdding(true);
+  };
+  const closeAdd = () => {
+    setSelectedToAdd(new Set());
+    setAdding(false);
+  };
+  const toggleSelected = (id: string) => {
+    setSelectedToAdd((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const onAddSelected = async () => {
+    // Add in the candidates' display order, not click order, so the
+    // saved sort_order is predictable.
+    const ids = candidates.filter((c) => selectedToAdd.has(c.id)).map((c) => c.id);
+    if (ids.length === 0) return;
     setBusy(true);
     try {
-      await addSuggestion(catalogueId, suggestedId, suggestionRows.length);
+      await addSuggestions(catalogueId, ids, suggestionRows.length);
       refresh();
-      setAdding(false);
-      setToast({ tone: 'success', title: 'Added.' });
+      closeAdd();
+      setToast({ tone: 'success', title: ids.length === 1 ? 'Added.' : `Added ${ids.length}.` });
     } catch (e) {
       setToast({ tone: 'error', title: 'Could not add', description: e instanceof Error ? e.message : String(e) });
     } finally {
@@ -7976,9 +7998,9 @@ function SuggestedCompanionsEditor({ catalogueId }: { catalogueId: string }) {
             Shown in the picker's Suggested carousel when this is in the basket. Use the arrows to set the order they appear.
           </p>
         </div>
-        <Button variant="secondary" size="sm" onClick={() => setAdding(true)} disabled={adding || candidates.length === 0}>
+        <Button variant="secondary" size="sm" onClick={openAdd} disabled={adding || candidates.length === 0}>
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
-            <Plus size={16} /> Add companion
+            <Plus size={16} /> Add companions
           </span>
         </Button>
       </div>
@@ -8054,21 +8076,70 @@ function SuggestedCompanionsEditor({ catalogueId }: { catalogueId: string }) {
                   background: theme.color.surface,
                   display: 'flex',
                   flexDirection: 'column',
-                  gap: theme.space[3],
+                  gap: theme.space[2],
                 }}
               >
-                <DropdownSelect<string>
-                  ariaLabel="Choose a product or service to suggest"
-                  placeholder="Choose a product or service"
-                  value=""
-                  options={candidates.map((c) => ({ value: c.id, label: c.name }))}
-                  onChange={(id) => onAdd(id)}
-                  disabled={busy}
-                />
-                <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-                  <Button variant="tertiary" size="sm" onClick={() => setAdding(false)} disabled={busy}>
+                <p style={{ margin: `0 0 ${theme.space[1]}px`, fontSize: theme.type.size.sm, fontWeight: theme.type.weight.medium, color: theme.color.inkMuted }}>
+                  Tick the products and services to suggest, then add them.
+                </p>
+                {/* Scrollable tick list — capped height so a long
+                    catalogue doesn't push the Save button off-screen. */}
+                <div
+                  style={{
+                    maxHeight: 260,
+                    overflowY: 'auto',
+                    margin: `0 -${theme.space[1]}px`,
+                    padding: `0 ${theme.space[1]}px`,
+                    display: 'flex',
+                    flexDirection: 'column',
+                  }}
+                >
+                  {candidates.map((c, i) => {
+                    const checked = selectedToAdd.has(c.id);
+                    return (
+                      <label
+                        key={c.id}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: theme.space[3],
+                          padding: `${theme.space[2]}px 0`,
+                          borderTop: i === 0 ? 'none' : `1px solid ${theme.color.border}`,
+                          cursor: 'pointer',
+                        }}
+                      >
+                        <Checkbox checked={checked} onChange={() => toggleSelected(c.id)} ariaLabel={c.name} />
+                        <SuggestionThumb src={c.image_url} alt={c.name} />
+                        <span
+                          style={{
+                            flex: 1,
+                            minWidth: 0,
+                            fontSize: theme.type.size.base,
+                            fontWeight: theme.type.weight.medium,
+                            color: theme.color.ink,
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          {c.name}
+                        </span>
+                        <span style={{ fontSize: theme.type.size.sm, color: theme.color.inkMuted, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+                          {formatPounds(c.unit_price)}
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: theme.space[2], marginTop: theme.space[1] }}>
+                  <Button variant="tertiary" size="sm" onClick={closeAdd} disabled={busy}>
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
                       <X size={16} /> Cancel
+                    </span>
+                  </Button>
+                  <Button variant="primary" size="sm" onClick={onAddSelected} loading={busy} disabled={busy || selectedToAdd.size === 0}>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                      <Plus size={16} /> Add{selectedToAdd.size > 0 ? ` ${selectedToAdd.size}` : ''}
                     </span>
                   </Button>
                 </div>

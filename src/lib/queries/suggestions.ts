@@ -136,6 +136,26 @@ export async function addSuggestion(
   if (error) throw new Error(error.message);
 }
 
+// Add several companions to a trigger product in one round-trip.
+// sort_order continues from `startOrder` in the given id order. Unique
+// (trigger, suggested) makes any duplicate an upsert no-op.
+export async function addSuggestions(
+  triggerId: string,
+  suggestedIds: string[],
+  startOrder: number,
+): Promise<void> {
+  if (suggestedIds.length === 0) return;
+  const rows = suggestedIds.map((suggestedId, i) => ({
+    trigger_catalogue_id: triggerId,
+    suggested_catalogue_id: suggestedId,
+    sort_order: startOrder + i,
+  }));
+  const { error } = await supabase
+    .from('lng_catalogue_suggestions')
+    .upsert(rows, { onConflict: 'trigger_catalogue_id,suggested_catalogue_id' });
+  if (error) throw new Error(error.message);
+}
+
 export async function removeSuggestion(id: string): Promise<void> {
   const { error } = await supabase.from('lng_catalogue_suggestions').delete().eq('id', id);
   if (error) throw new Error(error.message);
