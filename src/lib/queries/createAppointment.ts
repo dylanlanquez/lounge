@@ -12,6 +12,7 @@ import {
   throwOverlapAsConflictError,
 } from './rescheduleAppointment.ts';
 import { sendAppointmentConfirmation } from './sendAppointmentConfirmation.ts';
+import { addStaffNote } from './appointmentStaffNotes.ts';
 
 // Native "book a new appointment" helper. Mirrors rescheduleAppointment
 // but for the brand-new case: tap an empty slot in the schedule, pick
@@ -152,7 +153,12 @@ export async function createAppointment(input: {
       service_type: input.serviceType,
       event_type_label: eventLabel,
       staff_account_id: input.staffAccountId ?? null,
-      notes: input.notes?.trim() || null,
+      // lng_appointments.notes is a reserved/unused column (nothing
+      // surfaces it). A note typed in New booking is a STAFF note —
+      // the receptionist booking on the patient's behalf — so it goes
+      // into lng_appointment_staff_notes below, mirroring the
+      // Checkpoint booking path. Leave this null.
+      notes: null,
       repair_variant: input.repairVariant ?? null,
       product_key: input.productKey ?? null,
       arch: input.arch ?? null,
@@ -212,6 +218,23 @@ export async function createAppointment(input: {
       staff_account_id: input.staffAccountId ?? null,
     },
   });
+
+  // ── 5b. Staff note ─────────────────────────────────────────────
+  // The New booking "Notes" field is a staff note (booked on the
+  // patient's behalf), so it must land in lng_appointment_staff_notes
+  // to show in the appointment's Staff notes card — same as the
+  // Checkpoint booking path. Best-effort: the booking is already
+  // committed, so a note write failure must not throw. addStaffNote
+  // also emits the staff_note_added audit event + byline attribution.
+  const noteBody = input.notes?.trim();
+  if (noteBody) {
+    try {
+      await addStaffNote({ appointmentId, patientId: input.patientId, body: noteBody });
+    } catch {
+      // Swallow — the appointment exists and the operator can add the
+      // note from the appointment page if this transient write failed.
+    }
+  }
 
   // ── 6. Google Meet link (virtual impression only) ──────────────
   // Two-path routing:
