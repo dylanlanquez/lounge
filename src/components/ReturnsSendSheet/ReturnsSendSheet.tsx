@@ -4,7 +4,12 @@ import { BottomSheet } from '../BottomSheet/BottomSheet.tsx';
 import { Button } from '../Button/Button.tsx';
 import { StatusBanner } from '../StatusBanner/StatusBanner.tsx';
 import { theme } from '../../theme/index.ts';
-import { type ReturnsChannelResult, fetchMyAuthorisationCode, sendReturnsInfo } from '../../lib/queries/returns.ts';
+import {
+  type ReturnsChannelResult,
+  type ReturnsPreview,
+  previewReturnsInfo,
+  sendReturnsInfo,
+} from '../../lib/queries/returns.ts';
 
 export interface ReturnsSendSheetProps {
   open: boolean;
@@ -33,12 +38,12 @@ export function ReturnsSendSheet({
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<{ email?: ReturnsChannelResult; sms?: ReturnsChannelResult } | null>(null);
-  // The signed-in user's own authorisation code. undefined = still
-  // loading; null = none set (block sending); string = good to go.
-  const [myCode, setMyCode] = useState<string | null | undefined>(undefined);
+  // Rendered preview of what the patient will receive (+ whether the
+  // sender has an authorisation code). undefined = still loading.
+  const [preview, setPreview] = useState<ReturnsPreview | undefined>(undefined);
 
   // Reset to the default (both available channels ticked) each open, and
-  // (re)load the sender's authorisation code.
+  // (re)load the rendered preview.
   useEffect(() => {
     if (!open) return;
     setEmail(hasEmail);
@@ -46,18 +51,21 @@ export function ReturnsSendSheet({
     setSending(false);
     setError(null);
     setResult(null);
-    setMyCode(undefined);
+    setPreview(undefined);
     let cancelled = false;
-    fetchMyAuthorisationCode().then((c) => {
-      if (!cancelled) setMyCode(c);
+    previewReturnsInfo(appointmentId).then((p) => {
+      if (!cancelled) setPreview(p);
     });
     return () => {
       cancelled = true;
     };
-  }, [open, hasEmail, hasPhone]);
+  }, [open, appointmentId, hasEmail, hasPhone]);
 
-  const hasMyCode = typeof myCode === 'string';
-  const canSend = hasMyCode && ((email && hasEmail) || (sms && hasPhone));
+  const hasMyCode = preview?.hasAuthCode === true;
+  const loadingPreview = preview === undefined;
+  const canSend = hasMyCode && !loadingPreview && ((email && hasEmail) || (sms && hasPhone));
+
+  const name = patientFirstName?.trim() || 'the patient';
 
   const handleSend = async () => {
     if (!canSend || sending) return;
@@ -74,23 +82,20 @@ export function ReturnsSendSheet({
       setError(
         res.reason === 'no_auth_code'
           ? 'You have no authorisation code set. Add yours in Admin, Staff, then try again.'
-          : res.error ?? 'Could not send the returns message.',
+          : res.error ?? 'Could not send the return instructions.',
       );
       return;
     }
     setResult({ email: res.email, sms: res.sms });
-    const anySent = res.email?.status === 'sent' || res.sms?.status === 'sent';
-    if (anySent) onSent?.();
+    if (res.email?.status === 'sent' || res.sms?.status === 'sent') onSent?.();
   };
-
-  const name = patientFirstName?.trim() || 'the patient';
 
   return (
     <BottomSheet
       open={open}
       onClose={onClose}
-      title="Send return label"
-      description={`Send ${name} their prepaid DPD return label and your authorisation code.`}
+      title="Send return instructions"
+      description={`Send ${name} the link to generate their prepaid DPD returns QR code, plus your authorisation code and how to send their impressions back.`}
       footer={
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: theme.space[2] }}>
           <Button variant="tertiary" onClick={onClose} disabled={sending}>
@@ -111,36 +116,19 @@ export function ReturnsSendSheet({
           <SentSummary result={result} />
         ) : (
           <>
-            {/* Guard: a return label sent without the sender's code would
-                reach the patient with a blank authorisation code. Block it
-                here, clearly, before anything is chosen or sent. */}
-            {myCode === null ? (
+            {preview?.hasAuthCode === false ? (
               <StatusBanner tone="warning" title="No authorisation code set">
                 You have no returns authorisation code. Add yours in Admin, Staff, then you can send
-                return labels. (The patient&apos;s message includes your code, so it can&apos;t go
+                return instructions. (The patient&apos;s message includes your code, so it can&apos;t go
                 without one.)
               </StatusBanner>
             ) : hasMyCode ? (
-              <div
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: theme.space[2],
-                  fontSize: theme.type.size.sm,
-                  color: theme.color.inkMuted,
-                }}
-              >
+              <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[2], fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>
                 <KeyRound size={15} aria-hidden style={{ color: theme.color.inkSubtle, flexShrink: 0 }} />
-                Sending with your authorisation code{' '}
-                <span style={{ fontWeight: theme.type.weight.semibold, color: theme.color.ink, fontFamily: 'monospace' }}>
-                  {myCode}
-                </span>
-                .
+                Sending with your authorisation code.
               </div>
             ) : null}
-            <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkMuted, lineHeight: theme.type.leading.normal }}>
-              Choose how to send it. The message text is editable in Admin, under Emails and SMS.
-            </p>
+
             <ChannelRow
               icon={<Mail size={18} aria-hidden />}
               label="Email"
@@ -157,6 +145,42 @@ export function ReturnsSendSheet({
               disabled={!hasPhone}
               onToggle={() => setSms((v) => !v)}
             />
+
+            {/* What the patient will actually receive. */}
+            <div>
+              <p
+                style={{
+                  margin: `0 0 ${theme.space[2]}px`,
+                  fontSize: theme.type.size.xs,
+                  fontWeight: theme.type.weight.medium,
+                  color: theme.color.inkSubtle,
+                  textTransform: 'uppercase',
+                  letterSpacing: theme.type.tracking.wide,
+                }}
+              >
+                Preview
+              </p>
+              {loadingPreview ? (
+                <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>
+                  Loading preview…
+                </p>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[4] }}>
+                  {hasPhone && preview?.sms ? (
+                    <SmsPreview body={preview.sms.body} />
+                  ) : null}
+                  {hasEmail && preview?.email ? (
+                    <EmailPreview subject={preview.email.subject} html={preview.email.html} />
+                  ) : null}
+                  {!preview?.sms && !preview?.email ? (
+                    <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>
+                      Preview unavailable. Check the returns templates in Admin, Emails and SMS.
+                    </p>
+                  ) : null}
+                </div>
+              )}
+            </div>
+
             {error ? (
               <StatusBanner tone="error" title="Couldn't send">
                 {error}
@@ -166,6 +190,74 @@ export function ReturnsSendSheet({
         )}
       </div>
     </BottomSheet>
+  );
+}
+
+function SmsPreview({ body }: { body: string }) {
+  return (
+    <div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[2], marginBottom: theme.space[2] }}>
+        <MessageSquare size={14} aria-hidden style={{ color: theme.color.inkSubtle }} />
+        <span style={{ fontSize: theme.type.size.xs, fontWeight: theme.type.weight.semibold, color: theme.color.inkMuted }}>
+          Text message
+        </span>
+      </div>
+      <div
+        style={{
+          background: theme.color.accentBg,
+          color: theme.color.ink,
+          borderRadius: 16,
+          borderBottomLeftRadius: 4,
+          padding: `${theme.space[3]}px ${theme.space[4]}px`,
+          fontSize: theme.type.size.sm,
+          lineHeight: theme.type.leading.normal,
+          whiteSpace: 'pre-wrap',
+          maxWidth: 420,
+          wordBreak: 'break-word',
+        }}
+      >
+        {body}
+      </div>
+    </div>
+  );
+}
+
+function EmailPreview({ subject, html }: { subject: string; html: string }) {
+  return (
+    <div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[2], marginBottom: theme.space[2] }}>
+        <Mail size={14} aria-hidden style={{ color: theme.color.inkSubtle }} />
+        <span style={{ fontSize: theme.type.size.xs, fontWeight: theme.type.weight.semibold, color: theme.color.inkMuted }}>
+          Email
+        </span>
+      </div>
+      <div
+        style={{
+          border: `1px solid ${theme.color.border}`,
+          borderRadius: theme.radius.input,
+          overflow: 'hidden',
+          background: theme.color.surface,
+        }}
+      >
+        <div
+          style={{
+            padding: `${theme.space[2]}px ${theme.space[4]}px`,
+            borderBottom: `1px solid ${theme.color.border}`,
+            fontSize: theme.type.size.sm,
+            color: theme.color.ink,
+          }}
+        >
+          <span style={{ color: theme.color.inkSubtle }}>Subject: </span>
+          <span style={{ fontWeight: theme.type.weight.semibold }}>{subject}</span>
+        </div>
+        <iframe
+          title="Email preview"
+          srcDoc={html}
+          sandbox=""
+          style={{ width: '100%', height: 420, border: 'none', display: 'block', background: '#fff' }}
+        />
+      </div>
+    </div>
   );
 }
 
@@ -290,7 +382,7 @@ function SentSummary({
     <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
       <StatusBanner
         tone={anySent && !anyBad ? 'success' : anySent ? 'warning' : 'error'}
-        title={anySent ? 'Return label sent' : 'Nothing sent'}
+        title={anySent ? 'Return instructions sent' : 'Nothing sent'}
       >
         {anySent ? 'The patient should receive it shortly.' : 'Please check the details and try again.'}
       </StatusBanner>

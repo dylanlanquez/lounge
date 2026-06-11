@@ -2897,8 +2897,8 @@ function Actions({
       {appt.join_url ? (
         <ActionRow
           icon={<PackageCheck size={16} aria-hidden />}
-          label="Send return label"
-          description="Email or SMS the DPD return label and authorisation code"
+          label="Send return instructions"
+          description="Email or SMS the DPD returns QR-code link, code, and how to send their impressions back"
           onClick={onSendReturns}
         />
       ) : null}

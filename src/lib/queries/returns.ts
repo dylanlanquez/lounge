@@ -17,19 +17,26 @@ export interface ReturnsSendResponse {
   sms?: ReturnsChannelResult;
 }
 
-// The signed-in staff member's returns authorisation code (the one
-// that gets inserted into the message they send). Null when they have
-// none set — the send sheet uses this to block before anything is sent.
-export async function fetchMyAuthorisationCode(): Promise<string | null> {
-  const { data: accId } = await supabase.rpc('auth_account_id');
-  if (!accId) return null;
-  const { data } = await supabase
-    .from('lng_staff_members')
-    .select('authorisation_code')
-    .eq('account_id', accId as string)
-    .maybeSingle();
-  const code = (data as { authorisation_code: string | null } | null)?.authorisation_code ?? null;
-  return code && code.trim() ? code.trim() : null;
+export interface ReturnsPreview {
+  ok: boolean;
+  preview?: boolean;
+  // Whether the signed-in sender has an authorisation code set. When
+  // false the sheet blocks sending (the message can't go without one).
+  hasAuthCode?: boolean;
+  email?: { subject: string; html: string; text: string };
+  sms?: { body: string };
+  error?: string;
+}
+
+// Render the returns email + SMS for an appointment WITHOUT sending, so
+// the sheet can show the operator exactly what the patient will get
+// (rendered with the real patient name, the sender's code, the link).
+export async function previewReturnsInfo(appointmentId: string): Promise<ReturnsPreview> {
+  const { data, error } = await supabase.functions.invoke('send-returns-info', {
+    body: { appointment_id: appointmentId, preview: true },
+  });
+  if (error) return { ok: false, error: error.message };
+  return (data ?? { ok: false, error: 'No response from server.' }) as ReturnsPreview;
 }
 
 export async function sendReturnsInfo(args: {
