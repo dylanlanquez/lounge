@@ -163,6 +163,16 @@ Deno.serve(async (req) => {
       return json(200, { ok: true, ...out });
     }
 
+    if (body.mode === 'harvest') {
+      // Efficient path: the store has only a few hundred ORDERS, so
+      // instead of querying Shopify once per polluted patient (~29k
+      // calls), page the orders, read each order's CUSTOMER PROFILE name
+      // (account holder, never the address recipient), and fill-blanks
+      // the matching patients by shopify_customer_id. A few calls total.
+      const out = await harvestFromOrders((body as { cursor?: string }).cursor ?? null);
+      return json(200, { ok: true, ...out });
+    }
+
     return json(400, { ok: false, error: 'mode must be "targeted" or "bulk"' });
   } catch (e) {
     return json(200, {
@@ -349,6 +359,49 @@ function pushAddressCand(
   }
   const sp = splitName(name);
   if (sp.first || sp.last) cands.push({ ...sp, source });
+}
+
+// ── Harvest account-holder names from orders' customer profiles ──
+// READ ONLY: paginate orders, return a deduped [{id, first, last}] map of
+// customer PROFILE names (account holder, never the address recipient).
+// The caller applies it to patients with a single SQL update, which keeps
+// the heavy write work out of the edge runtime (it has a tight CPU cap).
+async function harvestFromOrders(
+  startCursor: string | null,
+): Promise<Record<string, unknown>> {
+  let cursor = startCursor;
+  let scanned = 0;
+  const byId = new Map<string, { first: string; last: string }>();
+  for (let page = 0; page < 40; page++) {
+    const data = await shopifyGraphql(
+      `query($cursor: String) {
+        orders(first: 250, after: $cursor, sortKey: CREATED_AT) {
+          pageInfo { hasNextPage endCursor }
+          nodes { customer { id firstName lastName } }
+        }
+      }`,
+      { cursor },
+    );
+    const conn = data?.data?.orders;
+    if (!conn) break;
+    for (const o of conn.nodes ?? []) {
+      scanned++;
+      const c = o.customer;
+      const id = c?.id ? String(c.id).split('/').pop() : null;
+      if (!id || byId.has(id)) continue;
+      const first = (c.firstName ?? '').trim();
+      const last = (c.lastName ?? '').trim();
+      if (!first && !last) continue;
+      byId.set(id, { first, last });
+    }
+    if (!conn.pageInfo?.hasNextPage) {
+      cursor = null;
+      break;
+    }
+    cursor = conn.pageInfo.endCursor;
+  }
+  const customers = [...byId.entries()].map(([id, n]) => ({ id, first: n.first, last: n.last }));
+  return { scanned, customers_with_name: customers.length, customers, next_cursor: cursor, done: cursor === null };
 }
 
 // ── Stripe: billing name from a charge matched by email ──
