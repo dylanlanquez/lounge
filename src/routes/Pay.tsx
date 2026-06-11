@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { Navigate, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { Banknote, CreditCard, ShoppingBag } from 'lucide-react';
+import { Banknote, CreditCard, Phone, ShoppingBag } from 'lucide-react';
 import { BOTTOM_NAV_HEIGHT } from '../components/BottomNav/BottomNav.tsx';
 import { KIOSK_STATUS_BAR_HEIGHT } from '../components/KioskStatusBar/KioskStatusBar.tsx';
 import { useIsMobile } from '../lib/useIsMobile.ts';
-import { BottomSheet, Breadcrumb, Button, Card, EmptyState, Input, SegmentedControl, Skeleton, StatusPill, Toast } from '../components/index.ts';
+import { BottomSheet, Breadcrumb, Button, Card, EmptyState, Input, Skeleton, StatusPill, Toast } from '../components/index.ts';
 import { TerminalPaymentModal } from '../components/TerminalPaymentModal/TerminalPaymentModal.tsx';
 import { MotoPaymentModal } from '../components/MotoPaymentModal/MotoPaymentModal.tsx';
 import { BNPLHelper, type BnplProvider } from '../components/BNPLHelper/BNPLHelper.tsx';
@@ -100,11 +100,8 @@ export function Pay() {
   const [receiptChannel, setReceiptChannel] = useState<'email' | 'sms' | 'none'>('email');
   const [receiptRecipient, setReceiptRecipient] = useState('');
   const [terminalOpen, setTerminalOpen] = useState(false);
-  // Collection mode. 'in_person' is the existing S700 reader flow,
-  // unchanged. 'phone' swaps the method picker for the MOTO (card not
-  // present) Elements modal. The moto flag is set server-side only on
-  // the 'phone' path; the in-person path never sets it.
-  const [payMode, setPayMode] = useState<'in_person' | 'phone'>('in_person');
+  // MOTO (card not present, over the phone) modal. The moto flag is set
+  // server-side only on this path; every in-person method never sets it.
   const [motoOpen, setMotoOpen] = useState(false);
   const [bnplOpen, setBnplOpen] = useState(false);
   // Klarna goes through the native In-Store API now (its own QR +
@@ -780,28 +777,14 @@ export function Pay() {
               onChange={setChargeAmountText}
             />
 
-            {/* Collection mode: In person (S700 reader) or Over the
-                phone (MOTO card entry). Defaults to in person; the
-                in-person branch below is the original picker, byte for
-                byte. The moto flag is only ever set on the phone path. */}
-            <SegmentedControl<'in_person' | 'phone'>
-              value={payMode}
-              onChange={setPayMode}
-              options={[
-                { value: 'in_person', label: 'In person' },
-                { value: 'phone', label: 'Over the phone' },
-              ]}
-            />
-
             {/* Method picker. Each card's label reflects the live
                 chargeAmountPence so the operator can see in plain
                 text exactly what the next tap will charge. Cards
                 are disabled if the operator has zeroed the amount
                 so an accidental tap can't push something unexpected
-                through. */}
+                through. "Over the phone" sets the MOTO flag server
+                side; every other method never does. */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
-              {payMode === 'in_person' ? (
-                <>
               <MethodCard
                 icon={<CreditCard size={20} />}
                 title="Card"
@@ -812,6 +795,13 @@ export function Pay() {
                 }
                 onClick={() => openTerminal('standard')}
                 disabled={!reader || chargeAmountPence <= 0}
+              />
+              <MethodCard
+                icon={<Phone size={20} />}
+                title="Over the phone"
+                description={`Key a card to charge ${formatPence(chargeAmountPence)} while the patient is on the phone`}
+                onClick={() => setMotoOpen(true)}
+                disabled={chargeAmountPence <= 0}
               />
               <MethodCard
                 icon={<Banknote size={20} />}
@@ -842,16 +832,6 @@ export function Pay() {
                 onClick={() => openBnpl('clearpay')}
                 disabled={!reader || chargeAmountPence <= 0}
               />
-                </>
-              ) : (
-                <MethodCard
-                  icon={<CreditCard size={20} />}
-                  title="Card over the phone"
-                  description={`Charge ${formatPence(chargeAmountPence)} to a card while the patient is on the phone`}
-                  onClick={() => setMotoOpen(true)}
-                  disabled={chargeAmountPence <= 0}
-                />
-              )}
             </div>
           </div>
         ) : stage === 'cash' ? (
