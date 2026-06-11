@@ -401,7 +401,13 @@ export function useActiveVisitsBoard(): ClinicBoardResult {
         return;
       }
 
-      const rows = (rawVisits ?? []) as VisitsRowFromDb[];
+      // Retail Quick Sales are walk-ins (service_type='retail') taken at
+      // the counter — they are never "in clinic", so keep them off the
+      // board and its count even while the sale is open (status='arrived'
+      // until paid).
+      const rows = ((rawVisits ?? []) as VisitsRowFromDb[]).filter(
+        (r) => pickOne(r.walk_in)?.service_type !== 'retail',
+      );
       if (rows.length === 0) {
         setVisits([]);
         settle();
@@ -702,9 +708,14 @@ export function useActiveVisitCount(
     let cancelled = false;
 
     async function fetchCount() {
-      const { count: c, error } = await supabase
+      // Embed the walk-in so retail Quick Sales can be excluded — they're
+      // never "in clinic". A plain head-count can't filter on the
+      // embedded service_type, so fetch the (small) id + walk-in set and
+      // count client-side. The board list applies the same exclusion, so
+      // the badge and the list always agree.
+      const { data, error } = await supabase
         .from('lng_visits')
-        .select('id', { count: 'exact', head: true })
+        .select('id, walk_in:lng_walk_ins ( service_type )')
         .or('status.eq.arrived,and(status.eq.complete,fulfilment_method.eq.shipping,dispatch_ref.is.null)');
       if (cancelled) return;
       if (error) {
@@ -712,7 +723,14 @@ export function useActiveVisitCount(
         setCount(null);
         return;
       }
-      setCount(c ?? 0);
+      type WalkInServiceType = { service_type: string | null };
+      const active = (data ?? []).filter((r) => {
+        const w = pickOne(
+          (r as { walk_in: WalkInServiceType | WalkInServiceType[] | null }).walk_in,
+        );
+        return w?.service_type !== 'retail';
+      });
+      setCount(active.length);
     }
 
     fetchRef.current = () => void fetchCount();

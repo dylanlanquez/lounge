@@ -121,14 +121,15 @@ export async function createQuickSaleSale(params: {
     .single();
   if (walkErr || !walkIn) throw new Error(walkErr?.message ?? 'Could not open the sale.');
 
-  // 2. Visit — created `complete` so it never lands on the Schedule (no
-  //    lng_appointments marker is written) or the In-clinic board (which
-  //    only shows status='arrived'). Pay does not gate on visit status,
-  //    so the payment screen works as-is. fulfilment_method is left null:
-  //    a retail sale is handed over the counter, not "fulfilled" in the
-  //    clinical sense, and leaving it null keeps the "Passed to patient"
-  //    pill + timeline line off the visit view (which is also gated on
-  //    service_type='retail' for robustness).
+  // 2. Visit — created `arrived` (an OPEN sale), not `complete`. It is
+  //    flipped to `complete` only when payment clears (see
+  //    completeQuickSaleVisit, called from the Pay screen), so an
+  //    abandoned/unpaid sale never masquerades as a completed one in the
+  //    Ledger. No lng_appointments marker is written, so it stays off the
+  //    Schedule; retail sales are filtered out of the In-clinic board by
+  //    service_type='retail' (clinicBoard.ts), so the open sale doesn't
+  //    show there either. fulfilment_method stays null — a retail sale is
+  //    handed over the counter, not clinically fulfilled.
   const { data: visit, error: visitErr } = await supabase
     .from('lng_visits')
     .insert({
@@ -136,10 +137,9 @@ export async function createQuickSaleSale(params: {
       location_id: locationId,
       walk_in_id: (walkIn as { id: string }).id,
       arrival_type: 'walk_in',
-      status: 'complete',
+      status: 'arrived',
       fulfilment_method: null,
       receptionist_id: (accountId as string | null) ?? null,
-      closed_at: new Date().toISOString(),
     })
     .select('id')
     .single();
@@ -161,4 +161,19 @@ export async function createQuickSaleSale(params: {
   }
 
   return { visitId };
+}
+
+// Flip a retail sale's visit to `complete` once payment has cleared.
+// Called from the Pay screen the moment the visit's paid status becomes
+// 'paid'. Minimal by design: the payment already sealed the cart to
+// 'paid', a retail sale has no job box or fulfilment step, and the
+// "Sale completed" timeline line is intentionally suppressed for retail
+// — so all that's needed is the status + close stamp.
+export async function completeQuickSaleVisit(visitId: string): Promise<void> {
+  const { error } = await supabase
+    .from('lng_visits')
+    .update({ status: 'complete', closed_at: new Date().toISOString() })
+    .eq('id', visitId)
+    .neq('status', 'complete');
+  if (error) throw new Error(error.message);
 }

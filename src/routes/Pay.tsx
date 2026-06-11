@@ -12,6 +12,7 @@ import { KlarnaInStoreModal } from '../components/KlarnaInStoreModal/KlarnaInSto
 import { theme } from '../theme/index.ts';
 import { useAuth } from '../lib/auth.tsx';
 import { formatVisitCrumb, useVisitDetail } from '../lib/queries/visits.ts';
+import { completeQuickSaleVisit } from '../lib/queries/quickSale.ts';
 import {
   useCart,
   formatPence,
@@ -191,6 +192,21 @@ export function Pay() {
   // summing. Refresh after each successful payment so the next method
   // picker sees the new balance.
   const { data: paidStatus, refresh: refreshPaid } = useVisitPaidStatus(id);
+  // A retail Quick Sale's visit is created `arrived` (open) and only
+  // becomes `complete` once the bill clears — so an abandoned sale never
+  // shows as a finished sale. Watching the paid status is the single
+  // robust hook across every payment method (cash, terminal, MOTO,
+  // Klarna, Clearpay) plus the split auto-advance: when it reads 'paid'
+  // we flip the visit complete. The DB update is idempotent
+  // (.neq status complete) so a duplicate render can't double-apply, and
+  // it's best-effort — a failed flip just leaves the (already-off-board)
+  // visit `arrived` until the next reconcile rather than blocking the
+  // receipt.
+  useEffect(() => {
+    if (fromQuickSale && paidStatus?.paid_status === 'paid' && visit?.id) {
+      completeQuickSaleVisit(visit.id).catch(() => {});
+    }
+  }, [fromQuickSale, paidStatus?.paid_status, visit?.id]);
   // Subtract the un-applied Shopify credit on impression visits so the
   // Pay screen doesn't show the £14.95 upgrade fee as collected against
   // a £0 impression cart. See shopifyOrderAppliesToVisit for the gate
@@ -628,7 +644,14 @@ export function Pay() {
             letterSpacing: theme.type.tracking.tight,
           }}
         >
-          {patient ? patientFullName(patient) : 'Appointment'} · {formatPence(outstandingPence)}
+          {fromQuickSale && patient?.email === COUNTER_SALE_EMAIL
+            ? 'Walk-up sale'
+            : patient
+              ? patientFullName(patient)
+              : fromQuickSale
+                ? 'Retail sale'
+                : 'Appointment'}{' '}
+          · {formatPence(outstandingPence)}
           <span
             style={{
               fontSize: theme.type.size.lg,
@@ -1146,6 +1169,16 @@ function PayBreadcrumbs({
   const e = entry ?? {};
 
   const items = (() => {
+    // Entered from the retail Quick Sale flow: this is a sale, not a
+    // clinical appointment, so the chain reads Quick sale › Sale › Take
+    // payment with the middle crumb popping back to the sale receipt.
+    if (e.from === 'quick_sale' && visitId) {
+      return [
+        { label: 'Quick sale', onClick: () => navigate('/quick-sale') },
+        { label: 'Sale', onClick: () => navigate(`/sale/${visitId}`) },
+        { label: 'Take payment' },
+      ];
+    }
     // Entered from a visit page: render the full chain so each crumb
     // pops back to the right step. The "Visit" crumb preserves the
     // visit's own entry state so its breadcrumb stays intact when

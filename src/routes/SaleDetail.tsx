@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Navigate, useNavigate, useParams } from 'react-router-dom';
-import { Mail, Plus, RotateCcw, ShoppingBag, UserRound } from 'lucide-react';
+import { CreditCard, Mail, Plus, RotateCcw, ShoppingBag, Trash2, UserRound } from 'lucide-react';
 import {
   Avatar,
   Button,
@@ -9,6 +9,7 @@ import {
   EmptyState,
   Skeleton,
   StatusPill,
+  Toast,
   type StatusTone,
 } from '../components/index.ts';
 import { CartLineItem } from '../components/CartLineItem/CartLineItem.tsx';
@@ -20,7 +21,7 @@ import { KIOSK_STATUS_BAR_HEIGHT } from '../components/KioskStatusBar/KioskStatu
 import { theme } from '../theme/index.ts';
 import { useAuth } from '../lib/auth.tsx';
 import { useIsMobile } from '../lib/useIsMobile.ts';
-import { useVisitDetail } from '../lib/queries/visits.ts';
+import { endVisitEarly, useVisitDetail } from '../lib/queries/visits.ts';
 import { useCart, formatPence } from '../lib/queries/carts.ts';
 import {
   useCartPayments,
@@ -96,6 +97,8 @@ export function SaleDetail() {
 
   const [refundOpen, setRefundOpen] = useState(false);
   const [receiptOpen, setReceiptOpen] = useState(false);
+  const [discardBusy, setDiscardBusy] = useState(false);
+  const [discardError, setDiscardError] = useState<string | null>(null);
 
   if (authLoading) return null;
   if (!user) return <Navigate to="/sign-in" replace />;
@@ -106,8 +109,11 @@ export function SaleDetail() {
   const totalPence = cart?.total_pence ?? 0;
   const amountPaidPence = paidStatus?.amount_paid_pence ?? 0;
   const paidState = paidStatus?.paid_status ?? null;
-  const isPaid = paidState === 'paid' || paidState === 'owed';
+  // Only 'paid' (or a £0 free sale) is fully settled. 'owed' means money
+  // is owed back (overpaid); 'partially_paid'/null is still outstanding.
+  const isPaid = paidState === 'paid' || paidState === 'free_visit';
   const outstandingPence = Math.max(0, totalPence - amountPaidPence);
+  const hasPayments = amountPaidPence > 0;
 
   // The Counter Sale system patient is an anonymous walk-up; never show
   // its name or its sentinel email/phone (a receipt must never go to the
@@ -122,9 +128,30 @@ export function SaleDetail() {
 
   const status: { tone: StatusTone; label: string } = isPaid
     ? { tone: 'complete', label: 'Paid in full' }
-    : paidState === 'partially_paid'
+    : hasPayments
       ? { tone: 'pending', label: `Part paid · ${formatPence(outstandingPence)} due` }
       : { tone: 'pending', label: `${formatPence(outstandingPence)} due` };
+
+  // Discard an open, unpaid sale (rang up but never paid). endVisitEarly
+  // soft-deletes the cart lines and flips the visit to 'ended_early', so
+  // it drops out of the Ledger's completed sales rather than lingering.
+  const onDiscard = async () => {
+    if (!visit || !patient) return;
+    setDiscardBusy(true);
+    setDiscardError(null);
+    try {
+      await endVisitEarly({
+        patient_id: patient.id,
+        visit_id: visit.id,
+        reason: 'other',
+        note: 'Retail sale discarded before payment',
+      });
+      navigate('/quick-sale');
+    } catch (e: unknown) {
+      setDiscardError(e instanceof Error ? e.message : 'Could not discard the sale.');
+      setDiscardBusy(false);
+    }
+  };
 
   return (
     <main
@@ -308,11 +335,9 @@ export function SaleDetail() {
                 }}
               >
                 <SummaryRow label="Subtotal" valuePence={totalPence} />
-                <SummaryRow
-                  label={isPaid ? 'Paid' : 'Collected'}
-                  valuePence={-amountPaidPence}
-                  accent
-                />
+                {hasPayments ? (
+                  <SummaryRow label="Paid" valuePence={-amountPaidPence} accent />
+                ) : null}
                 {outstandingPence > 0 ? (
                   <SummaryRow label="Outstanding" valuePence={outstandingPence} emphasis />
                 ) : null}
@@ -331,28 +356,54 @@ export function SaleDetail() {
                   </span>
                 </Button>
               ) : null}
-              {amountPaidPence > 0 ? (
-                <Button variant="secondary" onClick={() => setReceiptOpen(true)}>
-                  <span style={btnInner}>
-                    <Mail size={16} aria-hidden />
-                    Send receipt
-                  </span>
-                </Button>
-              ) : null}
-              {amountPaidPence > 0 ? (
-                <Button variant="secondary" onClick={() => setRefundOpen(true)}>
-                  <span style={btnInner}>
-                    <RotateCcw size={16} aria-hidden />
-                    Refund
-                  </span>
-                </Button>
-              ) : null}
-              <Button variant="primary" onClick={() => navigate('/quick-sale')} showArrow>
-                <span style={btnInner}>
-                  <Plus size={16} aria-hidden />
-                  New sale
-                </span>
-              </Button>
+
+              {isPaid ? (
+                <>
+                  <Button variant="secondary" onClick={() => setReceiptOpen(true)}>
+                    <span style={btnInner}>
+                      <Mail size={16} aria-hidden />
+                      Send receipt
+                    </span>
+                  </Button>
+                  <Button variant="secondary" onClick={() => setRefundOpen(true)}>
+                    <span style={btnInner}>
+                      <RotateCcw size={16} aria-hidden />
+                      Refund
+                    </span>
+                  </Button>
+                  <Button variant="primary" onClick={() => navigate('/quick-sale')} showArrow>
+                    <span style={btnInner}>
+                      <Plus size={16} aria-hidden />
+                      New sale
+                    </span>
+                  </Button>
+                </>
+              ) : (
+                <>
+                  {/* Open sale — resume payment, or discard it (only while
+                      nothing has been collected). */}
+                  {!hasPayments ? (
+                    <Button variant="secondary" onClick={onDiscard} loading={discardBusy}>
+                      <span style={btnInner}>
+                        <Trash2 size={16} aria-hidden />
+                        Discard sale
+                      </span>
+                    </Button>
+                  ) : null}
+                  <Button
+                    variant="primary"
+                    showArrow
+                    onClick={() =>
+                      navigate(`/visit/${visit.id}/pay`, { state: { from: 'quick_sale' } })
+                    }
+                  >
+                    <span style={btnInner}>
+                      <CreditCard size={16} aria-hidden />
+                      Take payment
+                    </span>
+                  </Button>
+                </>
+              )}
             </div>
 
             <ContinuousTimeline appointmentId={null} visitId={visit.id} />
@@ -378,6 +429,26 @@ export function SaleDetail() {
         patientEmail={receiptEmail}
         patientPhone={receiptPhone}
       />
+
+      {discardError ? (
+        <div
+          style={{
+            position: 'fixed',
+            bottom: `calc(${BOTTOM_NAV_HEIGHT}px + ${theme.space[4]}px + env(safe-area-inset-bottom, 0px))`,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            zIndex: 1100,
+          }}
+        >
+          <Toast
+            tone="error"
+            title="Could not discard the sale"
+            description={discardError}
+            duration={6000}
+            onDismiss={() => setDiscardError(null)}
+          />
+        </div>
+      ) : null}
     </main>
   );
 }
