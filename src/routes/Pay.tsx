@@ -829,33 +829,28 @@ export function Pay() {
                 disabled={chargeAmountPence <= 0}
               />
               {/* Klarna and Clearpay sit as peers to Card and Cash
-                  on the picker now. Less drilling — staff picks the
-                  exact provider in one tap instead of going via a
-                  generic "Buy now, pay later" intermediate sheet.
-                  Suppressed on retail Quick Sale: BNPL is never offered
-                  for over-the-counter product sales. */}
-              {fromQuickSale ? null : (
-                <>
-                  <MethodCard
-                    icon={<ShoppingBag size={20} />}
-                    title="Klarna"
-                    description={`Show ${formatPence(chargeAmountPence)} QR on this tablet. Customer pays in Klarna app.`}
-                    onClick={() => openBnpl('klarna')}
-                    disabled={chargeAmountPence <= 0}
-                  />
-                  <MethodCard
-                    icon={<ShoppingBag size={20} />}
-                    title="Clearpay"
-                    description={
-                      !reader
-                        ? 'Needs a registered card reader. Customer taps phone on the reader.'
-                        : `Charge ${formatPence(chargeAmountPence)} via Clearpay. Customer taps phone on ${reader.friendly_name}.`
-                    }
-                    onClick={() => openBnpl('clearpay')}
-                    disabled={!reader || chargeAmountPence <= 0}
-                  />
-                </>
-              )}
+                  on the picker. Less drilling — staff picks the exact
+                  provider in one tap instead of going via a generic
+                  "Buy now, pay later" intermediate sheet. Offered on
+                  every payment surface, including retail Quick Sale. */}
+              <MethodCard
+                icon={<ShoppingBag size={20} />}
+                title="Klarna"
+                description={`Show ${formatPence(chargeAmountPence)} QR on this tablet. Customer pays in Klarna app.`}
+                onClick={() => openBnpl('klarna')}
+                disabled={chargeAmountPence <= 0}
+              />
+              <MethodCard
+                icon={<ShoppingBag size={20} />}
+                title="Clearpay"
+                description={
+                  !reader
+                    ? 'Needs a registered card reader. Customer taps phone on the reader.'
+                    : `Charge ${formatPence(chargeAmountPence)} via Clearpay. Customer taps phone on ${reader.friendly_name}.`
+                }
+                onClick={() => openBnpl('clearpay')}
+                disabled={!reader || chargeAmountPence <= 0}
+              />
             </div>
           </div>
         ) : stage === 'cash' ? (
