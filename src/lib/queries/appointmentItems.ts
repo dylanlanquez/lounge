@@ -30,6 +30,7 @@ export interface AppointmentItemRow {
   name: string;
   arch: 'upper' | 'lower' | 'both' | null;
   shade: string | null;
+  thickness: string | null;
   quantity: number;
   unitPricePence: number;
   lineTotalPence: number;
@@ -39,7 +40,7 @@ export interface AppointmentItemRow {
 }
 
 const ITEMS_SELECT =
-  'id, catalogue_id, service_type, product_key, name, arch, shade, quantity, unit_price_pence, line_total_pence, price_shown, sort_order, ' +
+  'id, catalogue_id, service_type, product_key, name, arch, shade, thickness, quantity, unit_price_pence, line_total_pence, price_shown, sort_order, ' +
   'upgrades:lng_appointment_item_upgrades ( id, upgrade_id, upgrade_code, name, unit_price_pence, both_arches_price_pence, resolved_price_pence )';
 
 interface RawItem {
@@ -50,6 +51,7 @@ interface RawItem {
   name: string;
   arch: 'upper' | 'lower' | 'both' | null;
   shade: string | null;
+  thickness: string | null;
   quantity: number;
   unit_price_pence: number;
   line_total_pence: number;
@@ -77,6 +79,7 @@ function mapItem(r: RawItem): AppointmentItemRow {
     name: r.name,
     arch: r.arch,
     shade: r.shade,
+    thickness: r.thickness,
     quantity: r.quantity,
     unitPricePence: r.unit_price_pence,
     lineTotalPence: r.line_total_pence,

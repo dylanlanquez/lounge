@@ -109,6 +109,7 @@ function ItemBlock({ item }: { item: AppointmentItemRow }) {
   const meta: string[] = [];
   if (item.arch) meta.push(ARCH_LABEL[item.arch] ?? item.arch);
   if (item.shade) meta.push(`Shade ${item.shade}`);
+  if (item.thickness) meta.push(`Thickness ${item.thickness}`);
   const linePence = item.priceShown
     ? item.lineTotalPence + item.upgrades.reduce((s, u) => s + u.resolvedPricePence, 0) * item.quantity
     : null;

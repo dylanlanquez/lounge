@@ -92,6 +92,10 @@ interface SubmitItem {
   productKey?: string | null;
   arch?: 'upper' | 'lower' | 'both' | null;
   shade?: string | null;
+  /** Retainer thickness ('1mm' | '1.5mm'). Only set for retainer items on
+   *  impression / virtual impression bookings. Persisted to
+   *  lng_appointment_items.thickness. */
+  thickness?: string | null;
   quantity?: number | null;
   upgradeIds?: string[];
 }
@@ -112,6 +116,10 @@ interface SubmitBody {
    *  CataloguePicker. Free-text snapshot persisted to
    *  lng_appointments.shade. */
   shade?: string | null;
+  /** Retainer thickness ('1mm' | '1.5mm') for the primary product. Only the
+   *  Checkpoint booker sends this, and only for a retainer on an impression /
+   *  virtual impression booking. Persisted to lng_appointments.thickness. */
+  thickness?: string | null;
   /** Checkpoint-only multi-item bag. When source='checkpoint' and this
    *  is present, each item is re-resolved server-side against
    *  lwo_catalogue / lng_widget_upgrades and written to
@@ -736,6 +744,11 @@ Deno.serve(async (req) => {
     Number.isInteger(body.quantity) && (body.quantity as number) > 0 ? body.quantity : null;
   const primaryShade =
     typeof body.shade === 'string' && body.shade.trim() ? body.shade.trim() : null;
+  // Whitelist guard: the column CHECK only accepts these two; anything else
+  // (typo, future option not taught here) is dropped to null rather than
+  // 500-ing the booking write.
+  const primaryThickness =
+    body.thickness === '1mm' || body.thickness === '1.5mm' ? body.thickness : null;
 
   const eventLabel = labelForService(body.serviceType);
   const { data: appt, error: apptErr } = await supabase
@@ -779,6 +792,7 @@ Deno.serve(async (req) => {
       // customer widget (single unit, no shade axis).
       quantity: primaryQuantity,
       shade: primaryShade,
+      thickness: primaryThickness,
       // Whitelist guard: the column accepts any text but we only
       // recognise these two values. Anything else (a typo, a
       // future brand the email function hasn't been taught about)
@@ -1838,6 +1852,7 @@ async function persistAppointmentItems(
     const quantity = Math.max(1, Math.min(99, Math.round(item.quantity ?? 1)));
     const priceShown = PRICED_SERVICE_TYPES.has(serviceType);
     const shade = typeof item.shade === 'string' && item.shade.trim() ? item.shade.trim() : null;
+    const thickness = item.thickness === '1mm' || item.thickness === '1.5mm' ? item.thickness : null;
 
     const { data: insertedItem, error: itemErr } = await supabase
       .from('lng_appointment_items')
@@ -1849,6 +1864,7 @@ async function persistAppointmentItems(
         name: cat.name ?? '',
         arch,
         shade,
+        thickness,
         quantity,
         unit_price_pence: resolvedUnitPence,
         line_total_pence: resolvedUnitPence * quantity,
