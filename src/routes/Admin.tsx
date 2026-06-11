@@ -3280,7 +3280,7 @@ function StaffTab() {
                   label="Authorisation code"
                   value={draftAuthCode}
                   onChange={(e) => setDraftAuthCode(e.target.value)}
-                  placeholder="e.g. H809K8"
+                  placeholder="e.g. AB12CD"
                   maxLength={40}
                 />
                 <div style={{ display: 'flex', justifyContent: 'flex-end' }}>

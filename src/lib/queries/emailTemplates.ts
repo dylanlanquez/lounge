@@ -915,7 +915,7 @@ const RETURNS_VARIABLES: ReadonlyArray<EmailTemplateVariable> = [
     label: 'Your authorisation code',
     description:
       "The code of the staff member sending the message (set per staff in Admin, Staff). Inserted so the return is authorised.",
-    sample: 'H809K8',
+    sample: 'AB12CD',
   },
 ];
 

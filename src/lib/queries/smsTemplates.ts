@@ -164,7 +164,7 @@ export const SMS_TEMPLATE_VARIABLES: ReadonlyArray<SmsTemplateVariable> = [
     label: 'Your authorisation code',
     description:
       "The code of the staff member SENDING the message (set per staff in Admin > Staff). Inserted into the returns message so the return is authorised. Empty when the sender has no code on file.",
-    sample: 'H809K8',
+    sample: 'AB12CD',
   },
   {
     name: 'joinUrl',
