@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Check, KeyRound, Mail, MessageSquare, PackageCheck } from 'lucide-react';
 import { BottomSheet } from '../BottomSheet/BottomSheet.tsx';
 import { Button } from '../Button/Button.tsx';
+import { Input } from '../Input/Input.tsx';
 import { StatusBanner } from '../StatusBanner/StatusBanner.tsx';
 import { theme } from '../../theme/index.ts';
 import {
@@ -41,9 +42,12 @@ export function ReturnsSendSheet({
   // Rendered preview of what the patient will receive (+ whether the
   // sender has an authorisation code). undefined = still loading.
   const [preview, setPreview] = useState<ReturnsPreview | undefined>(undefined);
+  // Editable greeting name. The patient record can hold a placeholder
+  // like "Customer"; staff correct it here before sending and the
+  // preview re-renders with the override.
+  const [firstName, setFirstName] = useState(patientFirstName?.trim() ?? '');
 
-  // Reset to the default (both available channels ticked) each open, and
-  // (re)load the rendered preview.
+  // Reset to the default (both available channels ticked) each open.
   useEffect(() => {
     if (!open) return;
     setEmail(hasEmail);
@@ -52,20 +56,34 @@ export function ReturnsSendSheet({
     setError(null);
     setResult(null);
     setPreview(undefined);
+    setFirstName(patientFirstName?.trim() ?? '');
+    // The preview itself is (re)loaded by the debounced effect below,
+    // which also fires on every name edit.
+  }, [open, appointmentId, hasEmail, hasPhone, patientFirstName]);
+
+  // (Re)load the rendered preview whenever the sheet opens or the staff
+  // edits the greeting name. Debounced so typing doesn't spam the edge
+  // function. The previous preview stays on screen while a fresh one
+  // loads, so the panel doesn't flash empty on each keystroke.
+  useEffect(() => {
+    if (!open) return;
     let cancelled = false;
-    previewReturnsInfo(appointmentId).then((p) => {
-      if (!cancelled) setPreview(p);
-    });
+    const handle = window.setTimeout(() => {
+      previewReturnsInfo(appointmentId, firstName).then((p) => {
+        if (!cancelled) setPreview(p);
+      });
+    }, 350);
     return () => {
       cancelled = true;
+      window.clearTimeout(handle);
     };
-  }, [open, appointmentId, hasEmail, hasPhone]);
+  }, [open, appointmentId, firstName]);
 
   const hasMyCode = preview?.hasAuthCode === true;
   const loadingPreview = preview === undefined;
   const canSend = hasMyCode && !loadingPreview && ((email && hasEmail) || (sms && hasPhone));
 
-  const name = patientFirstName?.trim() || 'the patient';
+  const name = firstName.trim() || 'the patient';
 
   const handleSend = async () => {
     if (!canSend || sending) return;
@@ -76,6 +94,7 @@ export function ReturnsSendSheet({
       appointmentId,
       email: email && hasEmail,
       sms: sms && hasPhone,
+      firstName,
     });
     setSending(false);
     if (!res.ok) {
@@ -128,6 +147,15 @@ export function ReturnsSendSheet({
                 Sending with your authorisation code.
               </div>
             ) : null}
+
+            <Input
+              label="Customer first name"
+              helper="Used in the greeting. Edit it if the record shows a placeholder like Customer."
+              value={firstName}
+              onChange={(e) => setFirstName(e.target.value)}
+              placeholder="e.g. Allison"
+              autoComplete="off"
+            />
 
             <ChannelRow
               icon={<Mail size={18} aria-hidden />}
@@ -208,9 +236,9 @@ function SmsPreview({ body }: { body: string }) {
           color: theme.color.ink,
           borderRadius: 16,
           borderBottomLeftRadius: 4,
-          padding: `${theme.space[3]}px ${theme.space[4]}px`,
+          padding: `${theme.space[4]}px ${theme.space[4]}px`,
           fontSize: theme.type.size.sm,
-          lineHeight: theme.type.leading.normal,
+          lineHeight: theme.type.leading.relaxed,
           whiteSpace: 'pre-wrap',
           maxWidth: 420,
           wordBreak: 'break-word',

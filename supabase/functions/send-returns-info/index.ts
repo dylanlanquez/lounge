@@ -81,7 +81,13 @@ async function handle(req: Request): Promise<Response> {
   const { data: who } = await userClient.auth.getUser();
   if (!who?.user) return jsonResponse(200, { ok: false, error: 'Not signed in.' });
 
-  let body: { appointment_id?: string; email?: boolean; sms?: boolean; preview?: boolean } = {};
+  let body: {
+    appointment_id?: string;
+    email?: boolean;
+    sms?: boolean;
+    preview?: boolean;
+    first_name?: string;
+  } = {};
   try {
     body = await req.json();
   } catch {
@@ -89,6 +95,11 @@ async function handle(req: Request): Promise<Response> {
   }
   if (!body.appointment_id) return jsonResponse(200, { ok: false, error: 'appointment_id required' });
   const preview = body.preview === true;
+  // Optional staff override for the greeting name. The patient record can
+  // hold a placeholder like "Customer"; staff can correct it per send so
+  // the message doesn't go out reading "Hi Customer". Empty/blank => fall
+  // back to the patient's stored first name.
+  const firstNameOverride = (body.first_name ?? '').trim();
   const wantEmail = body.email !== false; // default both on
   const wantSms = body.sms !== false;
 
@@ -132,7 +143,7 @@ async function handle(req: Request): Promise<Response> {
   const returnsLink = (typeof linkVal === 'string' ? linkVal : String(linkVal ?? '')).trim() || RETURNS_LINK_DEFAULT;
 
   const variables: Record<string, string> = {
-    patientFirstName: properCase((patient.first_name ?? '').trim()) || 'there',
+    patientFirstName: firstNameOverride || properCase((patient.first_name ?? '').trim()) || 'there',
     authorisationCode: authorisationCode || '—',
     returnsLink,
     clinicName,

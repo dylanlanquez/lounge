@@ -31,9 +31,12 @@ export interface ReturnsPreview {
 // Render the returns email + SMS for an appointment WITHOUT sending, so
 // the sheet can show the operator exactly what the patient will get
 // (rendered with the real patient name, the sender's code, the link).
-export async function previewReturnsInfo(appointmentId: string): Promise<ReturnsPreview> {
+export async function previewReturnsInfo(
+  appointmentId: string,
+  firstName?: string,
+): Promise<ReturnsPreview> {
   const { data, error } = await supabase.functions.invoke('send-returns-info', {
-    body: { appointment_id: appointmentId, preview: true },
+    body: { appointment_id: appointmentId, preview: true, first_name: firstName?.trim() || undefined },
   });
   if (error) return { ok: false, error: error.message };
   return (data ?? { ok: false, error: 'No response from server.' }) as ReturnsPreview;
@@ -43,12 +46,20 @@ export async function sendReturnsInfo(args: {
   appointmentId: string;
   email: boolean;
   sms: boolean;
+  // Optional override for the greeting name (e.g. when the patient
+  // record holds a placeholder like "Customer").
+  firstName?: string;
 }): Promise<ReturnsSendResponse> {
   // The edge function always responds 200 (even on a soft failure), so
   // the result lives in `data`; a transport-level error is the only
   // thing surfaced via `error`.
   const { data, error } = await supabase.functions.invoke('send-returns-info', {
-    body: { appointment_id: args.appointmentId, email: args.email, sms: args.sms },
+    body: {
+      appointment_id: args.appointmentId,
+      email: args.email,
+      sms: args.sms,
+      first_name: args.firstName?.trim() || undefined,
+    },
   });
   if (error) return { ok: false, error: error.message };
   return (data ?? { ok: false, error: 'No response from server.' }) as ReturnsSendResponse;
