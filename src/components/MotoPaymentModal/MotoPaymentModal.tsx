@@ -116,17 +116,22 @@ function MotoForm({
     if (!stripe || !elements) return;
     const card = elements.getElement(CardElement);
     if (!card) return;
-    setPhase('processing');
     setCardError(null);
 
-    const pm = await stripe.createPaymentMethod({ type: 'card', card });
-    if (pm.error || !pm.paymentMethod) {
-      // Local validation / card-creation problem. Back to the form with the
+    // Tokenise the card while it is still mounted. We must NOT switch to the
+    // processing view first: that unmounts the CardElement, after which
+    // createPaymentMethod throws "Element not mounted" and the modal hangs on
+    // the spinner. .catch keeps a thrown IntegrationError from escaping.
+    const pm = await stripe.createPaymentMethod({ type: 'card', card }).catch(() => null);
+    if (!pm || pm.error || !pm.paymentMethod) {
+      // Local validation / card-creation problem. Stay on the form with the
       // inline message; nothing was charged.
-      setCardError(pm.error?.message ?? 'The card details could not be read. Check them and try again.');
-      setPhase('form');
+      setCardError(pm?.error?.message ?? 'The card details could not be read. Check them and try again.');
       return;
     }
+
+    // We have the pm_ id; now it is safe to swap to the processing view.
+    setPhase('processing');
 
     const { data, error } = await supabase.functions.invoke<MotoResult>('lng-moto-payment', {
       body: { visit_id: visitId, amount_pence: amountPence, payment_method_id: pm.paymentMethod.id, attempt_id: attemptId },
