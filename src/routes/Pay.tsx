@@ -357,6 +357,17 @@ export function Pay() {
   // a second render from re-firing for the same payment id.
   const lastAdvancedRef = useRef<string | null>(null);
   useEffect(() => {
+    // Never act on half-loaded data. useCart sets `cart` BEFORE its
+    // second query (line items) resolves, so there is a render window
+    // where cart is present but items is still [] — during which the
+    // subtotal reads 0 and, if paid-status has already loaded, the
+    // outstanding transiently computes to 0. Without this guard the
+    // block below would fire a spurious auto-advance to the receipt
+    // stage (and latch tookPaymentThisSessionRef) on a bill that is in
+    // fact still owed, which then blocks the stale-success self-correct
+    // from ever recovering. Wait until both the cart (incl. items) and
+    // the paid status have genuinely settled before judging the bill.
+    if (cartLoading || paidStatusLoading) return;
     if (!cart) return;
     if (stage === 'success') return;
     if (outstandingPence > 0) return;
@@ -373,7 +384,7 @@ export function Pay() {
     setBnplOpen(false);
     setChargeAmountText('');
     setStage('success');
-  }, [cart, stage, outstandingPence, succeededPayments]);
+  }, [cart, cartLoading, paidStatusLoading, stage, outstandingPence, succeededPayments]);
 
   // Self-correcting guard against a STALE success stage. The success
   // (receipt) stage is restored from ?stage=success&payment=<id> in
