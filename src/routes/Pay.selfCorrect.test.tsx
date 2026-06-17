@@ -11,7 +11,7 @@
 // £229.60 collected -> £229.60 still outstanding). The cart maths run
 // for real so the outstanding figure is computed exactly as in prod.
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 
