@@ -191,7 +191,7 @@ export function Pay() {
   // the only number we need to compute against — the view does the
   // summing. Refresh after each successful payment so the next method
   // picker sees the new balance.
-  const { data: paidStatus, refresh: refreshPaid } = useVisitPaidStatus(id);
+  const { data: paidStatus, loading: paidStatusLoading, refresh: refreshPaid } = useVisitPaidStatus(id);
   // A retail Quick Sale's visit is created `arrived` (open) and only
   // becomes `complete` once the bill clears — so an abandoned sale never
   // shows as a finished sale. Watching the paid status is the single
@@ -343,6 +343,15 @@ export function Pay() {
     }
   }, [cart, succeededPayments.length]);
 
+  // True once the operator has actually taken a payment in THIS
+  // mounted session (cash recorded, terminal / Klarna / Clearpay /
+  // MOTO succeeded, or the realtime safety-net auto-advance fired).
+  // It gates the stale-success guard below: a success stage that was
+  // genuinely earned this session keeps its receipt picker even if a
+  // concurrent refund later reopens the bill, whereas a success stage
+  // merely restored from a spent ?stage=success URL gets corrected.
+  const tookPaymentThisSessionRef = useRef(false);
+
   // Auto-advance to the receipt picker when a new succeeded payment
   // lands and clears the outstanding. The lastAdvancedRef gate stops
   // a second render from re-firing for the same payment id.
@@ -357,6 +366,7 @@ export function Pay() {
     if (!latest) return;
     if (lastAdvancedRef.current === latest.id) return;
     lastAdvancedRef.current = latest.id;
+    tookPaymentThisSessionRef.current = true;
     setPaymentId(latest.id);
     setTerminalOpen(false);
     setKlarnaOpen(false);
@@ -364,6 +374,28 @@ export function Pay() {
     setChargeAmountText('');
     setStage('success');
   }, [cart, stage, outstandingPence, succeededPayments]);
+
+  // Self-correcting guard against a STALE success stage. The success
+  // (receipt) stage is restored from ?stage=success&payment=<id> in
+  // the URL on mount so a refresh right after the bill clears keeps
+  // the receipt picker on screen. But the success screen is only ever
+  // a post-payment screen: if the operator arrives here while money is
+  // STILL owed — browser back onto a spent success URL, or a discount
+  // / refund that reopened the bill after the receipt screen was last
+  // shown — then pressing "Take payment" should land on the method
+  // picker to collect the remainder, not replay a previous payment's
+  // receipt. Once the cart and paid status have loaded for real, drop
+  // any stale success back to 'choose'. A payment taken in this very
+  // session (tookPaymentThisSessionRef) is never bounced — it earned
+  // its receipt screen. Flipping stage clears the ?stage param via the
+  // URL-sync effect above, so the address bar self-heals too.
+  useEffect(() => {
+    if (cartLoading || paidStatusLoading) return;
+    if (stage !== 'success') return;
+    if (tookPaymentThisSessionRef.current) return;
+    if (outstandingPence <= 0) return;
+    setStage('choose');
+  }, [cartLoading, paidStatusLoading, stage, outstandingPence]);
 
   // Void sheet state. Captures the reason — manager approval has
   // moved out of band: configured managers get an emailed
@@ -442,6 +474,14 @@ export function Pay() {
   const isPartialPayment = chargeAmountPence > 0 && chargeAmountPence < outstandingPence;
   // Variable kept around for receipt copy (the "£X paid" headline).
   const total = chargeAmountPence;
+  // The success-stage headline must report what the receipted payment
+  // actually collected, read back from the captured payment row — not
+  // the live chargeAmountPence. On a success stage restored from the
+  // URL (refresh / back), chargeAmountPence has drifted to the current
+  // outstanding and would mislabel the amount. Fall back to `total`
+  // for the brief window before cartPayments has loaded the row.
+  const receiptedPaymentPence =
+    succeededPayments.find((p) => p.id === paymentId)?.amount_pence ?? total;
 
   // Keep ?stage=success&payment=<id> in the URL whenever we're on
   // the success stage. Clear it on any other stage. `replace: true`
@@ -500,6 +540,7 @@ export function Pay() {
       // can take the next part of the split.
       refreshPaid();
       if (willClearBill) {
+        tookPaymentThisSessionRef.current = true;
         setStage('success');
       } else {
         setTendered('');
@@ -923,7 +964,7 @@ export function Pay() {
         ) : (
           <Card padding="lg">
             <h2 style={{ margin: 0, fontSize: theme.type.size.lg, fontWeight: theme.type.weight.semibold }}>
-              {formatPence(total)} paid
+              {formatPence(receiptedPaymentPence)} paid
             </h2>
             <p style={{ margin: `${theme.space[2]}px 0 ${theme.space[5]}px`, color: theme.color.inkMuted }}>
               Receipt channel:
@@ -1010,6 +1051,7 @@ export function Pay() {
               setTerminalOpen(false);
               refreshPaid();
               if (willClearBill) {
+                tookPaymentThisSessionRef.current = true;
                 setStage('success');
               } else {
                 setChargeAmountText('');
@@ -1037,6 +1079,7 @@ export function Pay() {
                 setBnplOpen(false);
                 refreshPaid();
                 if (willClearBill) {
+                  tookPaymentThisSessionRef.current = true;
                   setStage('success');
                 } else {
                   setChargeAmountText('');
@@ -1064,6 +1107,7 @@ export function Pay() {
             setKlarnaOpen(false);
             refreshPaid();
             if (willClearBill) {
+              tookPaymentThisSessionRef.current = true;
               setStage('success');
             } else {
               setChargeAmountText('');
@@ -1087,6 +1131,7 @@ export function Pay() {
             setMotoOpen(false);
             refreshPaid();
             if (willClearBill) {
+              tookPaymentThisSessionRef.current = true;
               setStage('success');
             } else {
               setChargeAmountText('');

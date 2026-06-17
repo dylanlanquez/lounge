@@ -137,7 +137,27 @@ Deno.serve(async (req) => {
     });
   }
 
-  const totalPence = cart?.total_pence ?? payment.amount_pence;
+  // A receipt is for ONE payment, so the headline figure is what THIS
+  // transaction collected — payment.amount_pence — never the whole
+  // cart total. A part payment (e.g. £229.60 of a £484.20 bill)
+  // previously rendered cart.total_pence here, so the customer's
+  // receipt claimed they'd paid the entire bill. We surface the order
+  // total and the balance still owed separately, computed from the
+  // canonical lng_visit_paid_status view at send time.
+  const paidPence = payment.amount_pence;
+  const billTotalPence = cart?.total_pence ?? payment.amount_pence;
+  let remainingPence = 0;
+  if (cart) {
+    const { data: paidStatusRow } = await supabase
+      .from('lng_visit_paid_status')
+      .select('amount_paid_pence')
+      .eq('visit_id', cart.visit_id)
+      .maybeSingle();
+    const amountPaid =
+      (paidStatusRow as { amount_paid_pence: number } | null)?.amount_paid_pence ?? 0;
+    remainingPence = Math.max(0, billTotalPence - amountPaid);
+  }
+  const isPartPayment = remainingPence > 0;
   const paidBy =
     payment.payment_journey === 'klarna' ? 'Klarna' :
     payment.payment_journey === 'clearpay' ? 'Clearpay' :
@@ -171,9 +191,26 @@ Deno.serve(async (req) => {
     const paymentDate = payment.succeeded_at
       ? new Date(payment.succeeded_at).toLocaleDateString('en-GB', dateOpts)
       : new Date().toLocaleDateString('en-GB', dateOpts);
+    // A ready-to-drop block the template prints right before "Paid by".
+    // Empty for a settled bill (so a full-payment receipt stays clean),
+    // or a two-line order-total / balance-owed block for a part payment.
+    // The engine has no conditionals, so the branch lives here and the
+    // template just prints {{remainingLine}}.
+    const remainingLine = isPartPayment
+      ? `Order total: ${formatPence(billTotalPence)}\nBalance still to pay: ${formatPence(remainingPence)}\n`
+      : '';
     const variables: Record<string, string> = {
       patientFirstName: properCase(patient?.first_name ?? '') || 'there',
-      totalAmount:      formatPence(totalPence),
+      // totalAmount now means "what this payment collected" so existing
+      // templates that print {{totalAmount}} become correct for part
+      // payments without an edit. The new amountPaid / billTotal /
+      // remainingBalance / remainingLine variables let the template
+      // spell out a part payment.
+      totalAmount:      formatPence(paidPence),
+      amountPaid:       formatPence(paidPence),
+      billTotal:        formatPence(billTotalPence),
+      remainingBalance: formatPence(remainingPence),
+      remainingLine,
       paidBy,
       itemsList:        itemsListText,
       receiptRef:       payment.id.slice(0, 8),
@@ -205,13 +242,16 @@ Deno.serve(async (req) => {
       if (smsBody !== null) text = smsBody;
     }
   } else {
-    subject = `Your Venneir Lounge receipt · ${formatPence(totalPence)} · ${paidBy}`;
-    html = renderHtml({ items, totalPence, subjectMethod: paidBy, payment, patient });
-    text = renderText({ items, totalPence, subjectMethod: paidBy, payment, patient });
+    subject = `Your Venneir Lounge receipt · ${formatPence(paidPence)} · ${paidBy}`;
+    html = renderHtml({ items, paidPence, billTotalPence, remainingPence, isPartPayment, subjectMethod: paidBy, payment, patient });
+    text = renderText({ items, paidPence, billTotalPence, remainingPence, isPartPayment, subjectMethod: paidBy, payment, patient });
     if (receipt.channel === 'sms') {
       const variables: Record<string, string> = {
         patientFirstName: properCase(patient?.first_name ?? '') || 'there',
-        totalAmount: formatPence(totalPence),
+        totalAmount: formatPence(paidPence),
+        amountPaid: formatPence(paidPence),
+        billTotal: formatPence(billTotalPence),
+        remainingBalance: formatPence(remainingPence),
         paidBy,
         receiptRef: payment.id.slice(0, 8),
       };
@@ -544,13 +584,20 @@ async function resolveSmsReceiptBody(args: {
 
 interface ReceiptContext {
   items: ReceiptItem[];
-  totalPence: number;
+  /** What THIS payment collected. */
+  paidPence: number;
+  /** The whole cart total the payment counts toward. */
+  billTotalPence: number;
+  /** Balance still owed after this payment (0 when fully settled). */
+  remainingPence: number;
+  /** True when remainingPence > 0 — drives the part-payment block. */
+  isPartPayment: boolean;
   subjectMethod: string;
   payment: PaymentRow;
   patient: { first_name: string | null; last_name: string | null } | null;
 }
 
-function renderHtml({ items, totalPence, subjectMethod, payment, patient }: ReceiptContext): string {
+function renderHtml({ items, paidPence, billTotalPence, remainingPence, isPartPayment, subjectMethod, payment, patient }: ReceiptContext): string {
   const name = patient
     ? `${properCase(patient.first_name ?? '')} ${properCase(patient.last_name ?? '')}`.trim()
     : '';
@@ -564,6 +611,24 @@ function renderHtml({ items, totalPence, subjectMethod, payment, patient }: Rece
         </tr>`
     )
     .join('');
+  // For a part payment the headline money row reads "Paid today" and a
+  // muted block underneath spells out the order total and what's still
+  // to pay, so the customer never reads a part payment as the full bill.
+  const paidLabel = isPartPayment ? 'Paid today' : 'Total paid';
+  const partPaymentBlock = isPartPayment
+    ? `
+      <tr>
+        <td style="padding:8px 0;color:#5A6266;font-size:14px;">Order total</td>
+        <td style="padding:8px 0;text-align:right;color:#5A6266;font-size:14px;font-variant-numeric:tabular-nums;">${formatPence(billTotalPence)}</td>
+      </tr>
+      <tr>
+        <td style="padding:8px 0;color:#5A6266;font-size:14px;">Balance still to pay</td>
+        <td style="padding:8px 0;text-align:right;color:#5A6266;font-size:14px;font-variant-numeric:tabular-nums;">${formatPence(remainingPence)}</td>
+      </tr>`
+    : '';
+  const partPaymentNote = isPartPayment
+    ? `<p style="margin:16px 0 0;color:#5A6266;font-size:13px;">This was a part payment. ${formatPence(remainingPence)} is still to pay on your order.</p>`
+    : '';
   return `<!DOCTYPE html>
 <html><body style="margin:0;padding:0;background:#F7F6F2;font-family: -apple-system, system-ui, sans-serif;color:#0E1414;">
   <div style="max-width:520px;margin:0 auto;padding:32px 24px;">
@@ -573,35 +638,41 @@ function renderHtml({ items, totalPence, subjectMethod, payment, patient }: Rece
       ${lineRows}
       <tr><td colspan="2" style="border-top:1px solid #E5E2DC;padding-top:12px;"></td></tr>
       <tr>
-        <td style="padding:8px 0;font-weight:600;">Total</td>
-        <td style="padding:8px 0;text-align:right;font-weight:600;font-variant-numeric:tabular-nums;">${formatPence(totalPence)}</td>
+        <td style="padding:8px 0;font-weight:600;">${paidLabel}</td>
+        <td style="padding:8px 0;text-align:right;font-weight:600;font-variant-numeric:tabular-nums;">${formatPence(paidPence)}</td>
       </tr>
       <tr>
         <td style="padding:8px 0;color:#5A6266;font-size:14px;">Paid by</td>
         <td style="padding:8px 0;text-align:right;color:#5A6266;font-size:14px;">${subjectMethod}</td>
-      </tr>
+      </tr>${partPaymentBlock}
       <tr>
         <td style="padding:8px 0;color:#5A6266;font-size:14px;">Reference</td>
         <td style="padding:8px 0;text-align:right;color:#5A6266;font-size:14px;font-variant-numeric:tabular-nums;">${payment.id.slice(0, 8)}</td>
       </tr>
     </table>
+    ${partPaymentNote}
     <p style="margin:32px 0 0;color:#7B8285;font-size:12px;">Venneir Limited · Questions? Reply to this email.</p>
   </div>
 </body></html>`;
 }
 
-function renderText({ items, totalPence, subjectMethod, payment, patient }: ReceiptContext): string {
+function renderText({ items, paidPence, billTotalPence, remainingPence, isPartPayment, subjectMethod, payment, patient }: ReceiptContext): string {
   const name = patient
     ? `${properCase(patient.first_name ?? '')} ${properCase(patient.last_name ?? '')}`.trim()
     : '';
   const lines = items
     .map((i) => `${i.name}${i.quantity > 1 ? ` x${i.quantity}` : ''}  ${formatPence(i.line_total_pence)}`)
     .join('\n');
+  const moneyBlock = isPartPayment
+    ? `Paid today: ${formatPence(paidPence)}
+Order total: ${formatPence(billTotalPence)}
+Balance still to pay: ${formatPence(remainingPence)}`
+    : `Total paid: ${formatPence(paidPence)}`;
   return `Venneir Lounge receipt
 ${name ? `Hi ${name},\n` : ''}
 ${lines}
 ---
-Total: ${formatPence(totalPence)}
+${moneyBlock}
 Paid by: ${subjectMethod}
 Ref: ${payment.id.slice(0, 8)}
 
