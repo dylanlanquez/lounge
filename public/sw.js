@@ -10,14 +10,25 @@
 // Bump this whenever the icon manifest changes — paired with the
 // ?v= query string on favicons in index.html / manifest.webmanifest
 // to force a fresh fetch through any caching layer.
-const VERSION = 'v6';
+const VERSION = 'v7';
 
 self.addEventListener('install', (event) => {
   event.waitUntil(self.skipWaiting());
 });
 
 self.addEventListener('activate', (event) => {
-  event.waitUntil(self.clients.claim());
+  event.waitUntil(
+    (async () => {
+      // Purge any Cache Storage left behind by earlier service-worker
+      // versions that DID cache the app shell (this worker is network-
+      // only and caches nothing). Without this, a device that once
+      // installed a caching worker keeps serving stale bundles after a
+      // deploy even though the new worker has taken over.
+      const keys = await caches.keys();
+      await Promise.all(keys.map((key) => caches.delete(key)));
+      await self.clients.claim();
+    })(),
+  );
 });
 
 // Deliberately no fetch listener. Modern Chrome considers a PWA
