@@ -1,8 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
   aggregateVirtualImpressions,
-  buildDailyDurationSeries,
-  computeDurationTrend,
   formatCallMinutes,
   formatVsSlot,
   summarizeCalls,
@@ -29,6 +27,7 @@ function mkCall(
     patientMinutes,
     hostMinutes: null,
     vsSlotMinutes: patientMinutes === null ? null : patientMinutes - 30,
+    sessions: [],
     ...opts,
   };
 }
@@ -183,6 +182,27 @@ describe('arch and host capture', () => {
   });
 });
 
+describe('per-call sessions', () => {
+  it('attaches each stay, host first, with durations', () => {
+    const appts = [
+      appt('1', 9, 'complete', {
+        conference_started_at: '2026-06-10T09:00:00Z',
+        conference_ended_at: '2026-06-10T09:40:00Z',
+      }),
+    ];
+    const attendance = [
+      session('1', false, 5, 25, 9, 'A Patient'), // patient 20 min
+      session('1', true, 0, 30, 9, 'Heidi Abdrabu'), // host 30 min
+    ];
+    const data = aggregateVirtualImpressions(appts, attendance, patients);
+    const sessions = data.calls[0]!.sessions;
+    expect(sessions).toHaveLength(2);
+    expect(sessions[0]!.isHost).toBe(true); // host sorted first
+    expect(sessions[0]!.durationMinutes).toBeCloseTo(30, 5);
+    expect(sessions[1]!.durationMinutes).toBeCloseTo(20, 5);
+  });
+});
+
 describe('summarizeCalls', () => {
   it('derives the headline figures from a call subset', () => {
     const calls = [
@@ -199,43 +219,6 @@ describe('summarizeCalls', () => {
     expect(s.medianPatientMinutes).toBeCloseTo(30, 5);
     expect(s.ranOverSlot).toBe(1);
     expect(s.attendanceRate).toBeCloseTo(0.75, 5);
-  });
-});
-
-describe('buildDailyDurationSeries', () => {
-  it('emits one point per day with NaN gaps', () => {
-    const calls = [
-      mkCall('2026-06-10T12:00:00Z', 20),
-      mkCall('2026-06-10T13:00:00Z', 40), // same day -> avg 30
-      mkCall('2026-06-12T12:00:00Z', 10),
-    ];
-    const series = buildDailyDurationSeries(calls, '2026-06-10', '2026-06-12');
-    expect(series.map((p) => p.date)).toEqual([
-      '2026-06-10',
-      '2026-06-11',
-      '2026-06-12',
-    ]);
-    expect(series[0]!.avgMinutes).toBeCloseTo(30, 5);
-    expect(Number.isNaN(series[1]!.avgMinutes)).toBe(true);
-    expect(series[2]!.avgMinutes).toBeCloseTo(10, 5);
-  });
-});
-
-describe('computeDurationTrend', () => {
-  it('reads a rising trend as up', () => {
-    const calls = [0, 1, 2, 3, 4].map((d) =>
-      mkCall(`2026-06-1${d}T12:00:00Z`, 10 + d * 5),
-    );
-    const trend = computeDurationTrend(calls);
-    expect(trend.direction).toBe('up');
-    expect(trend.perWeekMinutes).not.toBeNull();
-    expect(trend.perWeekMinutes!).toBeGreaterThan(0);
-  });
-
-  it('returns flat with too few calls', () => {
-    const trend = computeDurationTrend([mkCall('2026-06-10T12:00:00Z', 20)]);
-    expect(trend.direction).toBe('flat');
-    expect(trend.perWeekMinutes).toBeNull();
   });
 });
 

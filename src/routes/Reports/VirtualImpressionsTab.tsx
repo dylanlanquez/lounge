@@ -1,12 +1,10 @@
 import { type CSSProperties, useEffect, useMemo, useState } from 'react';
-import { Video } from 'lucide-react';
+import { ChevronDown, Video } from 'lucide-react';
 import {
   Card,
-  Checkbox,
   DropdownSelect,
   EmptyState,
   LineChart,
-  SegmentedControl,
   Skeleton,
   StatCard,
   StatusPill,
@@ -17,39 +15,44 @@ import { type DateRange, dateRangeLabel } from '../../lib/dateRange.ts';
 import { formatDateLongOrdinal, formatTimeNoZone } from '../../lib/dateFormat.ts';
 import {
   type ArchFilter,
+  type CallSession,
   type VirtualImpressionCall,
-  buildDailyDurationSeries,
-  computeDurationTrend,
+  type VirtualImpressionsSummary,
   formatCallMinutes,
   formatVsSlot,
   summarizeCalls,
   useReportsVirtualImpressions,
 } from '../../lib/queries/virtualImpressions.ts';
 
-// Compact x-axis labels for the trend chart: "17 Jun" from a clinic
-// YYYY-MM-DD day key. Built off UTC noon so the label never slips a day.
-const shortDayFmt = new Intl.DateTimeFormat('en-GB', {
+// Compact x-axis label for the duration chart: "17 Jun" from a call's
+// ISO start, in clinic time so a late call never slips to the next day.
+const dayLabelFmt = new Intl.DateTimeFormat('en-GB', {
   day: 'numeric',
   month: 'short',
+  timeZone: 'Europe/London',
 });
-function shortDay(ymd: string): string {
-  const [y, m, d] = ymd.split('-').map(Number);
-  return shortDayFmt.format(new Date(Date.UTC(y!, m! - 1, d!)));
+function dayLabel(iso: string): string {
+  return dayLabelFmt.format(new Date(iso));
 }
 
 type OutcomeFilter = 'all' | 'within' | 'over';
+type AnswerFilter = 'all' | 'answered';
 
-const ARCH_OPTIONS: { value: ArchFilter; label: string }[] = [
+const ARCH_OPTIONS: DropdownSelectOption<ArchFilter>[] = [
   { value: 'all', label: 'All arches' },
-  { value: 'upper', label: 'Upper' },
-  { value: 'lower', label: 'Lower' },
-  { value: 'both', label: 'Both' },
+  { value: 'both', label: 'Both arches' },
+  { value: 'single', label: 'Single arch' },
 ];
 
-const OUTCOME_OPTIONS: { value: OutcomeFilter; label: string }[] = [
+const OUTCOME_OPTIONS: DropdownSelectOption<OutcomeFilter>[] = [
   { value: 'all', label: 'Any length' },
   { value: 'within', label: 'Within slot' },
   { value: 'over', label: 'Over slot' },
+];
+
+const ANSWER_OPTIONS: DropdownSelectOption<AnswerFilter>[] = [
+  { value: 'all', label: 'All calls' },
+  { value: 'answered', label: 'Answered only' },
 ];
 
 interface Props {
@@ -242,7 +245,109 @@ function statusTone(status: string): StatusTone {
   }
 }
 
+// The expanded per-call detail: who joined, when, and for how long —
+// the same read as the appointment page's attendance card, trimmed to a
+// read-only summary.
+function CallSessions({ sessions }: { sessions: CallSession[] }) {
+  if (sessions.length === 0) {
+    return (
+      <p
+        style={{
+          margin: 0,
+          padding: `0 0 ${theme.space[3]}px`,
+          fontSize: theme.type.size.sm,
+          color: theme.color.inkSubtle,
+        }}
+      >
+        No attendance was recorded for this call.
+      </p>
+    );
+  }
+  return (
+    <div
+      style={{
+        margin: `0 0 ${theme.space[3]}px`,
+        padding: theme.space[3],
+        background: theme.color.bg,
+        borderRadius: theme.radius.card,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: theme.space[2],
+      }}
+    >
+      {sessions.map((s, i) => {
+        const role = s.isHost ? 'Clinician' : 'Patient';
+        const when = s.joinedAt
+          ? `${formatTimeNoZone(s.joinedAt)} to ${s.leftAt ? formatTimeNoZone(s.leftAt) : 'still in'}`
+          : 'No join recorded';
+        return (
+          <div
+            key={i}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: theme.space[3],
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: theme.space[2], minWidth: 0 }}>
+              <span
+                style={{
+                  fontSize: theme.type.size.sm,
+                  fontWeight: theme.type.weight.medium,
+                  color: theme.color.ink,
+                  whiteSpace: 'nowrap',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                }}
+              >
+                {s.participantName || role}
+              </span>
+              <span
+                style={{
+                  fontSize: theme.type.size.xs,
+                  fontWeight: theme.type.weight.semibold,
+                  letterSpacing: theme.type.tracking.wide,
+                  textTransform: 'uppercase',
+                  color: s.isHost ? theme.color.accent : theme.color.inkSubtle,
+                  flexShrink: 0,
+                }}
+              >
+                {role}
+              </span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: theme.space[3], flexShrink: 0 }}>
+              <span
+                style={{
+                  fontSize: theme.type.size.sm,
+                  color: theme.color.inkMuted,
+                  fontVariantNumeric: 'tabular-nums',
+                }}
+              >
+                {when}
+              </span>
+              <span
+                style={{
+                  fontSize: theme.type.size.sm,
+                  fontWeight: theme.type.weight.semibold,
+                  color: theme.color.ink,
+                  fontVariantNumeric: 'tabular-nums',
+                  minWidth: 56,
+                  textAlign: 'right',
+                }}
+              >
+                {formatCallMinutes(s.durationMinutes)}
+              </span>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function CallRow({ call, slotMinutes }: { call: VirtualImpressionCall; slotMinutes: number }) {
+  const [open, setOpen] = useState(false);
   const measured = call.patientMinutes !== null;
   const over = call.vsSlotMinutes !== null && call.vsSlotMinutes > 0;
   const vsColor = !measured
@@ -258,15 +363,25 @@ function CallRow({ call, slotMinutes }: { call: VirtualImpressionCall; slotMinut
   const hostFirst = call.hostName ? call.hostName.split(' ')[0] : null;
 
   return (
-    <div
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: theme.space[4],
-        padding: `${theme.space[3]}px 0`,
-        borderTop: `1px solid ${theme.color.border}`,
-      }}
-    >
+    <div style={{ borderTop: `1px solid ${theme.color.border}` }}>
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: theme.space[4],
+          padding: `${theme.space[3]}px 0`,
+          width: '100%',
+          background: 'none',
+          border: 'none',
+          cursor: 'pointer',
+          textAlign: 'left',
+          color: 'inherit',
+          fontFamily: 'inherit',
+        }}
+      >
       <div style={{ flex: '1 1 0', minWidth: 0 }}>
         <p
           style={{
@@ -370,6 +485,19 @@ function CallRow({ call, slotMinutes }: { call: VirtualImpressionCall; slotMinut
           </span>
         )}
       </div>
+
+        <ChevronDown
+          size={18}
+          aria-hidden
+          style={{
+            flexShrink: 0,
+            color: theme.color.inkSubtle,
+            transition: `transform ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+            transform: open ? 'rotate(180deg)' : 'none',
+          }}
+        />
+      </button>
+      {open && <CallSessions sessions={call.sessions} />}
     </div>
   );
 }
@@ -382,8 +510,8 @@ function FilterBar({
   onHost,
   outcome,
   onOutcome,
-  hideNoAnswers,
-  onHideNoAnswers,
+  answer,
+  onAnswer,
 }: {
   arch: ArchFilter;
   onArch: (a: ArchFilter) => void;
@@ -392,43 +520,151 @@ function FilterBar({
   onHost: (h: string) => void;
   outcome: OutcomeFilter;
   onOutcome: (o: OutcomeFilter) => void;
-  hideNoAnswers: boolean;
-  onHideNoAnswers: (v: boolean) => void;
+  answer: AnswerFilter;
+  onAnswer: (a: AnswerFilter) => void;
 }) {
+  // One tidy row of equal dropdowns. Each shows its current selection,
+  // so the controls stay self-describing without separate labels.
+  const cell: CSSProperties = { flex: '1 1 150px', minWidth: 0 };
   return (
     <Card padding="md">
-      <div
-        style={{
-          display: 'flex',
-          flexWrap: 'wrap',
-          alignItems: 'center',
-          gap: theme.space[3],
-        }}
-      >
-        <SegmentedControl<ArchFilter>
-          scrollable
-          value={arch}
-          onChange={onArch}
-          options={ARCH_OPTIONS}
-        />
-        <SegmentedControl<OutcomeFilter>
-          scrollable
-          value={outcome}
-          onChange={onOutcome}
-          options={OUTCOME_OPTIONS}
-        />
-        <div style={{ minWidth: 180 }}>
-          <DropdownSelect<string>
-            value={host}
-            options={hostOptions}
-            onChange={onHost}
-          />
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: theme.space[3] }}>
+        <div style={cell}>
+          <DropdownSelect<ArchFilter> value={arch} options={ARCH_OPTIONS} onChange={onArch} />
         </div>
-        <Checkbox
-          checked={hideNoAnswers}
-          onChange={onHideNoAnswers}
-          label="Hide no answers"
-        />
+        <div style={cell}>
+          <DropdownSelect<OutcomeFilter> value={outcome} options={OUTCOME_OPTIONS} onChange={onOutcome} />
+        </div>
+        <div style={cell}>
+          <DropdownSelect<string> value={host} options={hostOptions} onChange={onHost} />
+        </div>
+        <div style={cell}>
+          <DropdownSelect<AnswerFilter> value={answer} options={ANSWER_OPTIONS} onChange={onAnswer} />
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+// The all-arches headline: one comparable bar per arch, since a single
+// arch and both arches are not the same job.
+function ArchBreakdown({
+  groups,
+  slotMinutes,
+}: {
+  groups: { key: string | null; label: string; summary: VirtualImpressionsSummary }[];
+  slotMinutes: number;
+}) {
+  const scale =
+    Math.max(slotMinutes, ...groups.map((g) => g.summary.avgPatientMinutes ?? 0)) ||
+    slotMinutes;
+  return (
+    <Card padding="lg">
+      <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[4] }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[1] }}>
+          <span
+            style={{
+              fontSize: theme.type.size.xs,
+              fontWeight: theme.type.weight.semibold,
+              letterSpacing: theme.type.tracking.wide,
+              textTransform: 'uppercase',
+              color: theme.color.inkSubtle,
+            }}
+          >
+            Average time by arch
+          </span>
+          <p
+            style={{
+              margin: 0,
+              maxWidth: 560,
+              fontSize: theme.type.size.md,
+              lineHeight: theme.type.leading.normal,
+              color: theme.color.inkMuted,
+            }}
+          >
+            A single arch finishes quicker than both together, so the time only
+            compares like with like when it is split by arch. Pick an arch above
+            to dig into one.
+          </p>
+        </div>
+
+        {groups.length === 0 ? (
+          <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkSubtle }}>
+            No completed calls to average in this view yet.
+          </p>
+        ) : (
+          <>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
+              {groups.map((g) => (
+                <div
+                  key={String(g.key)}
+                  style={{ display: 'flex', alignItems: 'center', gap: theme.space[4] }}
+                >
+                  <div style={{ width: 116, flexShrink: 0 }}>
+                    <p
+                      style={{
+                        margin: 0,
+                        fontSize: theme.type.size.base,
+                        fontWeight: theme.type.weight.medium,
+                        color: theme.color.ink,
+                      }}
+                    >
+                      {g.label}
+                    </p>
+                    <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>
+                      {g.summary.patientJoined} {g.summary.patientJoined === 1 ? 'call' : 'calls'}
+                    </p>
+                  </div>
+                  <div style={{ flex: '1 1 0', minWidth: 120 }}>
+                    <SlotTrack
+                      slotMinutes={slotMinutes}
+                      valueMinutes={g.summary.avgPatientMinutes}
+                      medianMinutes={g.summary.medianPatientMinutes}
+                      scaleMax={scale}
+                      height={16}
+                      ariaLabel={`${g.label}: average patient time ${formatCallMinutes(g.summary.avgPatientMinutes)} against a ${slotMinutes} minute slot`}
+                    />
+                  </div>
+                  <div style={{ width: 96, flexShrink: 0, textAlign: 'right' }}>
+                    <p
+                      style={{
+                        margin: 0,
+                        fontSize: theme.type.size.md,
+                        fontWeight: theme.type.weight.semibold,
+                        color: theme.color.ink,
+                        fontVariantNumeric: 'tabular-nums',
+                      }}
+                    >
+                      {formatCallMinutes(g.summary.avgPatientMinutes)}
+                    </p>
+                    <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>
+                      {formatCallMinutes(g.summary.medianPatientMinutes)} median
+                    </p>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div
+              style={{
+                display: 'flex',
+                flexWrap: 'wrap',
+                gap: theme.space[4],
+                fontSize: theme.type.size.sm,
+                color: theme.color.inkMuted,
+              }}
+            >
+              <span style={{ display: 'flex', alignItems: 'center', gap: theme.space[2] }}>
+                <LegendSwatch color={theme.color.accent} /> Average patient time
+              </span>
+              <span style={{ display: 'flex', alignItems: 'center', gap: theme.space[2] }}>
+                <LegendSwatch color={theme.color.ink} /> Median
+              </span>
+              <span style={{ display: 'flex', alignItems: 'center', gap: theme.space[2] }}>
+                <LegendSwatch color={theme.color.warn} /> Over the {slotMinutes} min slot
+              </span>
+            </div>
+          </>
+        )}
       </div>
     </Card>
   );
@@ -439,7 +675,7 @@ export function VirtualImpressionsTab({ range }: Props) {
   const [arch, setArch] = useState<ArchFilter>('all');
   const [host, setHost] = useState<string>('all');
   const [outcome, setOutcome] = useState<OutcomeFilter>('all');
-  const [hideNoAnswers, setHideNoAnswers] = useState(false);
+  const [answer, setAnswer] = useState<AnswerFilter>('all');
 
   const hostOptions = useMemo<DropdownSelectOption<string>[]>(() => {
     const names = data
@@ -457,12 +693,13 @@ export function VirtualImpressionsTab({ range }: Props) {
     ];
   }, [data]);
 
-  const filtered = useMemo(() => {
+  // Every filter except arch. The per-arch breakdown groups off this so
+  // it can compare the arches side by side under the same host / outcome.
+  const otherFiltered = useMemo(() => {
     if (!data) return [];
     return data.calls.filter((c) => {
-      if (arch !== 'all' && c.arch !== arch) return false;
       if (host !== 'all' && c.hostName !== host) return false;
-      if (hideNoAnswers && c.patientMinutes === null) return false;
+      if (answer === 'answered' && c.patientMinutes === null) return false;
       if (outcome === 'within') {
         return c.patientMinutes !== null && c.patientMinutes <= c.slotMinutes;
       }
@@ -471,14 +708,47 @@ export function VirtualImpressionsTab({ range }: Props) {
       }
       return true;
     });
-  }, [data, arch, host, outcome, hideNoAnswers]);
+  }, [data, host, outcome, answer]);
+
+  const filtered = useMemo(() => {
+    if (arch === 'both') return otherFiltered.filter((c) => c.arch === 'both');
+    if (arch === 'single') {
+      return otherFiltered.filter((c) => c.arch === 'upper' || c.arch === 'lower');
+    }
+    return otherFiltered;
+  }, [otherFiltered, arch]);
+
+  // A single arch finishes quicker than both arches together, so a
+  // blended average lies. Split the headline on that distinction.
+  const archGroups = useMemo(() => {
+    const order: { key: string; label: string; match: (a: string | null) => boolean }[] = [
+      { key: 'both', label: 'Both arches', match: (a) => a === 'both' },
+      { key: 'single', label: 'Single arch', match: (a) => a === 'upper' || a === 'lower' },
+      { key: 'unset', label: 'Arch not set', match: (a) => a !== 'both' && a !== 'upper' && a !== 'lower' },
+    ];
+    return order
+      .map((o) => ({
+        key: o.key,
+        label: o.label,
+        summary: summarizeCalls(otherFiltered.filter((c) => o.match(c.arch))),
+      }))
+      .filter((g) => g.summary.patientJoined > 0);
+  }, [otherFiltered]);
 
   const slotMinutes = data?.slotMinutes ?? 30;
   const summary = useMemo(() => summarizeCalls(filtered), [filtered]);
-  const trend = useMemo(() => computeDurationTrend(filtered), [filtered]);
-  const dailySeries = useMemo(
-    () => buildDailyDurationSeries(filtered, range.start, range.end),
-    [filtered, range.start, range.end],
+
+  // One point per call, oldest first — the actual durations, not a daily
+  // average, so the chart shows how long calls run in general. Calls of 4
+  // minutes or less are almost always recycled / aborted links rather than
+  // real impressions, so they are left off as noise.
+  const chartCalls = useMemo(
+    () =>
+      filtered
+        .filter((c) => c.patientMinutes !== null && c.patientMinutes > 4)
+        .slice()
+        .reverse(),
+    [filtered],
   );
 
   const heroSentence = useMemo(() => {
@@ -494,19 +764,6 @@ export function VirtualImpressionsTab({ range }: Props) {
     const calls = `${summary.patientJoined} ${summary.patientJoined === 1 ? 'call' : 'calls'}`;
     return `Across ${calls} where the patient joined, they were on the video for ${avg} on average, ${rel}.`;
   }, [summary, slotMinutes]);
-
-  const trendSentence = useMemo(() => {
-    if (trend.perWeekMinutes === null) {
-      return 'Not enough calls in this view yet to show a direction.';
-    }
-    const n = Math.abs(Math.round(trend.perWeekMinutes));
-    if (trend.direction === 'flat' || n === 0) {
-      return 'Call length is holding steady across this period.';
-    }
-    return trend.direction === 'up'
-      ? `Calls are trending about ${n} min longer each week.`
-      : `Calls are trending about ${n} min shorter each week.`;
-  }, [trend]);
 
   if (error) {
     return (
@@ -550,8 +807,8 @@ export function VirtualImpressionsTab({ range }: Props) {
       onHost={setHost}
       outcome={outcome}
       onOutcome={setOutcome}
-      hideNoAnswers={hideNoAnswers}
-      onHideNoAnswers={setHideNoAnswers}
+      answer={answer}
+      onAnswer={setAnswer}
     />
   );
 
@@ -571,14 +828,17 @@ export function VirtualImpressionsTab({ range }: Props) {
   }
 
   const measuredAvg = summary.avgPatientMinutes !== null;
-  const xLabels = dailySeries.map((d) => shortDay(d.date));
-  const hasChartData = dailySeries.some((d) => Number.isFinite(d.avgMinutes));
+  const chartLabels = chartCalls.map((c) => dayLabel(c.startAt));
+  const chartValues = chartCalls.map((c) => Math.round(c.patientMinutes as number));
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[5] }}>
       {filterBar}
 
-      {/* Hero — the thesis: actual call time against the booked slot. */}
+      {/* Hero — per arch across all, single big number when one is picked. */}
+      {arch === 'all' ? (
+        <ArchBreakdown groups={archGroups} slotMinutes={slotMinutes} />
+      ) : (
       <Card padding="lg">
         <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[4] }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
@@ -670,6 +930,7 @@ export function VirtualImpressionsTab({ range }: Props) {
           )}
         </div>
       </Card>
+      )}
 
       {/* Supporting numbers. */}
       <div
@@ -707,24 +968,25 @@ export function VirtualImpressionsTab({ range }: Props) {
         />
       </div>
 
-      {/* Trend over time. */}
-      {hasChartData && (
+      {/* How long calls run — one point per real call (over 4 min). The
+          y-axis stays plain numbers (no "min" suffix) so longer labels
+          never clip the gridline values. */}
+      {chartCalls.length >= 2 && (
         <Card padding="lg">
           <LineChart
-            title="Call length over time"
-            subtitle={trendSentence}
-            xLabels={xLabels}
+            title="Call durations"
+            subtitle={`Minutes the patient was on each call, oldest first. ${chartCalls.length} ${chartCalls.length === 1 ? 'call' : 'calls'} over 4 minutes.`}
+            xLabels={chartLabels}
             series={[
               {
-                id: 'avg',
-                label: 'Average call length',
+                id: 'dur',
+                label: 'Minutes on call',
                 colour: theme.color.accent,
-                values: dailySeries.map((d) => d.avgMinutes),
-                formatValue: (n) => `${Math.round(n)} min`,
+                values: chartValues,
               },
             ]}
             legendMode="avg"
-            ariaSummary={`Daily average virtual impression call length over ${dateRangeLabel(range)}. ${trendSentence}`}
+            ariaSummary={`Length in minutes of each virtual impression call over 4 minutes across ${dateRangeLabel(range)}.`}
           />
         </Card>
       )}
