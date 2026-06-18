@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../supabase.ts';
 import { type DateRange, dateRangeToUtcBounds } from '../dateRange.ts';
+import { addDaysIso } from '../calendarMonth.ts';
 import { logFailure } from '../failureLog.ts';
 import { properCase } from './appointments.ts';
 
@@ -30,13 +31,17 @@ export interface ViAppointmentRow {
   start_at: string;
   end_at: string;
   status: string;
+  arch: string | null;
   conference_started_at: string | null;
   conference_ended_at: string | null;
 }
 
+export type ArchFilter = 'all' | 'upper' | 'lower' | 'both';
+
 export interface ViAttendanceRow {
   appointment_id: string;
   is_host: boolean;
+  participant_name: string | null;
   joined_at: string | null;
   left_at: string | null;
 }
@@ -55,6 +60,10 @@ export interface VirtualImpressionCall {
   patientName: string;
   startAt: string;
   status: string;
+  arch: string | null;
+  // Clinician who hosted the call (the host participant's name). null
+  // when no host attendance was recorded.
+  hostName: string | null;
   slotMinutes: number;
   // Minutes the patient was in the call. null when the patient never
   // joined (a no-answer / no-show) — those calls carry no duration.
@@ -64,10 +73,10 @@ export interface VirtualImpressionCall {
   vsSlotMinutes: number | null;
 }
 
-export interface VirtualImpressionsData {
-  // The booked slot every call is measured against (the most common
-  // scheduled length, e.g. 30). Drives the track scale on the page.
-  slotMinutes: number;
+// Headline figures over a set of calls. Pulled out of the data object
+// so the page can recompute them on an arch-filtered subset without a
+// re-fetch — same numbers, fewer calls.
+export interface VirtualImpressionsSummary {
   callsHeld: number;
   patientJoined: number;
   noAnswer: number;
@@ -77,6 +86,12 @@ export interface VirtualImpressionsData {
   maxPatientMinutes: number | null;
   ranOverSlot: number;
   attendanceRate: number | null;
+}
+
+export interface VirtualImpressionsData extends VirtualImpressionsSummary {
+  // The booked slot every call is measured against (the most common
+  // scheduled length, e.g. 30). Drives the track scale on the page.
+  slotMinutes: number;
   calls: VirtualImpressionCall[];
 }
 
@@ -104,6 +119,15 @@ function presenceSpan(rows: ViAttendanceRow[], host: boolean): number | null {
   const span = Math.max(...leaves) - Math.min(...joins);
   if (!Number.isFinite(span) || span <= 0) return null;
   return span / 60000;
+}
+
+function hostNameFrom(rows: ViAttendanceRow[]): string | null {
+  for (const r of rows) {
+    if (r.is_host && r.participant_name && r.participant_name.trim()) {
+      return r.participant_name.trim();
+    }
+  }
+  return null;
 }
 
 function median(values: number[]): number | null {
@@ -149,6 +173,34 @@ function wasHeld(appt: ViAppointmentRow): boolean {
   return appt.status === 'complete' || appt.status === 'no_show';
 }
 
+export function summarizeCalls(
+  calls: VirtualImpressionCall[],
+): VirtualImpressionsSummary {
+  const measured = calls
+    .map((c) => c.patientMinutes)
+    .filter((m): m is number => m !== null);
+  const callsHeld = calls.length;
+  const patientJoined = measured.length;
+  const avg =
+    measured.length > 0
+      ? measured.reduce((sum, m) => sum + m, 0) / measured.length
+      : null;
+  const ranOverSlot = calls.filter(
+    (c) => c.patientMinutes !== null && c.patientMinutes > c.slotMinutes,
+  ).length;
+  return {
+    callsHeld,
+    patientJoined,
+    noAnswer: callsHeld - patientJoined,
+    avgPatientMinutes: avg,
+    medianPatientMinutes: median(measured),
+    minPatientMinutes: measured.length ? Math.min(...measured) : null,
+    maxPatientMinutes: measured.length ? Math.max(...measured) : null,
+    ranOverSlot,
+    attendanceRate: callsHeld > 0 ? patientJoined / callsHeld : null,
+  };
+}
+
 export function aggregateVirtualImpressions(
   appointments: ViAppointmentRow[],
   attendance: ViAttendanceRow[],
@@ -187,6 +239,8 @@ export function aggregateVirtualImpressions(
       ),
       startAt: appt.start_at,
       status: appt.status,
+      arch: appt.arch,
+      hostName: hostNameFrom(rows),
       slotMinutes: slot,
       patientMinutes,
       hostMinutes,
@@ -196,32 +250,93 @@ export function aggregateVirtualImpressions(
 
   calls.sort((a, b) => new Date(b.startAt).getTime() - new Date(a.startAt).getTime());
 
-  const measured = calls
-    .map((c) => c.patientMinutes)
-    .filter((m): m is number => m !== null);
-  const callsHeld = calls.length;
-  const patientJoined = measured.length;
-  const avg =
-    measured.length > 0
-      ? measured.reduce((sum, m) => sum + m, 0) / measured.length
-      : null;
-  const ranOverSlot = calls.filter(
-    (c) => c.patientMinutes !== null && c.patientMinutes > c.slotMinutes,
-  ).length;
-
   return {
     slotMinutes,
-    callsHeld,
-    patientJoined,
-    noAnswer: callsHeld - patientJoined,
-    avgPatientMinutes: avg,
-    medianPatientMinutes: median(measured),
-    minPatientMinutes: measured.length ? Math.min(...measured) : null,
-    maxPatientMinutes: measured.length ? Math.max(...measured) : null,
-    ranOverSlot,
-    attendanceRate: callsHeld > 0 ? patientJoined / callsHeld : null,
     calls,
+    ...summarizeCalls(calls),
   };
+}
+
+// ── Trend helpers ───────────────────────────────────────────────────
+
+// Calls bucket by their clinic-local calendar day, so a 19:30 BST call
+// lands on the right date regardless of the viewer's machine timezone.
+const clinicDayFmt = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'Europe/London',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+});
+
+export interface DailyDurationPoint {
+  date: string; // YYYY-MM-DD, clinic local
+  avgMinutes: number; // NaN on days with no measured calls — a line gap
+}
+
+// One point per calendar day across the range so the x-axis is real
+// time, not "every day that happened to have a call". Days with no
+// measured call are NaN, which the LineChart renders as a gap.
+export function buildDailyDurationSeries(
+  calls: VirtualImpressionCall[],
+  startDate: string,
+  endDate: string,
+): DailyDurationPoint[] {
+  const byDay = new Map<string, number[]>();
+  for (const call of calls) {
+    if (call.patientMinutes === null) continue;
+    const key = clinicDayFmt.format(new Date(call.startAt));
+    const list = byDay.get(key);
+    if (list) list.push(call.patientMinutes);
+    else byDay.set(key, [call.patientMinutes]);
+  }
+
+  const points: DailyDurationPoint[] = [];
+  let cursor = startDate;
+  // Hard stop well past any sane range so a bad input can't spin.
+  for (let guard = 0; guard < 400 && cursor <= endDate; guard += 1) {
+    const mins = byDay.get(cursor);
+    points.push({
+      date: cursor,
+      avgMinutes: mins && mins.length
+        ? mins.reduce((s, m) => s + m, 0) / mins.length
+        : NaN,
+    });
+    cursor = addDaysIso(cursor, 1);
+  }
+  return points;
+}
+
+export interface DurationTrend {
+  // Change in call length per week (least-squares slope × 7). null when
+  // there are too few calls to read a direction.
+  perWeekMinutes: number | null;
+  direction: 'up' | 'down' | 'flat';
+}
+
+// Least-squares slope of patient minutes against time. We need a few
+// points before a "trend" means anything — below that it's noise.
+export function computeDurationTrend(calls: VirtualImpressionCall[]): DurationTrend {
+  const points = calls
+    .filter((c) => c.patientMinutes !== null)
+    .map((c) => ({
+      x: new Date(c.startAt).getTime() / 86_400_000, // days
+      y: c.patientMinutes as number,
+    }));
+  if (points.length < 4) return { perWeekMinutes: null, direction: 'flat' };
+
+  const n = points.length;
+  const meanX = points.reduce((s, p) => s + p.x, 0) / n;
+  const meanY = points.reduce((s, p) => s + p.y, 0) / n;
+  let num = 0;
+  let den = 0;
+  for (const p of points) {
+    num += (p.x - meanX) * (p.y - meanY);
+    den += (p.x - meanX) ** 2;
+  }
+  if (den === 0) return { perWeekMinutes: null, direction: 'flat' };
+  const perWeek = (num / den) * 7;
+  const direction = perWeek > 1 ? 'up' : perWeek < -1 ? 'down' : 'flat';
+  return { perWeekMinutes: perWeek, direction };
 }
 
 // ── Hook ────────────────────────────────────────────────────────────
@@ -247,7 +362,7 @@ export function useReportsVirtualImpressions(range: DateRange): VirtualImpressio
         const apptRes = await supabase
           .from('lng_appointments')
           .select(
-            'id, appointment_ref, patient_id, start_at, end_at, status, conference_started_at, conference_ended_at',
+            'id, appointment_ref, patient_id, start_at, end_at, status, arch, conference_started_at, conference_ended_at',
           )
           .eq('service_type', 'virtual_impression_appointment')
           .gte('start_at', fromIso)
@@ -274,7 +389,7 @@ export function useReportsVirtualImpressions(range: DateRange): VirtualImpressio
         const [attRes, patRes] = await Promise.all([
           supabase
             .from('lng_meet_attendance')
-            .select('appointment_id, is_host, joined_at, left_at')
+            .select('appointment_id, is_host, participant_name, joined_at, left_at')
             .in('appointment_id', apptIds),
           patientIds.length
             ? supabase
