@@ -321,6 +321,7 @@ function RoutedErrorBoundary() {
           <Route path="/admin" element={<RequireStaff><Admin /></RequireStaff>} />
           <Route path="/admin/:tab" element={<RequireStaff><Admin /></RequireStaff>} />
           <Route path="/reports" element={<RequireStaff><Reports /></RequireStaff>} />
+          <Route path="/reports/:tab" element={<RequireStaff><Reports /></RequireStaff>} />
           <Route path="/cash-counts" element={<RequireStaff><CashCounts /></RequireStaff>} />
           {/* Customer-facing widget (book + manage) lives on
               book.venneir.com — separate Vercel project, separate
