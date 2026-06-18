@@ -36,7 +36,7 @@ function dayLabel(iso: string): string {
 }
 
 type OutcomeFilter = 'all' | 'within' | 'over';
-type AnswerFilter = 'all' | 'answered';
+type AnswerFilter = 'all' | 'answered' | 'unanswered';
 
 const ARCH_OPTIONS: DropdownSelectOption<ArchFilter>[] = [
   { value: 'all', label: 'All arches' },
@@ -53,6 +53,7 @@ const OUTCOME_OPTIONS: DropdownSelectOption<OutcomeFilter>[] = [
 const ANSWER_OPTIONS: DropdownSelectOption<AnswerFilter>[] = [
   { value: 'all', label: 'All calls' },
   { value: 'answered', label: 'Answered only' },
+  { value: 'unanswered', label: 'Unanswered' },
 ];
 
 interface Props {
@@ -700,6 +701,7 @@ export function VirtualImpressionsTab({ range }: Props) {
     return data.calls.filter((c) => {
       if (host !== 'all' && c.hostName !== host) return false;
       if (answer === 'answered' && c.patientMinutes === null) return false;
+      if (answer === 'unanswered' && c.patientMinutes !== null) return false;
       if (outcome === 'within') {
         return c.patientMinutes !== null && c.patientMinutes <= c.slotMinutes;
       }
@@ -738,16 +740,11 @@ export function VirtualImpressionsTab({ range }: Props) {
   const slotMinutes = data?.slotMinutes ?? 30;
   const summary = useMemo(() => summarizeCalls(filtered), [filtered]);
 
-  // One point per call, oldest first — the actual durations, not a daily
-  // average, so the chart shows how long calls run in general. Calls of 4
-  // minutes or less are almost always recycled / aborted links rather than
-  // real impressions, so they are left off as noise.
+  // One point per answered call, oldest first — the actual durations, not a
+  // daily average, so the chart shows how long calls run in general.
+  // (Recycled sub-4-minute links are already dropped report-wide upstream.)
   const chartCalls = useMemo(
-    () =>
-      filtered
-        .filter((c) => c.patientMinutes !== null && c.patientMinutes > 4)
-        .slice()
-        .reverse(),
+    () => filtered.filter((c) => c.patientMinutes !== null).slice().reverse(),
     [filtered],
   );
 
@@ -975,7 +972,7 @@ export function VirtualImpressionsTab({ range }: Props) {
         <Card padding="lg">
           <LineChart
             title="Call durations"
-            subtitle={`Minutes the patient was on each call, oldest first. ${chartCalls.length} ${chartCalls.length === 1 ? 'call' : 'calls'} over 4 minutes.`}
+            subtitle={`Minutes the patient was on each call, oldest first. ${chartCalls.length} ${chartCalls.length === 1 ? 'call' : 'calls'}.`}
             xLabels={chartLabels}
             series={[
               {

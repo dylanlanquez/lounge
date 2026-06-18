@@ -115,6 +115,25 @@ describe('aggregateVirtualImpressions', () => {
     expect(data.attendanceRate).toBe(0);
   });
 
+  it('drops recycled sub-4-minute calls but keeps no-answers', () => {
+    const appts = [
+      appt('1', 9, 'complete', { conference_started_at: '2026-06-10T09:00:00Z', conference_ended_at: '2026-06-10T09:30:00Z' }),
+      appt('2', 10, 'complete', { conference_started_at: '2026-06-10T10:00:00Z', conference_ended_at: '2026-06-10T10:30:00Z' }),
+      appt('3', 11, 'no_show', { conference_started_at: '2026-06-10T11:00:00Z', conference_ended_at: '2026-06-10T11:30:00Z' }),
+    ];
+    const attendance = [
+      session('1', false, 0, 3, 9), // 3 min -> recycled, dropped
+      session('2', false, 0, 25, 10), // 25 min -> real
+      session('3', true, 0, 30, 11), // host only -> no answer, kept
+    ];
+    const data = aggregateVirtualImpressions(appts, attendance, patients);
+    const refs = data.calls.map((c) => c.ref).sort();
+    expect(refs).toEqual(['LAP-2', 'LAP-3']); // the 3-minute call is gone
+    expect(data.callsHeld).toBe(2);
+    expect(data.patientJoined).toBe(1);
+    expect(data.minPatientMinutes).toBeCloseTo(25, 5);
+  });
+
   it('excludes future bookings that have not happened', () => {
     const appts = [appt('3', 11, 'booked')]; // no conference, not closed
     const data = aggregateVirtualImpressions(appts, [], patients);

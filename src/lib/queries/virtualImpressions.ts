@@ -110,6 +110,12 @@ export interface VirtualImpressionsData extends VirtualImpressionsSummary {
 
 const DEFAULT_SLOT_MINUTES = 30;
 
+// A call where the patient was on for this long or less is almost always
+// a recycled / aborted Meet link, not a real impression. We drop those
+// from the whole report so they don't pollute any figure. No-answer calls
+// (the patient never joined) are a separate, real category and are kept.
+const MIN_REAL_CALL_MINUTES = 4;
+
 function minutesBetween(fromIso: string | null, toIso: string | null): number | null {
   if (!fromIso || !toIso) return null;
   const ms = new Date(toIso).getTime() - new Date(fromIso).getTime();
@@ -276,12 +282,19 @@ export function aggregateVirtualImpressions(
     });
   }
 
-  calls.sort((a, b) => new Date(b.startAt).getTime() - new Date(a.startAt).getTime());
+  // Drop the recycled-link calls report-wide. Keep no-answer calls (null
+  // duration) — those are genuine no-shows the report still cares about.
+  const realCalls = calls.filter(
+    (c) => c.patientMinutes === null || c.patientMinutes > MIN_REAL_CALL_MINUTES,
+  );
+  realCalls.sort(
+    (a, b) => new Date(b.startAt).getTime() - new Date(a.startAt).getTime(),
+  );
 
   return {
     slotMinutes,
-    calls,
-    ...summarizeCalls(calls),
+    calls: realCalls,
+    ...summarizeCalls(realCalls),
   };
 }
 
