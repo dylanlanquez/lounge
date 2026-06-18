@@ -37,6 +37,7 @@ const AppointmentDetail = lazyWithRetry(() => import('./routes/AppointmentDetail
 const InClinic = lazyWithRetry(() => import('./routes/InClinic.tsx').then((m) => ({ default: m.InClinic })), 'InClinic');
 const Admin = lazyWithRetry(() => import('./routes/Admin.tsx').then((m) => ({ default: m.Admin })), 'Admin');
 const Reports = lazyWithRetry(() => import('./routes/Reports/Reports.tsx').then((m) => ({ default: m.Reports })), 'Reports');
+const MarketingContent = lazyWithRetry(() => import('./routes/MarketingContent/MarketingContent.tsx').then((m) => ({ default: m.MarketingContent })), 'MarketingContent');
 const CashCounts = lazyWithRetry(() => import('./routes/CashCounts.tsx').then((m) => ({ default: m.CashCounts })), 'CashCounts');
 // /widget/* on lounge.venneir.com is redirected at the Vercel
 // layer to book.venneir.com (see vercel.json), so the staff
@@ -322,6 +323,7 @@ function RoutedErrorBoundary() {
           <Route path="/admin/:tab" element={<RequireStaff><Admin /></RequireStaff>} />
           <Route path="/reports" element={<RequireStaff><Reports /></RequireStaff>} />
           <Route path="/reports/:tab" element={<RequireStaff><Reports /></RequireStaff>} />
+          <Route path="/marketing" element={<RequireStaff><MarketingContent /></RequireStaff>} />
           <Route path="/cash-counts" element={<RequireStaff><CashCounts /></RequireStaff>} />
           {/* Customer-facing widget (book + manage) lives on
               book.venneir.com — separate Vercel project, separate

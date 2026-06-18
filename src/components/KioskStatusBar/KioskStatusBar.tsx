@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { BarChart3, CalendarClock, Settings, Wallet } from 'lucide-react';
+import { BarChart3, CalendarClock, Megaphone, Settings, Wallet } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../lib/auth.tsx';
 import { useCurrentAccount } from '../../lib/queries/currentAccount.tsx';
@@ -63,8 +63,9 @@ export function KioskStatusBar() {
     !!account &&
     account.is_virtual_impression_clinician === true &&
     account.clinician_can_edit_own_hours === true;
-  const showAnyDestinationButton =
-    showMyAvailabilityButton || showCashCountsButton || showReportsButton || showAdminButton;
+  // Marketing content is open to every signed-in staff member, so there
+  // is always at least one destination button before the system tray.
+  const showAnyDestinationButton = true;
 
   // Wall clock pinned to the clinic's timezone so a kiosk plugged in
   // anywhere always reads as UK time. Zone suffix (BST/GMT) sits in
@@ -154,6 +155,9 @@ export function KioskStatusBar() {
             <BarChart3 size={15} />
           </KioskIconButton>
         ) : null}
+        <KioskIconButton label="Marketing content" onClick={() => navigate('/marketing')}>
+          <Megaphone size={15} />
+        </KioskIconButton>
         {showAdminButton ? (
           <KioskIconButton label="Admin" onClick={() => navigate('/admin')}>
             <Settings size={15} />
