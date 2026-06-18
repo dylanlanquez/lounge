@@ -21,6 +21,7 @@ import { MarketingTab } from './MarketingTab.tsx';
 import { ServiceMixTab } from './ServiceMixTab.tsx';
 import { LifetimeValueTab } from './LifetimeValueTab.tsx';
 import { OnlineOrdersTab } from './OnlineOrdersTab.tsx';
+import { VirtualImpressionsTab } from './VirtualImpressionsTab.tsx';
 import { OverviewTab as FinancialOverviewTab } from '../Financials/OverviewTab.tsx';
 import { SalesTab } from '../Financials/SalesTab.tsx';
 import { RetailSalesTab } from '../Financials/RetailSalesTab.tsx';
@@ -51,6 +52,7 @@ type Tab =
   | 'service_mix'
   | 'lifetime_value'
   | 'online_orders'
+  | 'virtual_impressions'
   // ── Financial (gated by can_view_financials) ────────────────────
   | 'fin_overview'
   | 'sales'
@@ -68,6 +70,7 @@ const OPERATIONAL_TABS: { value: Tab; label: string }[] = [
   { value: 'service_mix', label: 'Service mix' },
   { value: 'lifetime_value', label: 'Lifetime value' },
   { value: 'online_orders', label: 'Online orders' },
+  { value: 'virtual_impressions', label: 'Virtual impressions' },
 ];
 
 // Cash reconciliation lives at /cash-counts (top-level route, kiosk
@@ -185,6 +188,8 @@ export function Reports() {
           <LifetimeValueTab range={range} />
         ) : tab === 'online_orders' ? (
           <OnlineOrdersTab range={range} />
+        ) : tab === 'virtual_impressions' ? (
+          <VirtualImpressionsTab range={range} />
         ) : tab === 'fin_overview' ? (
           <FinancialOverviewTab range={range} />
         ) : tab === 'sales' ? (
