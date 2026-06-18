@@ -1,8 +1,9 @@
-import { type CSSProperties, type ReactNode } from 'react';
+import { type CSSProperties, type ReactNode, useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { BookMarked, ShoppingBag, UserPlus, Users } from 'lucide-react';
+import { BookMarked, MoreHorizontal, ShoppingBag, UserPlus, Users } from 'lucide-react';
 import { theme } from '../../theme/index.ts';
 import { useAuth } from '../../lib/auth.tsx';
+import { useIsMobile } from '../../lib/useIsMobile.ts';
 import { useKeyboardOpen } from '../../lib/useKeyboardOpen.ts';
 import { CalendarIcon } from '../Icons/CalendarIcon.tsx';
 import { ToothIcon } from '../Icons/ToothIcon.tsx';
@@ -65,6 +66,15 @@ export function BottomNav() {
   // surface reads the same signal.
   const keyboardOpen = useKeyboardOpen();
 
+  // Below this width six equal tabs get crushed, so the two secondary
+  // ones fold into a "More" menu. Tablet and desktop keep all six.
+  const compact = useIsMobile(560);
+  const [moreOpen, setMoreOpen] = useState(false);
+  // Close the overflow menu whenever the route changes.
+  useEffect(() => {
+    setMoreOpen(false);
+  }, [location.pathname]);
+
   if (!navVisible) return null;
   if (keyboardOpen) return null;
 
@@ -86,8 +96,105 @@ export function BottomNav() {
     location.pathname.startsWith('/ledger') || location.pathname.startsWith('/appointments');
   const isQuickSale = location.pathname.startsWith('/quick-sale');
 
+  interface TabDef {
+    label: string;
+    icon: ReactNode;
+    active: boolean;
+    onClick: () => void;
+    badgeCount?: number | null;
+  }
+  // The four clinical destinations stay on the bar at every size.
+  const primaryTabs: TabDef[] = [
+    { label: 'Schedule', icon: <CalendarIcon size={22} />, active: isSchedule, onClick: onSchedule },
+    { label: 'Patients', icon: <Users size={22} />, active: isPatients, onClick: onPatients },
+    { label: 'Walk-in', icon: <UserPlus size={22} />, active: isWalkIn, onClick: onWalkIn },
+    {
+      label: 'In clinic',
+      icon: <ToothIcon size={22} />,
+      active: isInClinic,
+      onClick: onInClinic,
+      badgeCount: inClinicCount,
+    },
+  ];
+  // Secondary destinations: on the bar on wide screens, tucked into the
+  // More menu on phones.
+  const overflowTabs: TabDef[] = [
+    { label: 'Ledger', icon: <BookMarked size={22} />, active: isLedger, onClick: onLedger },
+    { label: 'Quick sale', icon: <ShoppingBag size={22} />, active: isQuickSale, onClick: onQuickSale },
+  ];
+
+  const barTabs = compact ? primaryTabs : [...primaryTabs, ...overflowTabs];
+  const columns = compact ? primaryTabs.length + 1 : barTabs.length;
+
   return (
     <>
+      {compact && moreOpen ? (
+        // Full-screen catcher closes the menu on an outside tap; the
+        // panel floats just above the bar, near the More tab.
+        <div
+          onClick={() => setMoreOpen(false)}
+          style={{ position: 'fixed', inset: 0, zIndex: 51 }}
+        >
+          <div
+            role="menu"
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              position: 'fixed',
+              right: `calc(${theme.space[4]}px + env(safe-area-inset-right, 0px))`,
+              bottom: `calc(${PILL_BOTTOM_GAP + PILL_HEIGHT + 12}px + env(safe-area-inset-bottom, 0px))`,
+              width: 220,
+              maxWidth: 'calc(100vw - 32px)',
+              background: theme.color.surface,
+              borderRadius: theme.radius.card,
+              boxShadow: theme.shadow.overlay,
+              padding: theme.space[2],
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 2,
+              animation: `lng-dialog-in ${theme.motion.duration.fast}ms ${theme.motion.easing.spring}`,
+            }}
+          >
+            {overflowTabs.map((tab) => (
+              <button
+                key={tab.label}
+                type="button"
+                role="menuitem"
+                aria-current={tab.active ? 'page' : undefined}
+                onClick={() => {
+                  setMoreOpen(false);
+                  tab.onClick();
+                }}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: theme.space[3],
+                  padding: theme.space[3],
+                  width: '100%',
+                  border: 'none',
+                  borderRadius: theme.radius.input,
+                  background: tab.active ? theme.color.accentBg : 'transparent',
+                  color: tab.active ? theme.color.accent : theme.color.ink,
+                  fontFamily: 'inherit',
+                  fontSize: theme.type.size.base,
+                  fontWeight: tab.active ? theme.type.weight.semibold : theme.type.weight.medium,
+                  cursor: 'pointer',
+                  textAlign: 'left',
+                }}
+              >
+                <span
+                  style={{
+                    display: 'inline-flex',
+                    color: tab.active ? theme.color.accent : theme.color.inkMuted,
+                  }}
+                >
+                  {tab.icon}
+                </span>
+                {tab.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
       {/* Outer non-interactive bleed bar — full-width fixed positioning
           that lets the inner pill centre itself horizontally. The pill
           itself owns all visual chrome; this wrapper only handles
@@ -135,60 +242,32 @@ export function BottomNav() {
               padding: 0,
               height: '100%',
               display: 'grid',
-              gridTemplateColumns: 'repeat(6, minmax(0, 1fr))',
+              gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
               alignItems: 'stretch',
               position: 'relative',
             }}
           >
-            <li style={{ display: 'flex' }}>
-              <NavTab
-                label="Schedule"
-                icon={<CalendarIcon size={22} />}
-                active={isSchedule}
-                onClick={onSchedule}
-              />
-            </li>
-            <li style={{ display: 'flex' }}>
-              <NavTab
-                label="Patients"
-                icon={<Users size={22} />}
-                active={isPatients}
-                onClick={onPatients}
-              />
-            </li>
-            <li style={{ display: 'flex' }}>
-              <NavTab
-                label="Walk-in"
-                icon={<UserPlus size={22} />}
-                active={isWalkIn}
-                onClick={onWalkIn}
-              />
-            </li>
-            <li style={{ display: 'flex' }}>
-              <NavTab
-                label="In clinic"
-                icon={<ToothIcon size={22} />}
-                active={isInClinic}
-                onClick={onInClinic}
-                badgeCount={inClinicCount}
-              />
-            </li>
-            <li style={{ display: 'flex' }}>
-              <NavTab
-                label="Ledger"
-                icon={<BookMarked size={22} />}
-                active={isLedger}
-                onClick={onLedger}
-              />
-            </li>
-            <li style={{ display: 'flex' }}>
-              <NavTab
-                label="Quick sale"
-                icon={<ShoppingBag size={22} />}
-                active={isQuickSale}
-                onClick={onQuickSale}
-              />
-            </li>
+            {barTabs.map((tab) => (
+              <li key={tab.label} style={{ display: 'flex' }}>
+                <NavTab
+                  label={tab.label}
+                  icon={tab.icon}
+                  active={tab.active}
+                  onClick={tab.onClick}
+                  badgeCount={tab.badgeCount}
+                />
+              </li>
+            ))}
+            {compact && (
+              <li style={{ display: 'flex' }}>
+                <NavTab
+                  label="More"
+                  icon={<MoreHorizontal size={22} />}
+                  active={moreOpen || overflowTabs.some((t) => t.active)}
+                  onClick={() => setMoreOpen((o) => !o)}
+                />
+              </li>
+            )}
           </ul>
           <BottomNavStyles />
         </nav>
