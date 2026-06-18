@@ -193,14 +193,14 @@ export function MarketingWalkthroughVisit() {
           <AddPhotoTile />
         </Card>
 
-        {/* Marketing content card — the spotlight target. */}
-        <Card padding="lg">
+        {/* Marketing content card — the whole section is the spotlight target. */}
+        <Card padding="lg" data-tour="visit-add-marketing">
           <SectionHeader icon={<Megaphone size={18} />} title="Marketing content" count="0 photos" />
           <p style={{ margin: `0 0 ${theme.space[4]}px`, fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>
             Photos with the finished appliance, branded bag, and patient (when consented). Used by
             the marketing team.
           </p>
-          <AddPhotoTile tourId="visit-add-marketing" />
+          <AddPhotoTile />
         </Card>
       </div>
     </main>

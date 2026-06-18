@@ -57,9 +57,10 @@ export function useWalkthrough(): WalkthroughContextValue {
   return ctx;
 }
 
-const SPOTLIGHT_PAD = 8;
-const CARD_W = 380;
-const CARD_GAP = 16;
+const SPOTLIGHT_PAD = 10;
+const CARD_W = 420;
+const CARD_GAP = 20;
+const CARD_EST_H = 300;
 
 // Track a target element's on-screen rect while a step is active.
 // Polls briefly for the element (it may still be mounting after a route
@@ -155,16 +156,39 @@ function StepCard({
       transform: isMobile ? 'none' : 'translate(-50%, -50%)',
     };
   } else {
-    const estHeight = 260;
-    const below = rect.bottom + CARD_GAP;
-    const placeBelow = below + estHeight < window.innerHeight;
-    const top = placeBelow ? below : Math.max(CARD_GAP, rect.top - CARD_GAP - estHeight);
-    const rawLeft = rect.left + rect.width / 2 - CARD_W / 2;
-    const left = Math.min(
-      Math.max(CARD_GAP, rawLeft),
-      window.innerWidth - CARD_W - CARD_GAP,
+    // Place the card in whichever side has room, so the spotlight stays
+    // fully visible and is never covered. Beside the target on wide
+    // screens (the content is centred with margins to spare), above or
+    // below on narrow ones; centred only as a last resort.
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(v, hi));
+    const vCenter = clamp(
+      rect.top + rect.height / 2 - CARD_EST_H / 2,
+      CARD_GAP,
+      vh - CARD_EST_H - CARD_GAP,
     );
-    positionStyle = { position: 'fixed', top, left };
+    const hCenter = clamp(
+      rect.left + rect.width / 2 - CARD_W / 2,
+      CARD_GAP,
+      vw - CARD_W - CARD_GAP,
+    );
+    if (vw - rect.right >= CARD_W + CARD_GAP * 2) {
+      positionStyle = { position: 'fixed', left: rect.right + CARD_GAP, top: vCenter };
+    } else if (rect.left >= CARD_W + CARD_GAP * 2) {
+      positionStyle = { position: 'fixed', left: rect.left - CARD_GAP - CARD_W, top: vCenter };
+    } else if (vh - rect.bottom >= CARD_EST_H + CARD_GAP) {
+      positionStyle = { position: 'fixed', top: rect.bottom + CARD_GAP, left: hCenter };
+    } else if (rect.top >= CARD_EST_H + CARD_GAP) {
+      positionStyle = { position: 'fixed', top: rect.top - CARD_GAP - CARD_EST_H, left: hCenter };
+    } else {
+      positionStyle = {
+        position: 'fixed',
+        left: '50%',
+        top: '50%',
+        transform: 'translate(-50%, -50%)',
+      };
+    }
   }
 
   return (
@@ -179,10 +203,10 @@ function StepCard({
         background: theme.color.surface,
         borderRadius: theme.radius.card,
         boxShadow: theme.shadow.overlay,
-        padding: theme.space[5],
+        padding: theme.space[6],
         display: 'flex',
         flexDirection: 'column',
-        gap: theme.space[3],
+        gap: theme.space[4],
         animation: `lng-dialog-in ${theme.motion.duration.base}ms ${theme.motion.easing.spring}`,
         pointerEvents: 'auto',
       }}
