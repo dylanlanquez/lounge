@@ -155,9 +155,11 @@ export function KioskStatusBar() {
             <BarChart3 size={15} />
           </KioskIconButton>
         ) : null}
-        <KioskIconButton label="Marketing content" onClick={() => navigate('/marketing')}>
-          <Megaphone size={15} />
-        </KioskIconButton>
+        <span data-tour="nav-marketing" style={{ display: 'inline-flex' }}>
+          <KioskIconButton label="Marketing content" onClick={() => navigate('/marketing')}>
+            <Megaphone size={15} />
+          </KioskIconButton>
+        </span>
         {showAdminButton ? (
           <KioskIconButton label="Admin" onClick={() => navigate('/admin')}>
             <Settings size={15} />

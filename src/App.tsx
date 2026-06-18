@@ -10,6 +10,8 @@ import { theme } from './theme/index.ts';
 import { Button } from './components/Button/Button.tsx';
 import { BottomNav } from './components/BottomNav/BottomNav.tsx';
 import { KioskStatusBar } from './components/KioskStatusBar/KioskStatusBar.tsx';
+import { WalkthroughProvider } from './components/Walkthrough/Walkthrough.tsx';
+import { MarketingWalkthroughAutoStart } from './lib/walkthroughs/marketingWalkthrough.tsx';
 import { ErrorBoundary } from './components/ErrorBoundary/ErrorBoundary.tsx';
 import { lazyWithRetry } from './lib/lazyWithRetry.ts';
 
@@ -38,6 +40,7 @@ const InClinic = lazyWithRetry(() => import('./routes/InClinic.tsx').then((m) =>
 const Admin = lazyWithRetry(() => import('./routes/Admin.tsx').then((m) => ({ default: m.Admin })), 'Admin');
 const Reports = lazyWithRetry(() => import('./routes/Reports/Reports.tsx').then((m) => ({ default: m.Reports })), 'Reports');
 const MarketingContent = lazyWithRetry(() => import('./routes/MarketingContent/MarketingContent.tsx').then((m) => ({ default: m.MarketingContent })), 'MarketingContent');
+const MarketingWalkthroughVisit = lazyWithRetry(() => import('./routes/MarketingWalkthroughVisit/MarketingWalkthroughVisit.tsx').then((m) => ({ default: m.MarketingWalkthroughVisit })), 'MarketingWalkthroughVisit');
 const CashCounts = lazyWithRetry(() => import('./routes/CashCounts.tsx').then((m) => ({ default: m.CashCounts })), 'CashCounts');
 // /widget/* on lounge.venneir.com is redirected at the Vercel
 // layer to book.venneir.com (see vercel.json), so the staff
@@ -104,10 +107,13 @@ export function App() {
           first-paint race against permission gates that produced the
           flicker on CS-only surfaces. */}
       <CurrentAccountProvider>
-        <KioskStatusBar />
-        <ScrollToTop />
-        <RoutedErrorBoundary />
-        <BottomNav />
+        <WalkthroughProvider>
+          <MarketingWalkthroughAutoStart />
+          <KioskStatusBar />
+          <ScrollToTop />
+          <RoutedErrorBoundary />
+          <BottomNav />
+        </WalkthroughProvider>
       </CurrentAccountProvider>
     </AuthProvider>
   );
@@ -324,6 +330,7 @@ function RoutedErrorBoundary() {
           <Route path="/reports" element={<RequireStaff><Reports /></RequireStaff>} />
           <Route path="/reports/:tab" element={<RequireStaff><Reports /></RequireStaff>} />
           <Route path="/marketing" element={<RequireStaff><MarketingContent /></RequireStaff>} />
+          <Route path="/marketing/demo" element={<RequireStaff><MarketingWalkthroughVisit /></RequireStaff>} />
           <Route path="/cash-counts" element={<RequireStaff><CashCounts /></RequireStaff>} />
           {/* Customer-facing widget (book + manage) lives on
               book.venneir.com — separate Vercel project, separate
