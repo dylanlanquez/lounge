@@ -184,7 +184,13 @@ export function MarketingWalkthroughVisit() {
           </div>
         </Card>
 
-        {/* Before & after card. */}
+        {/* Both photo sections sit inside one spotlight target — before
+            and after shots are marketing content too, so the tour lights
+            up both at once. */}
+        <div
+          data-tour="visit-add-marketing"
+          style={{ display: 'flex', flexDirection: 'column', gap: theme.space[5] }}
+        >
         <Card padding="lg">
           <SectionHeader icon={<Sparkles size={18} />} title="Before & after" count="0 photos" />
           <p style={{ margin: `0 0 ${theme.space[4]}px`, fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>
@@ -193,8 +199,8 @@ export function MarketingWalkthroughVisit() {
           <AddPhotoTile />
         </Card>
 
-        {/* Marketing content card — the whole section is the spotlight target. */}
-        <Card padding="lg" data-tour="visit-add-marketing">
+        {/* Marketing content card. */}
+        <Card padding="lg">
           <SectionHeader icon={<Megaphone size={18} />} title="Marketing content" count="0 photos" />
           <p style={{ margin: `0 0 ${theme.space[4]}px`, fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>
             Photos with the finished appliance, branded bag, and patient (when consented). Used by
@@ -202,6 +208,7 @@ export function MarketingWalkthroughVisit() {
           </p>
           <AddPhotoTile />
         </Card>
+        </div>
       </div>
     </main>
   );
