@@ -29,6 +29,7 @@ function mkCall(
     patientMinutes,
     hostMinutes: null,
     vsSlotMinutes: patientMinutes === null ? null : patientMinutes - 30,
+    sessions: [],
     ...opts,
   };
 }
@@ -180,6 +181,27 @@ describe('arch and host capture', () => {
     expect(data.calls[0]!.arch).toBe('upper');
     expect(data.calls[0]!.hostName).toBe('Heidi Abdrabu');
     expect(data.calls[0]!.hostMinutes).toBeCloseTo(30, 5);
+  });
+});
+
+describe('per-call sessions', () => {
+  it('attaches each stay, host first, with durations', () => {
+    const appts = [
+      appt('1', 9, 'complete', {
+        conference_started_at: '2026-06-10T09:00:00Z',
+        conference_ended_at: '2026-06-10T09:40:00Z',
+      }),
+    ];
+    const attendance = [
+      session('1', false, 5, 25, 9, 'A Patient'), // patient 20 min
+      session('1', true, 0, 30, 9, 'Heidi Abdrabu'), // host 30 min
+    ];
+    const data = aggregateVirtualImpressions(appts, attendance, patients);
+    const sessions = data.calls[0]!.sessions;
+    expect(sessions).toHaveLength(2);
+    expect(sessions[0]!.isHost).toBe(true); // host sorted first
+    expect(sessions[0]!.durationMinutes).toBeCloseTo(30, 5);
+    expect(sessions[1]!.durationMinutes).toBeCloseTo(20, 5);
   });
 });
 

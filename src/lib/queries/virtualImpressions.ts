@@ -38,6 +38,16 @@ export interface ViAppointmentRow {
 
 export type ArchFilter = 'all' | 'upper' | 'lower' | 'both';
 
+// One participant's stay in the call — the rows the expandable row
+// detail renders, mirroring the appointment page's attendance card.
+export interface CallSession {
+  participantName: string | null;
+  isHost: boolean;
+  joinedAt: string | null;
+  leftAt: string | null;
+  durationMinutes: number | null;
+}
+
 export interface ViAttendanceRow {
   appointment_id: string;
   is_host: boolean;
@@ -71,6 +81,8 @@ export interface VirtualImpressionCall {
   hostMinutes: number | null;
   // patientMinutes - slotMinutes. Negative = finished inside the slot.
   vsSlotMinutes: number | null;
+  // Every participant stay, for the expandable per-call detail.
+  sessions: CallSession[];
 }
 
 // Headline figures over a set of calls. Pulled out of the data object
@@ -228,6 +240,20 @@ export function aggregateVirtualImpressions(
     const rows = attendanceByAppt.get(appt.id) ?? [];
     const patientMinutes = presenceSpan(rows, false);
     const hostMinutes = presenceSpan(rows, true);
+    const sessions: CallSession[] = rows
+      .map((r) => ({
+        participantName: r.participant_name,
+        isHost: r.is_host,
+        joinedAt: r.joined_at,
+        leftAt: r.left_at,
+        durationMinutes: minutesBetween(r.joined_at, r.left_at),
+      }))
+      .sort(
+        (a, b) =>
+          Number(b.isHost) - Number(a.isHost) ||
+          (a.joinedAt ? new Date(a.joinedAt).getTime() : 0) -
+            (b.joinedAt ? new Date(b.joinedAt).getTime() : 0),
+      );
     const slot = Math.round(minutesBetween(appt.start_at, appt.end_at) ?? slotMinutes);
     const ref = appt.appointment_ref ?? `LAP-${appt.id.slice(0, 6)}`;
     calls.push({
@@ -245,6 +271,7 @@ export function aggregateVirtualImpressions(
       patientMinutes,
       hostMinutes,
       vsSlotMinutes: patientMinutes === null ? null : patientMinutes - slot,
+      sessions,
     });
   }
 
