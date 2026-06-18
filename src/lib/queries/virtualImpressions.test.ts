@@ -1,12 +1,37 @@
 import { describe, expect, it } from 'vitest';
 import {
   aggregateVirtualImpressions,
+  buildDailyDurationSeries,
+  computeDurationTrend,
   formatCallMinutes,
   formatVsSlot,
+  summarizeCalls,
   type ViAppointmentRow,
   type ViAttendanceRow,
   type ViPatientRow,
+  type VirtualImpressionCall,
 } from './virtualImpressions.ts';
+
+function mkCall(
+  startAt: string,
+  patientMinutes: number | null,
+  opts: Partial<VirtualImpressionCall> = {},
+): VirtualImpressionCall {
+  return {
+    id: startAt,
+    ref: 'LAP',
+    patientName: 'X',
+    startAt,
+    status: 'complete',
+    arch: null,
+    hostName: null,
+    slotMinutes: 30,
+    patientMinutes,
+    hostMinutes: null,
+    vsSlotMinutes: patientMinutes === null ? null : patientMinutes - 30,
+    ...opts,
+  };
+}
 
 // A 30 minute slot starting at the given hour, in UTC.
 function appt(
@@ -24,6 +49,7 @@ function appt(
     start_at: start,
     end_at: end,
     status,
+    arch: null,
     conference_started_at: null,
     conference_ended_at: null,
     ...opts,
@@ -36,11 +62,13 @@ function session(
   joinedMin: number,
   leftMin: number,
   startHour = 9,
+  participant_name: string | null = null,
 ): ViAttendanceRow {
   const base = new Date(`2026-06-10T${String(startHour).padStart(2, '0')}:00:00Z`).getTime();
   return {
     appointment_id,
     is_host,
+    participant_name,
     joined_at: new Date(base + joinedMin * 60000).toISOString(),
     left_at: new Date(base + leftMin * 60000).toISOString(),
   };
@@ -132,6 +160,82 @@ describe('aggregateVirtualImpressions', () => {
     expect(data.callsHeld).toBe(0);
     expect(data.avgPatientMinutes).toBeNull();
     expect(data.attendanceRate).toBeNull();
+  });
+});
+
+describe('arch and host capture', () => {
+  it('records the arch and the hosting clinician', () => {
+    const appts = [
+      appt('1', 9, 'complete', {
+        arch: 'upper',
+        conference_started_at: '2026-06-10T09:00:00Z',
+        conference_ended_at: '2026-06-10T09:40:00Z',
+      }),
+    ];
+    const attendance = [
+      session('1', true, 0, 30, 9, 'Heidi Abdrabu'),
+      session('1', false, 2, 25, 9),
+    ];
+    const data = aggregateVirtualImpressions(appts, attendance, patients);
+    expect(data.calls[0]!.arch).toBe('upper');
+    expect(data.calls[0]!.hostName).toBe('Heidi Abdrabu');
+    expect(data.calls[0]!.hostMinutes).toBeCloseTo(30, 5);
+  });
+});
+
+describe('summarizeCalls', () => {
+  it('derives the headline figures from a call subset', () => {
+    const calls = [
+      mkCall('2026-06-10T09:00:00Z', 20),
+      mkCall('2026-06-10T10:00:00Z', 30),
+      mkCall('2026-06-10T11:00:00Z', 40),
+      mkCall('2026-06-10T12:00:00Z', null), // no answer
+    ];
+    const s = summarizeCalls(calls);
+    expect(s.callsHeld).toBe(4);
+    expect(s.patientJoined).toBe(3);
+    expect(s.noAnswer).toBe(1);
+    expect(s.avgPatientMinutes).toBeCloseTo(30, 5);
+    expect(s.medianPatientMinutes).toBeCloseTo(30, 5);
+    expect(s.ranOverSlot).toBe(1);
+    expect(s.attendanceRate).toBeCloseTo(0.75, 5);
+  });
+});
+
+describe('buildDailyDurationSeries', () => {
+  it('emits one point per day with NaN gaps', () => {
+    const calls = [
+      mkCall('2026-06-10T12:00:00Z', 20),
+      mkCall('2026-06-10T13:00:00Z', 40), // same day -> avg 30
+      mkCall('2026-06-12T12:00:00Z', 10),
+    ];
+    const series = buildDailyDurationSeries(calls, '2026-06-10', '2026-06-12');
+    expect(series.map((p) => p.date)).toEqual([
+      '2026-06-10',
+      '2026-06-11',
+      '2026-06-12',
+    ]);
+    expect(series[0]!.avgMinutes).toBeCloseTo(30, 5);
+    expect(Number.isNaN(series[1]!.avgMinutes)).toBe(true);
+    expect(series[2]!.avgMinutes).toBeCloseTo(10, 5);
+  });
+});
+
+describe('computeDurationTrend', () => {
+  it('reads a rising trend as up', () => {
+    const calls = [0, 1, 2, 3, 4].map((d) =>
+      mkCall(`2026-06-1${d}T12:00:00Z`, 10 + d * 5),
+    );
+    const trend = computeDurationTrend(calls);
+    expect(trend.direction).toBe('up');
+    expect(trend.perWeekMinutes).not.toBeNull();
+    expect(trend.perWeekMinutes!).toBeGreaterThan(0);
+  });
+
+  it('returns flat with too few calls', () => {
+    const trend = computeDurationTrend([mkCall('2026-06-10T12:00:00Z', 20)]);
+    expect(trend.direction).toBe('flat');
+    expect(trend.perWeekMinutes).toBeNull();
   });
 });
 
