@@ -141,17 +141,61 @@ export function useEditableLocation(): EditableResult {
       // layout shift was bumping the user's scroll back to the
       // top after every save.
       if (tick === 0) setLoading(true);
-      const { data: rows, error: err } = await supabase
+
+      // Pin to the staff member's OWN location, exactly like
+      // useCurrentLocation above. The old `.limit(1)` with no order
+      // let Postgres hand back either row whenever more than one
+      // location was visible (the Motherwell practice and the
+      // Motherwell lab). The Clinic info form then loaded AND saved
+      // whichever row won that coin flip, so an edit looked like it
+      // "reverted" on the next load and could even land on a location
+      // the receptionist's bookings never resolve to. Resolving the
+      // account's location_id (the same id New Booking writes onto
+      // every appointment) keeps the form editing the one row that
+      // actually drives confirmation emails and calendar invites.
+      const { data: accountIdRaw, error: accErr } = await supabase.rpc(
+        'auth_account_id',
+      );
+      if (cancelled) return;
+      const accountId = (accountIdRaw as string | null) ?? null;
+      if (accErr || !accountId) {
+        setError(accErr?.message ?? 'No staff account for this session');
+        setLoading(false);
+        return;
+      }
+      const { data: accountRow, error: accountErr } = await supabase
+        .from('accounts')
+        .select('location_id')
+        .eq('id', accountId)
+        .maybeSingle();
+      if (cancelled) return;
+      if (accountErr) {
+        setError(accountErr.message);
+        setLoading(false);
+        return;
+      }
+      const locId =
+        (accountRow as { location_id: string | null } | null)?.location_id ??
+        null;
+      if (!locId) {
+        setError(
+          'Your account is not bound to a location. Admin → Staff to fix.',
+        );
+        setLoading(false);
+        return;
+      }
+      const { data: locRow, error: err } = await supabase
         .from('locations')
         .select('id, name, type, city, address, postcode, phone')
-        .limit(1);
+        .eq('id', locId)
+        .maybeSingle();
       if (cancelled) return;
       if (err) {
         setError(err.message);
         setLoading(false);
         return;
       }
-      setData((rows && rows[0]) as EditableLocationRow | null);
+      setData((locRow as EditableLocationRow | null) ?? null);
       setError(null);
       setLoading(false);
     })();
