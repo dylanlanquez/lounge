@@ -1,8 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
   aggregateVirtualImpressions,
-  buildDailyDurationSeries,
-  computeDurationTrend,
   formatCallMinutes,
   formatVsSlot,
   summarizeCalls,
@@ -221,43 +219,6 @@ describe('summarizeCalls', () => {
     expect(s.medianPatientMinutes).toBeCloseTo(30, 5);
     expect(s.ranOverSlot).toBe(1);
     expect(s.attendanceRate).toBeCloseTo(0.75, 5);
-  });
-});
-
-describe('buildDailyDurationSeries', () => {
-  it('emits one point per day with NaN gaps', () => {
-    const calls = [
-      mkCall('2026-06-10T12:00:00Z', 20),
-      mkCall('2026-06-10T13:00:00Z', 40), // same day -> avg 30
-      mkCall('2026-06-12T12:00:00Z', 10),
-    ];
-    const series = buildDailyDurationSeries(calls, '2026-06-10', '2026-06-12');
-    expect(series.map((p) => p.date)).toEqual([
-      '2026-06-10',
-      '2026-06-11',
-      '2026-06-12',
-    ]);
-    expect(series[0]!.avgMinutes).toBeCloseTo(30, 5);
-    expect(Number.isNaN(series[1]!.avgMinutes)).toBe(true);
-    expect(series[2]!.avgMinutes).toBeCloseTo(10, 5);
-  });
-});
-
-describe('computeDurationTrend', () => {
-  it('reads a rising trend as up', () => {
-    const calls = [0, 1, 2, 3, 4].map((d) =>
-      mkCall(`2026-06-1${d}T12:00:00Z`, 10 + d * 5),
-    );
-    const trend = computeDurationTrend(calls);
-    expect(trend.direction).toBe('up');
-    expect(trend.perWeekMinutes).not.toBeNull();
-    expect(trend.perWeekMinutes!).toBeGreaterThan(0);
-  });
-
-  it('returns flat with too few calls', () => {
-    const trend = computeDurationTrend([mkCall('2026-06-10T12:00:00Z', 20)]);
-    expect(trend.direction).toBe('flat');
-    expect(trend.perWeekMinutes).toBeNull();
   });
 });
 

@@ -2,11 +2,9 @@ import { type CSSProperties, useEffect, useMemo, useState } from 'react';
 import { ChevronDown, Video } from 'lucide-react';
 import {
   Card,
-  Checkbox,
   DropdownSelect,
   EmptyState,
   LineChart,
-  SegmentedControl,
   Skeleton,
   StatCard,
   StatusPill,
@@ -20,38 +18,41 @@ import {
   type CallSession,
   type VirtualImpressionCall,
   type VirtualImpressionsSummary,
-  buildDailyDurationSeries,
-  computeDurationTrend,
   formatCallMinutes,
   formatVsSlot,
   summarizeCalls,
   useReportsVirtualImpressions,
 } from '../../lib/queries/virtualImpressions.ts';
 
-// Compact x-axis labels for the trend chart: "17 Jun" from a clinic
-// YYYY-MM-DD day key. Built off UTC noon so the label never slips a day.
-const shortDayFmt = new Intl.DateTimeFormat('en-GB', {
+// Compact x-axis label for the duration chart: "17 Jun" from a call's
+// ISO start, in clinic time so a late call never slips to the next day.
+const dayLabelFmt = new Intl.DateTimeFormat('en-GB', {
   day: 'numeric',
   month: 'short',
+  timeZone: 'Europe/London',
 });
-function shortDay(ymd: string): string {
-  const [y, m, d] = ymd.split('-').map(Number);
-  return shortDayFmt.format(new Date(Date.UTC(y!, m! - 1, d!)));
+function dayLabel(iso: string): string {
+  return dayLabelFmt.format(new Date(iso));
 }
 
 type OutcomeFilter = 'all' | 'within' | 'over';
+type AnswerFilter = 'all' | 'answered';
 
-const ARCH_OPTIONS: { value: ArchFilter; label: string }[] = [
+const ARCH_OPTIONS: DropdownSelectOption<ArchFilter>[] = [
   { value: 'all', label: 'All arches' },
-  { value: 'upper', label: 'Upper' },
-  { value: 'lower', label: 'Lower' },
-  { value: 'both', label: 'Both' },
+  { value: 'both', label: 'Both arches' },
+  { value: 'single', label: 'Single arch' },
 ];
 
-const OUTCOME_OPTIONS: { value: OutcomeFilter; label: string }[] = [
+const OUTCOME_OPTIONS: DropdownSelectOption<OutcomeFilter>[] = [
   { value: 'all', label: 'Any length' },
   { value: 'within', label: 'Within slot' },
   { value: 'over', label: 'Over slot' },
+];
+
+const ANSWER_OPTIONS: DropdownSelectOption<AnswerFilter>[] = [
+  { value: 'all', label: 'All calls' },
+  { value: 'answered', label: 'Answered only' },
 ];
 
 interface Props {
@@ -509,8 +510,8 @@ function FilterBar({
   onHost,
   outcome,
   onOutcome,
-  hideNoAnswers,
-  onHideNoAnswers,
+  answer,
+  onAnswer,
 }: {
   arch: ArchFilter;
   onArch: (a: ArchFilter) => void;
@@ -519,43 +520,27 @@ function FilterBar({
   onHost: (h: string) => void;
   outcome: OutcomeFilter;
   onOutcome: (o: OutcomeFilter) => void;
-  hideNoAnswers: boolean;
-  onHideNoAnswers: (v: boolean) => void;
+  answer: AnswerFilter;
+  onAnswer: (a: AnswerFilter) => void;
 }) {
+  // One tidy row of equal dropdowns. Each shows its current selection,
+  // so the controls stay self-describing without separate labels.
+  const cell: CSSProperties = { flex: '1 1 150px', minWidth: 0 };
   return (
     <Card padding="md">
-      <div
-        style={{
-          display: 'flex',
-          flexWrap: 'wrap',
-          alignItems: 'center',
-          gap: theme.space[3],
-        }}
-      >
-        <SegmentedControl<ArchFilter>
-          scrollable
-          value={arch}
-          onChange={onArch}
-          options={ARCH_OPTIONS}
-        />
-        <SegmentedControl<OutcomeFilter>
-          scrollable
-          value={outcome}
-          onChange={onOutcome}
-          options={OUTCOME_OPTIONS}
-        />
-        <div style={{ minWidth: 180 }}>
-          <DropdownSelect<string>
-            value={host}
-            options={hostOptions}
-            onChange={onHost}
-          />
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: theme.space[3] }}>
+        <div style={cell}>
+          <DropdownSelect<ArchFilter> value={arch} options={ARCH_OPTIONS} onChange={onArch} />
         </div>
-        <Checkbox
-          checked={hideNoAnswers}
-          onChange={onHideNoAnswers}
-          label="Hide no answers"
-        />
+        <div style={cell}>
+          <DropdownSelect<OutcomeFilter> value={outcome} options={OUTCOME_OPTIONS} onChange={onOutcome} />
+        </div>
+        <div style={cell}>
+          <DropdownSelect<string> value={host} options={hostOptions} onChange={onHost} />
+        </div>
+        <div style={cell}>
+          <DropdownSelect<AnswerFilter> value={answer} options={ANSWER_OPTIONS} onChange={onAnswer} />
+        </div>
       </div>
     </Card>
   );
@@ -690,7 +675,7 @@ export function VirtualImpressionsTab({ range }: Props) {
   const [arch, setArch] = useState<ArchFilter>('all');
   const [host, setHost] = useState<string>('all');
   const [outcome, setOutcome] = useState<OutcomeFilter>('all');
-  const [hideNoAnswers, setHideNoAnswers] = useState(false);
+  const [answer, setAnswer] = useState<AnswerFilter>('all');
 
   const hostOptions = useMemo<DropdownSelectOption<string>[]>(() => {
     const names = data
@@ -714,7 +699,7 @@ export function VirtualImpressionsTab({ range }: Props) {
     if (!data) return [];
     return data.calls.filter((c) => {
       if (host !== 'all' && c.hostName !== host) return false;
-      if (hideNoAnswers && c.patientMinutes === null) return false;
+      if (answer === 'answered' && c.patientMinutes === null) return false;
       if (outcome === 'within') {
         return c.patientMinutes !== null && c.patientMinutes <= c.slotMinutes;
       }
@@ -723,39 +708,47 @@ export function VirtualImpressionsTab({ range }: Props) {
       }
       return true;
     });
-  }, [data, host, outcome, hideNoAnswers]);
+  }, [data, host, outcome, answer]);
 
-  const filtered = useMemo(
-    () =>
-      arch === 'all'
-        ? otherFiltered
-        : otherFiltered.filter((c) => c.arch === arch),
-    [otherFiltered, arch],
-  );
+  const filtered = useMemo(() => {
+    if (arch === 'both') return otherFiltered.filter((c) => c.arch === 'both');
+    if (arch === 'single') {
+      return otherFiltered.filter((c) => c.arch === 'upper' || c.arch === 'lower');
+    }
+    return otherFiltered;
+  }, [otherFiltered, arch]);
 
   // A single arch finishes quicker than both arches together, so a
-  // blended average lies. Split the headline by arch instead.
+  // blended average lies. Split the headline on that distinction.
   const archGroups = useMemo(() => {
-    const order: { key: string | null; label: string }[] = [
-      { key: 'both', label: 'Both arches' },
-      { key: 'upper', label: 'Upper' },
-      { key: 'lower', label: 'Lower' },
-      { key: null, label: 'Arch not set' },
+    const order: { key: string; label: string; match: (a: string | null) => boolean }[] = [
+      { key: 'both', label: 'Both arches', match: (a) => a === 'both' },
+      { key: 'single', label: 'Single arch', match: (a) => a === 'upper' || a === 'lower' },
+      { key: 'unset', label: 'Arch not set', match: (a) => a !== 'both' && a !== 'upper' && a !== 'lower' },
     ];
     return order
       .map((o) => ({
-        ...o,
-        summary: summarizeCalls(otherFiltered.filter((c) => c.arch === o.key)),
+        key: o.key,
+        label: o.label,
+        summary: summarizeCalls(otherFiltered.filter((c) => o.match(c.arch))),
       }))
       .filter((g) => g.summary.patientJoined > 0);
   }, [otherFiltered]);
 
   const slotMinutes = data?.slotMinutes ?? 30;
   const summary = useMemo(() => summarizeCalls(filtered), [filtered]);
-  const trend = useMemo(() => computeDurationTrend(filtered), [filtered]);
-  const dailySeries = useMemo(
-    () => buildDailyDurationSeries(filtered, range.start, range.end),
-    [filtered, range.start, range.end],
+
+  // One point per call, oldest first — the actual durations, not a daily
+  // average, so the chart shows how long calls run in general. Calls of 4
+  // minutes or less are almost always recycled / aborted links rather than
+  // real impressions, so they are left off as noise.
+  const chartCalls = useMemo(
+    () =>
+      filtered
+        .filter((c) => c.patientMinutes !== null && c.patientMinutes > 4)
+        .slice()
+        .reverse(),
+    [filtered],
   );
 
   const heroSentence = useMemo(() => {
@@ -771,19 +764,6 @@ export function VirtualImpressionsTab({ range }: Props) {
     const calls = `${summary.patientJoined} ${summary.patientJoined === 1 ? 'call' : 'calls'}`;
     return `Across ${calls} where the patient joined, they were on the video for ${avg} on average, ${rel}.`;
   }, [summary, slotMinutes]);
-
-  const trendSentence = useMemo(() => {
-    if (trend.perWeekMinutes === null) {
-      return 'Not enough calls in this view yet to show a direction.';
-    }
-    const n = Math.abs(Math.round(trend.perWeekMinutes));
-    if (trend.direction === 'flat' || n === 0) {
-      return 'Call length is holding steady across this period.';
-    }
-    return trend.direction === 'up'
-      ? `Calls are trending about ${n} min longer each week.`
-      : `Calls are trending about ${n} min shorter each week.`;
-  }, [trend]);
 
   if (error) {
     return (
@@ -827,8 +807,8 @@ export function VirtualImpressionsTab({ range }: Props) {
       onHost={setHost}
       outcome={outcome}
       onOutcome={setOutcome}
-      hideNoAnswers={hideNoAnswers}
-      onHideNoAnswers={setHideNoAnswers}
+      answer={answer}
+      onAnswer={setAnswer}
     />
   );
 
@@ -848,8 +828,8 @@ export function VirtualImpressionsTab({ range }: Props) {
   }
 
   const measuredAvg = summary.avgPatientMinutes !== null;
-  const xLabels = dailySeries.map((d) => shortDay(d.date));
-  const hasChartData = dailySeries.some((d) => Number.isFinite(d.avgMinutes));
+  const chartLabels = chartCalls.map((c) => dayLabel(c.startAt));
+  const chartValues = chartCalls.map((c) => Math.round(c.patientMinutes as number));
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[5] }}>
@@ -988,24 +968,25 @@ export function VirtualImpressionsTab({ range }: Props) {
         />
       </div>
 
-      {/* Trend over time. */}
-      {hasChartData && (
+      {/* How long calls run — one point per real call (over 4 min). The
+          y-axis stays plain numbers (no "min" suffix) so longer labels
+          never clip the gridline values. */}
+      {chartCalls.length >= 2 && (
         <Card padding="lg">
           <LineChart
-            title="Call length over time"
-            subtitle={trendSentence}
-            xLabels={xLabels}
+            title="Call durations"
+            subtitle={`Minutes the patient was on each call, oldest first. ${chartCalls.length} ${chartCalls.length === 1 ? 'call' : 'calls'} over 4 minutes.`}
+            xLabels={chartLabels}
             series={[
               {
-                id: 'avg',
-                label: 'Average call length',
+                id: 'dur',
+                label: 'Minutes on call',
                 colour: theme.color.accent,
-                values: dailySeries.map((d) => d.avgMinutes),
-                formatValue: (n) => `${Math.round(n)} min`,
+                values: chartValues,
               },
             ]}
             legendMode="avg"
-            ariaSummary={`Daily average virtual impression call length over ${dateRangeLabel(range)}. ${trendSentence}`}
+            ariaSummary={`Length in minutes of each virtual impression call over 4 minutes across ${dateRangeLabel(range)}.`}
           />
         </Card>
       )}
