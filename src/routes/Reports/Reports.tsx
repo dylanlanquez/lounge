@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import { Navigate } from 'react-router-dom';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Navigate, useNavigate, useParams } from 'react-router-dom';
 import {
   Card,
   DateRangePicker,
@@ -93,7 +93,11 @@ export function Reports() {
   const { user, loading: authLoading } = useAuth();
   const { account, loading: accountLoading } = useCurrentAccount();
   const isMobile = useIsMobile(640);
-  const [tab, setTab] = useState<Tab>('overview');
+  const navigate = useNavigate();
+  // The active tab is encoded in the URL (/reports/:tab) so a refresh,
+  // a back-navigation, or a shared link keeps the user on the same
+  // report. useState would have lost that on every reload.
+  const params = useParams<{ tab?: string }>();
   // The date range is owned at the route level so switching tabs
   // preserves whatever period the user was looking at. Defaults to
   // the last 30 days — long enough for trends, short enough for a
@@ -109,6 +113,33 @@ export function Reports() {
       ? [...OPERATIONAL_TABS, ...FINANCIAL_TABS]
       : OPERATIONAL_TABS;
   }, [account]);
+
+  // Resolve the active tab from the URL, gated against the visible
+  // tabs. Bare /reports and any unknown or not-permitted :tab fall back
+  // to Overview, with the canonical URL restored by the effect below.
+  const urlTab = params.tab as Tab | undefined;
+  const tab: Tab = useMemo(() => {
+    if (!urlTab) return 'overview';
+    if (!tabs.some((t) => t.value === urlTab)) return 'overview';
+    return urlTab;
+  }, [urlTab, tabs]);
+
+  const setTab = useCallback(
+    (next: Tab) => {
+      navigate(`/reports/${next}`);
+    },
+    [navigate],
+  );
+
+  // Keep the URL canonical: bare /reports, an unknown tab, or one the
+  // account can't see becomes /reports/overview. replace so the
+  // malformed URL doesn't stack a back-step the user didn't take.
+  useEffect(() => {
+    if (!account) return;
+    if (!urlTab || !tabs.some((t) => t.value === urlTab)) {
+      navigate('/reports/overview', { replace: true });
+    }
+  }, [account, urlTab, tabs, navigate]);
 
   if (authLoading || accountLoading) return null;
   if (!user) return <Navigate to="/sign-in" replace />;
