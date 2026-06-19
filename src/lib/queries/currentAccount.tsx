@@ -79,6 +79,11 @@ export interface CurrentAccount {
   // entries, /admin opens and only the listed tab keys are shown.
   // Super admins and full admins see every tab regardless.
   admin_page_access: string[];
+  // Per-staff gate (allowlist, default false) for the marketing-content
+  // walkthrough — the guided tour auto-start and the Schedule "Show me
+  // how" banner both read this. Off for everyone until an admin opts a
+  // staff member in.
+  marketing_walkthrough_enabled: boolean;
   // Job title (Receptionist, Hygienist, etc.) from lng_staff_roles.
   // Informational only — shown on the profile sheet and anywhere we
   // attribute work to a staff member. Null when no role is assigned
@@ -270,6 +275,8 @@ export function CurrentAccountProvider({ children }: { children: ReactNode }) {
           can_count_cash:
             (isActiveStaff && membership?.can_count_cash === true) || isSuperAdmin,
           admin_page_access: isActiveStaff ? (membership?.admin_page_access ?? []) : [],
+          marketing_walkthrough_enabled:
+            isActiveStaff && membership?.marketing_walkthrough_enabled === true,
           role_name: isActiveStaff ? (membership?.role_name ?? null) : null,
           // Super admin is exempt from the require_2fa gate so a
           // brand-new install can never lock itself out. Every other

@@ -54,6 +54,10 @@ export interface StaffRow {
   // true) see every tab regardless. Valid keys live in ADMIN_TABS
   // in src/routes/Admin.tsx.
   admin_page_access: string[];
+  // Per-staff gate for the marketing-content walkthrough (guided tour +
+  // Schedule "Show me how" banner). Allowlist: defaults false, an admin
+  // opts each staff member in via the Staff Manage sheet.
+  marketing_walkthrough_enabled: boolean;
   // Job title FK into lng_staff_roles. Informational only —
   // independent of admin/manager/page permissions. Null = no role
   // assigned yet.
@@ -116,6 +120,7 @@ interface RawJoinedRow {
   can_count_cash: boolean | null;
   require_2fa: boolean | null;
   admin_page_access: string[] | null;
+  marketing_walkthrough_enabled: boolean | null;
   role_id: string | null;
   role: { id: string; name: string } | { id: string; name: string }[] | null;
   status: 'active' | 'inactive';
@@ -174,6 +179,7 @@ function mapRow(r: RawJoinedRow): StaffRow {
     admin_page_access: Array.isArray(r.admin_page_access)
       ? r.admin_page_access.filter((k): k is string => typeof k === 'string')
       : [],
+    marketing_walkthrough_enabled: r.marketing_walkthrough_enabled === true,
     role_id: r.role_id,
     role_name: role?.name ?? null,
     status: r.status,
@@ -196,7 +202,7 @@ function mapRow(r: RawJoinedRow): StaffRow {
 }
 
 const STAFF_SELECT =
-  'id, account_id, is_admin, is_manager, is_customer_service, is_virtual_impression_clinician, clinician_self_serve, clinician_can_edit_own_hours, authorisation_code, can_view_reports, can_view_financials, can_count_cash, require_2fa, admin_page_access, role_id, status, hired_at, deactivated_at, invite_sent_at, invite_expires_at, invite_accepted_at, last_sign_in_at, account:accounts!account_id(id, first_name, last_name, name, login_email, location_id, location:locations!location_id(id, name, type, city)), role:lng_staff_roles!role_id(id, name)';
+  'id, account_id, is_admin, is_manager, is_customer_service, is_virtual_impression_clinician, clinician_self_serve, clinician_can_edit_own_hours, authorisation_code, can_view_reports, can_view_financials, can_count_cash, require_2fa, admin_page_access, marketing_walkthrough_enabled, role_id, status, hired_at, deactivated_at, invite_sent_at, invite_expires_at, invite_accepted_at, last_sign_in_at, account:accounts!account_id(id, first_name, last_name, name, login_email, location_id, location:locations!location_id(id, name, type, city)), role:lng_staff_roles!role_id(id, name)';
 
 // Lists every staff member, active and inactive, sorted alphabetically
 // by display name. Inactive rows render with a "Deactivated" badge in
@@ -330,6 +336,20 @@ export async function setCanCountCash(staffMemberId: string, value: boolean): Pr
   const { error } = await supabase
     .from('lng_staff_members')
     .update({ can_count_cash: value })
+    .eq('id', staffMemberId);
+  if (error) throw new Error(error.message);
+}
+
+// Toggles the per-staff marketing-content walkthrough gate. Allowlist:
+// when true the staff member gets the guided tour auto-start and the
+// Schedule "Show me how" banner; when false they see neither.
+export async function setMarketingWalkthroughEnabled(
+  staffMemberId: string,
+  value: boolean,
+): Promise<void> {
+  const { error } = await supabase
+    .from('lng_staff_members')
+    .update({ marketing_walkthrough_enabled: value })
     .eq('id', staffMemberId);
   if (error) throw new Error(error.message);
 }
@@ -988,6 +1008,9 @@ export interface CurrentStaffMembership {
   can_count_cash: boolean;
   require_2fa: boolean;
   admin_page_access: string[];
+  // Per-staff marketing-content walkthrough gate (allowlist, default
+  // false). Read by the walkthrough auto-start + Schedule banner.
+  marketing_walkthrough_enabled: boolean;
   // Job-title FK + resolved display name from lng_staff_roles. Both
   // nullable: a staff member without a role assigned, or with a role
   // that's been archived since assignment, lands here with null
@@ -1009,7 +1032,7 @@ export async function fetchCurrentStaffMembership(
   // entire auth gate. Two cheap round-trips, no schema-cache risk.
   const { data, error } = await supabase
     .from('lng_staff_members')
-    .select('id, is_admin, is_manager, is_customer_service, is_virtual_impression_clinician, clinician_can_edit_own_hours, can_view_reports, can_view_financials, can_count_cash, require_2fa, admin_page_access, role_id, status')
+    .select('id, is_admin, is_manager, is_customer_service, is_virtual_impression_clinician, clinician_can_edit_own_hours, can_view_reports, can_view_financials, can_count_cash, require_2fa, admin_page_access, marketing_walkthrough_enabled, role_id, status')
     .eq('account_id', accountId)
     .maybeSingle();
   if (error) {
@@ -1051,6 +1074,7 @@ export async function fetchCurrentStaffMembership(
         can_count_cash: l.can_count_cash === true,
         require_2fa: l.require_2fa === true,
         admin_page_access: [],
+        marketing_walkthrough_enabled: false,
         role_id: null,
         role_name: null,
         status: l.status,
@@ -1071,6 +1095,7 @@ export async function fetchCurrentStaffMembership(
     can_count_cash: boolean | null;
     require_2fa: boolean | null;
     admin_page_access: unknown;
+    marketing_walkthrough_enabled: boolean | null;
     role_id: string | null;
     status: 'active' | 'inactive';
   };
@@ -1105,6 +1130,7 @@ export async function fetchCurrentStaffMembership(
     admin_page_access: Array.isArray(r.admin_page_access)
       ? r.admin_page_access.filter((k): k is string => typeof k === 'string')
       : [],
+    marketing_walkthrough_enabled: r.marketing_walkthrough_enabled === true,
     role_id: r.role_id,
     role_name: roleName,
     status: r.status,

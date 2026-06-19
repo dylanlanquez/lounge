@@ -26,6 +26,10 @@ export function MarketingCampaignBanner() {
     });
   };
 
+  // Per-staff allowlist: hide the replay banner from staff who aren't
+  // opted into the walkthrough. Mirrors the auto-start gate.
+  if (!account?.marketing_walkthrough_enabled) return null;
+
   return (
     <div
       style={{

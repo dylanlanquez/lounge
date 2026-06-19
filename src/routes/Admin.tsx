@@ -51,6 +51,7 @@ import {
   setCanViewReports,
   setClinicianCanEditOwnHours,
   setClinicianSelfServe,
+  setMarketingWalkthroughEnabled,
   setIsAdmin,
   setIsCustomerService,
   setIsManager,
@@ -2967,6 +2968,31 @@ function StaffTab() {
       });
   };
 
+  // Toggles the per-staff marketing-content walkthrough gate. Optimistic
+  // update with rollback on failure, mirroring togglePerm. Allowlist:
+  // off for everyone until switched on here.
+  const toggleMarketingWalkthrough = (staffMemberId: string, next: boolean) => {
+    const prev = !next;
+    setManaging((cur) =>
+      cur && cur.staff_member_id === staffMemberId
+        ? { ...cur, marketing_walkthrough_enabled: next }
+        : cur,
+    );
+    setError(null);
+    setMarketingWalkthroughEnabled(staffMemberId, next)
+      .then(() => {
+        staff.refresh();
+      })
+      .catch((e) => {
+        setManaging((cur) =>
+          cur && cur.staff_member_id === staffMemberId
+            ? { ...cur, marketing_walkthrough_enabled: prev }
+            : cur,
+        );
+        setError(e instanceof Error ? e.message : String(e));
+      });
+  };
+
   // Toggles a single tab key on/off in admin_page_access. The whole
   // array is rewritten on every change rather than diff'd because
   // Postgres' JSONB arrays don't have an efficient "remove one
@@ -3425,6 +3451,20 @@ function StaffTab() {
                   disabled={!canEditFinancialPerms}
                   disabledReason={canEditFinancialPerms ? undefined : 'Only the super admin can grant Cash counting access.'}
                   onChange={(v) => togglePerm(managing.staff_member_id, 'cash', v)}
+                />
+              </div>
+            </ManageSection>
+
+            <ManageSection
+              title="Guided tours"
+              description="In-app walkthroughs that auto-start for the staff member and can be replayed from a banner. Off by default, switch on per person."
+            >
+              <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
+                <PermissionRow
+                  title="Marketing content walkthrough"
+                  description="The guided tour that shows how to capture before, after, and finished-result photos, plus the Schedule 'Show me how' banner. When on, it auto-starts once for this staff member."
+                  checked={managing.marketing_walkthrough_enabled}
+                  onChange={(v) => toggleMarketingWalkthrough(managing.staff_member_id, v)}
                 />
               </div>
             </ManageSection>

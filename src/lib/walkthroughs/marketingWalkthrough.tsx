@@ -84,6 +84,9 @@ export function MarketingWalkthroughAutoStart() {
   useEffect(() => {
     if (fired.current) return;
     if (!account) return;
+    // Per-staff allowlist: only staff an admin has opted in (via the
+    // Staff Manage sheet) ever see the tour. Default off for everyone.
+    if (!account.marketing_walkthrough_enabled) return;
     const accountId = account.account_id;
     if (hasSeenMarketingWalkthrough(accountId)) return;
     fired.current = true;
