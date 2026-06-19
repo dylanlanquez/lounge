@@ -1,15 +1,24 @@
 import { type ReactNode } from 'react';
-import { Camera, Megaphone, Sparkles, User } from 'lucide-react';
+import { Camera, ChevronRight, Megaphone, Sparkles } from 'lucide-react';
 import { Card } from '../../components/index.ts';
+import { Breadcrumb } from '../../components/Breadcrumb/Breadcrumb.tsx';
+import {
+  AppointmentHero,
+  type AppointmentHeroPill,
+} from '../../components/AppointmentHero/AppointmentHero.tsx';
 import { BOTTOM_NAV_HEIGHT } from '../../components/BottomNav/BottomNav.tsx';
 import { KIOSK_STATUS_BAR_HEIGHT } from '../../components/KioskStatusBar/KioskStatusBar.tsx';
 import { theme } from '../../theme/index.ts';
 import { useIsMobile } from '../../lib/useIsMobile.ts';
 
 // A static, example visit used only by the marketing walkthrough so staff
-// can be shown the "Add photo" step on a real-looking page without
-// touching a real patient. Not linked anywhere in the app; reachable only
-// via the tour at /marketing/demo.
+// can be shown the "Add photo" step on a page that looks exactly like the
+// real in-clinic visit they land on after a patient is booked in. It
+// reuses the real Breadcrumb + AppointmentHero so the context (who, when,
+// what was booked) is unmistakable, then carries the Before & after and
+// Marketing content sections the tour points at. Not linked anywhere in
+// the app; reachable only via the tour at /marketing/demo. No real patient
+// is touched — every value here is illustrative.
 
 function SectionHeader({
   icon,
@@ -103,8 +112,75 @@ function AddPhotoTile({ tourId }: { tourId?: string }) {
   );
 }
 
+// A trimmed, static cart card — just enough to make the page read as a
+// real booked-in visit ("Same-day Click-in Veneers in the basket").
+function ExampleCart() {
+  return (
+    <Card padding="lg">
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          marginBottom: theme.space[4],
+        }}
+      >
+        <h2
+          style={{
+            margin: 0,
+            fontSize: theme.type.size.lg,
+            fontWeight: theme.type.weight.semibold,
+            letterSpacing: theme.type.tracking.tight,
+            color: theme.color.ink,
+          }}
+        >
+          Cart
+        </h2>
+        <span style={{ fontSize: theme.type.size.sm, fontWeight: theme.type.weight.medium, color: theme.color.inkMuted }}>
+          Add item
+        </span>
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[3] }}>
+        <span
+          style={{
+            width: 48,
+            height: 48,
+            borderRadius: theme.radius.card,
+            background: theme.color.bg,
+            flexShrink: 0,
+          }}
+        />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <p style={{ margin: 0, fontSize: theme.type.size.base, fontWeight: theme.type.weight.semibold, color: theme.color.ink }}>
+            Click-in Veneers
+          </p>
+          <p style={{ margin: '2px 0 0', fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>
+            Upper and lower · £599.00 each
+          </p>
+        </div>
+        <span style={{ fontSize: theme.type.size.base, fontWeight: theme.type.weight.semibold, color: theme.color.ink }}>
+          £599.00
+        </span>
+      </div>
+    </Card>
+  );
+}
+
 export function MarketingWalkthroughVisit() {
   const isMobile = useIsMobile(640);
+  // Today's date, so the example always reads as current.
+  const dateLong = new Intl.DateTimeFormat('en-GB', {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+    timeZone: 'Europe/London',
+  }).format(new Date());
+
+  const pills: AppointmentHeroPill[] = [
+    { tone: 'arrived', label: 'Arrived' },
+    { tone: 'neutral', label: 'Cart open' },
+  ];
 
   return (
     <main
@@ -122,14 +198,8 @@ export function MarketingWalkthroughVisit() {
     >
       <div
         style={{
-          // On desktop keep the example column narrow and left-aligned so
-          // the walkthrough's guidance card has room to sit to the right
-          // and never covers the Add photo tiles — the whole point of this
-          // step is to show staff where the feature lives. Mobile keeps the
-          // normal full-width column (there the card renders as a bottom
-          // sheet, so it can't overlap the content).
-          maxWidth: isMobile ? theme.layout.pageMaxWidth : 520,
-          margin: isMobile ? '0 auto' : 0,
+          maxWidth: theme.layout.pageMaxWidth,
+          margin: '0 auto',
           display: 'flex',
           flexDirection: 'column',
           gap: theme.space[5],
@@ -153,42 +223,50 @@ export function MarketingWalkthroughVisit() {
           <Megaphone size={15} /> Example visit, for the walkthrough only
         </div>
 
-        {/* Patient header, like a real visit. */}
-        <Card padding="lg">
-          <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[3] }}>
+        {/* Breadcrumb + hero + cart mirror the real in-clinic visit page so
+            staff recognise exactly where they are once a patient is booked
+            in: this is the page you open from In clinic. */}
+        <Breadcrumb
+          items={[{ label: 'In clinic' }, { label: 'Example Patient’s appointment' }]}
+        />
+
+        <AppointmentHero
+          patient={{ name: 'Example Patient' }}
+          pills={pills}
+          subtitle={
+            <span style={{ color: theme.color.inkMuted }}>
+              MP-100482 · LAP-00231 · EP128 · Scheduled
+            </span>
+          }
+          trailing={
             <span
               style={{
                 display: 'inline-flex',
                 alignItems: 'center',
-                justifyContent: 'center',
-                width: 48,
-                height: 48,
-                borderRadius: theme.radius.pill,
-                background: theme.color.bg,
-                color: theme.color.inkMuted,
-                flexShrink: 0,
+                gap: 4,
+                fontSize: theme.type.size.sm,
+                fontWeight: theme.type.weight.medium,
+                color: theme.color.ink,
+                whiteSpace: 'nowrap',
               }}
             >
-              <User size={22} />
+              View profile <ChevronRight size={16} />
             </span>
-            <div>
-              <p
-                style={{
-                  margin: 0,
-                  fontSize: theme.type.size.lg,
-                  fontWeight: theme.type.weight.semibold,
-                  letterSpacing: theme.type.tracking.tight,
-                  color: theme.color.ink,
-                }}
-              >
-                Example Patient
-              </p>
-              <p style={{ margin: '2px 0 0', fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>
-                Same-day Click-in Veneers · Arrived
-              </p>
-            </div>
-          </div>
-        </Card>
+          }
+          when={{
+            dateLong,
+            timeLine: <span>Booked for 09:45 BST · Arrived 09:50 BST</span>,
+            secondary: (
+              <span style={{ color: theme.color.accent, fontWeight: theme.type.weight.medium }}>
+                Estimated appointment length →
+              </span>
+            ),
+            service: 'Same-day Click-in Veneers',
+            tone: 'accent',
+          }}
+        />
+
+        <ExampleCart />
 
         {/* Both photo sections sit inside one spotlight target — before
             and after shots are marketing content too, so the tour lights
@@ -197,23 +275,23 @@ export function MarketingWalkthroughVisit() {
           data-tour="visit-add-marketing"
           style={{ display: 'flex', flexDirection: 'column', gap: theme.space[5] }}
         >
-        <Card padding="lg">
-          <SectionHeader icon={<Sparkles size={18} />} title="Before & after" count="0 photos" />
-          <p style={{ margin: `0 0 ${theme.space[4]}px`, fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>
-            Snap a before photo at arrival and an after photo at collection.
-          </p>
-          <AddPhotoTile />
-        </Card>
+          <Card padding="lg">
+            <SectionHeader icon={<Sparkles size={18} />} title="Before & after" count="0 photos" />
+            <p style={{ margin: `0 0 ${theme.space[4]}px`, fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>
+              Snap a before photo at arrival and an after photo at collection.
+            </p>
+            <AddPhotoTile />
+          </Card>
 
-        {/* Marketing content card. */}
-        <Card padding="lg">
-          <SectionHeader icon={<Megaphone size={18} />} title="Marketing content" count="0 photos" />
-          <p style={{ margin: `0 0 ${theme.space[4]}px`, fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>
-            Photos with the finished appliance, branded bag, and patient (when consented). Used by
-            the marketing team.
-          </p>
-          <AddPhotoTile />
-        </Card>
+          {/* Marketing content card. */}
+          <Card padding="lg">
+            <SectionHeader icon={<Megaphone size={18} />} title="Marketing content" count="0 photos" />
+            <p style={{ margin: `0 0 ${theme.space[4]}px`, fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>
+              Photos with the finished appliance, branded bag, and patient (when consented). Used by
+              the marketing team.
+            </p>
+            <AddPhotoTile />
+          </Card>
         </div>
       </div>
     </main>
