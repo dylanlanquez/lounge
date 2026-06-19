@@ -93,11 +93,12 @@ async function handle(req: Request): Promise<Response> {
   const tokenResult = await getValidAccessToken(admin, host);
   if (!tokenResult.ok) return json(200, { ok: false, error: tokenResult.error });
 
-  // sendUpdates=all triggers Google to email the patient a Calendar
-  // cancellation. Mirrors the legacy service-account delete which
-  // also fired the patient invite cancellation.
+  // sendUpdates=none keeps Google silent on delete: the patient's
+  // cancellation email comes from send-appointment-confirmation (a
+  // CANCEL .ics from our branded sender), not a separate Google email
+  // from the host's personal account.
   const calRes = await fetch(
-    `https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(appt.google_calendar_event_id)}?sendUpdates=all`,
+    `https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(appt.google_calendar_event_id)}?sendUpdates=none`,
     {
       method: 'DELETE',
       headers: { Authorization: `Bearer ${tokenResult.accessToken}` },

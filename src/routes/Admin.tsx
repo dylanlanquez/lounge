@@ -1394,7 +1394,7 @@ function WipeTestAppointmentsCard({
               lineHeight: theme.type.leading.normal,
             }}
           >
-            Deletes every appointment, visit, cart, payment, receipt, phase, upgrade, repair line, intake photo, and timeline event tied to these five test inboxes. Patient profile rows stay so Dylan can keep re-using them post-launch. Destructive — no undo.
+            Deletes every appointment, visit, cart, payment, receipt, phase, upgrade, repair line, intake photo, and timeline event tied to these test inboxes. Patient profile rows stay so Dylan can keep re-using them post-launch. Destructive — no undo.
           </p>
           <ul
             style={{

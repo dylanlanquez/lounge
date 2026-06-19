@@ -35,6 +35,7 @@
 
 import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.50.0';
 import { getValidAccessToken, type MeetHostRow } from '../_shared/meetHostToken.ts';
+import { toLondonLocalDateTime } from '../_shared/googleCalendar.ts';
 import { invokeAppointmentConfirmation } from '../_shared/invokeAppointmentConfirmation.ts';
 import { resolveWidgetFullPricePence } from '../_shared/widgetFullPrice.ts';
 import { isPlaceholderName } from '../_shared/patientName.ts';
@@ -932,8 +933,10 @@ Deno.serve(async (req) => {
   //      land on the row, which is what unlocks the attendance card
   //      and meet-fetch-attendance later).
   //   2. POST Calendar event attached to that existing space (no
-  //      createRequest) — the patient gets the standard Google invite
-  //      with sendUpdates=all, the host's calendar shows the booking.
+  //      createRequest). sendUpdates=none keeps Google silent — the
+  //      patient's only email is our Lounge-branded confirmation (which
+  //      carries its own .ics invite). Google's auto-invite would
+  //      duplicate it and expose the host's personal name to the patient.
   //
   // The legacy createMeetEvent path only minted a Calendar-level Meet
   // room with no Meet-side space record, so attendance + transcripts
@@ -1050,8 +1053,8 @@ Deno.serve(async (req) => {
         const calendarBody: Record<string, unknown> = {
           summary,
           description,
-          start: { dateTime: startAt.toISOString(), timeZone: 'Europe/London' },
-          end: { dateTime: endAt.toISOString(), timeZone: 'Europe/London' },
+          start: { dateTime: toLondonLocalDateTime(startAt.toISOString()), timeZone: 'Europe/London' },
+          end: { dateTime: toLondonLocalDateTime(endAt.toISOString()), timeZone: 'Europe/London' },
           conferenceData: {
             conferenceSolution: {
               key: { type: 'hangoutsMeet' },
@@ -1075,7 +1078,7 @@ Deno.serve(async (req) => {
           ];
         }
         const calRes = await fetch(
-          'https://www.googleapis.com/calendar/v3/calendars/primary/events?conferenceDataVersion=1&sendUpdates=all',
+          'https://www.googleapis.com/calendar/v3/calendars/primary/events?conferenceDataVersion=1&sendUpdates=none',
           {
             method: 'POST',
             headers: {

@@ -15,6 +15,45 @@
 const GOOGLE_TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token';
 const GOOGLE_CALENDAR_BASE = 'https://www.googleapis.com/calendar/v3';
 
+// Converts an absolute instant (UTC ISO timestamptz, e.g. the value
+// Supabase returns for `start_at`, or `Date.toISOString()`) into a
+// Europe/London *wall-clock* string with NO offset, e.g.
+// "2026-06-17T08:15:00".
+//
+// The Google Calendar API expects `start.dateTime` to be a local time
+// paired with `start.timeZone`. When we instead hand it a UTC instant
+// (a value ending in `Z` or `+00:00`) AND a timeZone, the offset wins
+// for the stored instant but Google's auto-sent invitation email falls
+// back to the *account's default timezone* to render the time. That is
+// why UK appointments showed up as GMT+3 / EEST in the Google invite:
+// the organiser Google account's default timezone is not Europe/London.
+// Pinning the dateTime to London wall-clock removes that ambiguity so
+// every Google surface renders UK time regardless of account defaults.
+export function toLondonLocalDateTime(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) {
+    throw new Error(`toLondonLocalDateTime: invalid ISO timestamp "${iso}"`);
+  }
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/London',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).formatToParts(d);
+  const get = (type: string): string => {
+    const part = parts.find((p) => p.type === type);
+    if (!part) throw new Error(`toLondonLocalDateTime: missing "${type}" part for "${iso}"`);
+    return part.value;
+  };
+  // Intl can emit "24" for midnight under hour12:false; normalise to "00".
+  const hour = get('hour') === '24' ? '00' : get('hour');
+  return `${get('year')}-${get('month')}-${get('day')}T${hour}:${get('minute')}:${get('second')}`;
+}
+
 // Exchanges a stored OAuth2 refresh token for a short-lived access token.
 // Credentials come from Supabase secrets set at deploy time.
 export async function getGoogleAccessToken(
@@ -70,8 +109,8 @@ export async function createMeetEvent(opts: {
     },
     body: JSON.stringify({
       summary: opts.summary,
-      start: { dateTime: opts.startAt, timeZone: 'Europe/London' },
-      end: { dateTime: opts.endAt, timeZone: 'Europe/London' },
+      start: { dateTime: toLondonLocalDateTime(opts.startAt), timeZone: 'Europe/London' },
+      end: { dateTime: toLondonLocalDateTime(opts.endAt), timeZone: 'Europe/London' },
       conferenceData: {
         createRequest: {
           requestId: opts.appointmentId,

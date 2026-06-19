@@ -56,6 +56,7 @@
 
 import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.50.0';
 import { getValidAccessToken, type MeetHostRow } from '../_shared/meetHostToken.ts';
+import { toLondonLocalDateTime } from '../_shared/googleCalendar.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -217,10 +218,11 @@ async function handle(req: Request): Promise<Response> {
   // 3. Create the Calendar event with Meet conferencing on the host's
   //    primary calendar. conferenceDataVersion=1 + createRequest tells
   //    Calendar to provision a new Meet room as part of the event.
-  //    sendUpdates=all triggers Google's automatic invite to the
-  //    attendees — that's the email that legacy bookings get from
-  //    Google, separately from our Lounge-branded confirmation that
-  //    send-appointment-confirmation later sends.
+  //    sendUpdates=none keeps Google silent: it must NOT email the
+  //    patient. We send a single Lounge-branded confirmation via
+  //    send-appointment-confirmation (with its own .ics invite). Google's
+  //    automatic invite would duplicate that AND expose the host's
+  //    personal name as "Organiser" to the patient, so it's suppressed.
   const patientName = [patient?.first_name, patient?.last_name].filter(Boolean).join(' ').trim();
   const summary = patientName
     ? `${appt.event_type_label ?? 'Virtual appointment'} with ${patientName}`
@@ -317,13 +319,13 @@ async function handle(req: Request): Promise<Response> {
   // 4. Create the Calendar event with the existing Meet space attached.
   //    conferenceData.conferenceSolution + entryPoints (no createRequest)
   //    tells Calendar to use the supplied Meet, rather than minting a
-  //    new one. The patient still gets the standard Google invite via
-  //    sendUpdates=all; the host's calendar still shows the appointment.
+  //    new one. sendUpdates=none (set on the request URL below) means
+  //    Google emails no one; the host's calendar still shows the booking.
   const calendarBody: Record<string, unknown> = {
     summary,
     description,
-    start: { dateTime: appt.start_at, timeZone: 'Europe/London' },
-    end: { dateTime: appt.end_at, timeZone: 'Europe/London' },
+    start: { dateTime: toLondonLocalDateTime(appt.start_at), timeZone: 'Europe/London' },
+    end: { dateTime: toLondonLocalDateTime(appt.end_at), timeZone: 'Europe/London' },
     conferenceData: {
       conferenceSolution: {
         key: { type: 'hangoutsMeet' },
@@ -346,7 +348,7 @@ async function handle(req: Request): Promise<Response> {
   }
 
   const calRes = await fetch(
-    'https://www.googleapis.com/calendar/v3/calendars/primary/events?conferenceDataVersion=1&sendUpdates=all',
+    'https://www.googleapis.com/calendar/v3/calendars/primary/events?conferenceDataVersion=1&sendUpdates=none',
     {
       method: 'POST',
       headers: {

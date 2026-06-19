@@ -217,7 +217,7 @@ async function handle(req: Request): Promise<Response> {
       sequence: (await currentSequenceForUid(admin, apt.id)) + 1,
       summary: emailSubjectLine(apt, location),
       description: 'This appointment has been cancelled.',
-      location: locationFreeform(location),
+      location: eventLocation(apt, location),
       startAt: apt.start_at,
       endAt: apt.end_at,
       organizerEmail: senderHeaders.replyTo,
@@ -235,7 +235,7 @@ async function handle(req: Request): Promise<Response> {
       sequence,
       summary: emailSubjectLine(apt, location),
       description: icsDescription(apt, location),
-      location: locationFreeform(location),
+      location: eventLocation(apt, location),
       startAt: apt.start_at,
       endAt: apt.end_at,
       organizerEmail: senderHeaders.replyTo,
@@ -252,7 +252,7 @@ async function handle(req: Request): Promise<Response> {
         sequence: (await currentSequenceForUid(admin, oldApt.id)) + 1,
         summary: emailSubjectLine(oldApt, location),
         description: 'This appointment has been moved. See the new invite.',
-        location: locationFreeform(location),
+        location: eventLocation(oldApt, location),
         startAt: oldApt.start_at,
         endAt: oldApt.end_at,
         organizerEmail: senderHeaders.replyTo,
@@ -1383,7 +1383,7 @@ function buildVariables(ctx: VariableContext): Record<string, string> {
     brandName,
     locationName: location?.name?.trim() || 'Venneir Lounge',
     locationCity: location?.city?.trim() || '',
-    locationAddress: locationFreeform(location),
+    locationAddress: eventLocation(apt, location),
     locationPhone: location?.phone?.trim() || '',
     publicEmail: contact.publicEmail,
     websiteUrl: contact.websiteUrl,
@@ -1790,17 +1790,34 @@ function wrapInLoungeShell(bodyHtml: string, brand: BrandSettings): string {
 
 function emailSubjectLine(apt: AppointmentRow, location: LocationRow | null): string {
   const service = labelForService(apt);
+  // Virtual bookings are held online, so don't append a physical
+  // "at Venneir Lounge <city>" — that's misleading as the calendar
+  // event title. The service label already reads "Virtual ...".
+  if (apt.join_url) return service;
   return location?.city ? `${service} at Venneir Lounge ${location.city}` : `${service} at Venneir Lounge`;
 }
 
 function icsDescription(apt: AppointmentRow, location: LocationRow | null): string {
   const parts: string[] = [];
   parts.push(labelForService(apt));
-  if (location?.name) parts.push(`Location: ${location.name}`);
+  // Online bookings get the join link below, not a physical address.
+  if (!apt.join_url && location?.name) parts.push(`Location: ${location.name}`);
   if (apt.appointment_ref) parts.push(`Reference: ${apt.appointment_ref}`);
   if (apt.join_url) parts.push(`Join link: ${apt.join_url}`);
   parts.push('Reply to lounge@venneir.com to make changes.');
   return parts.join('\n');
+}
+
+// Calendar LOCATION / map-pin value for an appointment. Virtual
+// bookings (marked by a join_url) are held online, so the physical
+// lounge address would be wrong and misleading on the calendar entry.
+// We label these "Google Meet"; the join link itself rides along as the
+// ICS URL property and in the email body, so the location pin stays
+// clean rather than dumping a raw URL. In-person bookings keep the full
+// postal address.
+function eventLocation(apt: AppointmentRow, location: LocationRow | null): string {
+  if (apt.join_url) return 'Google Meet';
+  return locationFreeform(location);
 }
 
 function locationFreeform(location: LocationRow | null): string {
@@ -1824,7 +1841,7 @@ function googleCalendarUrl(apt: AppointmentRow, location: LocationRow | null): s
     text: emailSubjectLine(apt, location),
     dates: `${start}/${end}`,
     details: icsDescription(apt, location),
-    location: locationFreeform(location),
+    location: eventLocation(apt, location),
   });
   return `https://www.google.com/calendar/render?${params.toString()}`;
 }
