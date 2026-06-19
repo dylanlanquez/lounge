@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { Camera, MapPin, Megaphone, ShieldCheck, Sparkles } from 'lucide-react';
+import { Camera, MapPin, Megaphone, ShieldCheck, Sparkles, User } from 'lucide-react';
 import {
   type WalkthroughTour,
   useWalkthrough,
@@ -7,7 +7,9 @@ import {
 import { useCurrentAccount } from '../queries/currentAccount.tsx';
 
 // Bump the version to re-show the tour to everyone after a big change.
-const MARKETING_WALKTHROUGH_KEY = 'marketing_intro_v1';
+// v2: added the "This is the visit page" step + reworked the demo visit to
+// mirror the real in-clinic page.
+const MARKETING_WALKTHROUGH_KEY = 'marketing_intro_v2';
 
 export const MARKETING_WALKTHROUGH: WalkthroughTour = {
   key: MARKETING_WALKTHROUGH_KEY,
@@ -25,6 +27,14 @@ export const MARKETING_WALKTHROUGH: WalkthroughTour = {
       title: 'The megaphone, top right',
       body: "This button sits at the top of every screen. It opens Marketing content, where every photo the team captures gathers together, grouped by appointment, ready to post.",
       target: '[data-tour="nav-marketing"]',
+    },
+    {
+      eyebrow: 'Where you’ll be',
+      icon: <User size={18} />,
+      title: 'This is the visit page',
+      body: "Once a patient is checked in, you open their visit from In clinic. This is that page, the same one you use every day for notes, the waiver, and the cart. The photo sections sit a little further down it.",
+      route: '/marketing/demo',
+      target: '[data-tour="visit-top"]',
     },
     {
       eyebrow: 'How to capture it',

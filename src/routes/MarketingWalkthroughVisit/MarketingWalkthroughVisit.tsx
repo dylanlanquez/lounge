@@ -225,46 +225,53 @@ export function MarketingWalkthroughVisit() {
 
         {/* Breadcrumb + hero + cart mirror the real in-clinic visit page so
             staff recognise exactly where they are once a patient is booked
-            in: this is the page you open from In clinic. */}
-        <Breadcrumb
-          items={[{ label: 'In clinic' }, { label: 'Example Patient’s appointment' }]}
-        />
+            in: this is the page you open from In clinic. The breadcrumb +
+            hero are wrapped as one spotlight target so the tour can say
+            "this is the visit page" and light up the whole top. */}
+        <div
+          data-tour="visit-top"
+          style={{ display: 'flex', flexDirection: 'column', gap: theme.space[5] }}
+        >
+          <Breadcrumb
+            items={[{ label: 'In clinic' }, { label: 'Example Patient’s appointment' }]}
+          />
 
-        <AppointmentHero
-          patient={{ name: 'Example Patient' }}
-          pills={pills}
-          subtitle={
-            <span style={{ color: theme.color.inkMuted }}>
-              MP-100482 · LAP-00231 · EP128 · Scheduled
-            </span>
-          }
-          trailing={
-            <span
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 4,
-                fontSize: theme.type.size.sm,
-                fontWeight: theme.type.weight.medium,
-                color: theme.color.ink,
-                whiteSpace: 'nowrap',
-              }}
-            >
-              View profile <ChevronRight size={16} />
-            </span>
-          }
-          when={{
-            dateLong,
-            timeLine: <span>Booked for 09:45 BST · Arrived 09:50 BST</span>,
-            secondary: (
-              <span style={{ color: theme.color.accent, fontWeight: theme.type.weight.medium }}>
-                Estimated appointment length →
+          <AppointmentHero
+            patient={{ name: 'Example Patient' }}
+            pills={pills}
+            subtitle={
+              <span style={{ color: theme.color.inkMuted }}>
+                MP-100482 · LAP-00231 · EP128 · Scheduled
               </span>
-            ),
-            service: 'Same-day Click-in Veneers',
-            tone: 'accent',
-          }}
-        />
+            }
+            trailing={
+              <span
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 4,
+                  fontSize: theme.type.size.sm,
+                  fontWeight: theme.type.weight.medium,
+                  color: theme.color.ink,
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                View profile <ChevronRight size={16} />
+              </span>
+            }
+            when={{
+              dateLong,
+              timeLine: <span>Booked for 09:45 BST · Arrived 09:50 BST</span>,
+              secondary: (
+                <span style={{ color: theme.color.accent, fontWeight: theme.type.weight.medium }}>
+                  Estimated appointment length →
+                </span>
+              ),
+              service: 'Same-day Click-in Veneers',
+              tone: 'accent',
+            }}
+          />
+        </div>
 
         <ExampleCart />
 
