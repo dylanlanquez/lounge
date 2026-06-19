@@ -122,8 +122,14 @@ export function MarketingWalkthroughVisit() {
     >
       <div
         style={{
-          maxWidth: theme.layout.pageMaxWidth,
-          margin: '0 auto',
+          // On desktop keep the example column narrow and left-aligned so
+          // the walkthrough's guidance card has room to sit to the right
+          // and never covers the Add photo tiles — the whole point of this
+          // step is to show staff where the feature lives. Mobile keeps the
+          // normal full-width column (there the card renders as a bottom
+          // sheet, so it can't overlap the content).
+          maxWidth: isMobile ? theme.layout.pageMaxWidth : 520,
+          margin: isMobile ? '0 auto' : 0,
           display: 'flex',
           flexDirection: 'column',
           gap: theme.space[5],
