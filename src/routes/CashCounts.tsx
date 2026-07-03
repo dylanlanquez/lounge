@@ -22,7 +22,6 @@ import { fmtTzAbbr } from '../lib/dateFormat.ts';
 import {
   type CashCountRow,
   type CashPosition,
-  type CashPositionPaymentLine,
   type WithdrawalReason,
   WITHDRAWAL_REASONS,
   createCashCount,
@@ -315,7 +314,14 @@ function RightNowCard({
               Opening {formatPence(position.baseline_pence)}
               {last ? ` from the count on ${formatLongDate(last.period_end)}` : ''}.
               {' '}Since: {formatNumber(position.payment_count)} payment{position.payment_count === 1 ? '' : 's'} in,
-              {' '}{formatNumber(position.withdrawal_count)} withdrawal{position.withdrawal_count === 1 ? '' : 's'} out.
+              {' '}{formatNumber(position.withdrawal_count)} withdrawal{position.withdrawal_count === 1 ? '' : 's'} out
+              {position.refund_count > 0
+                ? `, ${formatNumber(position.refund_count)} refund${position.refund_count === 1 ? '' : 's'} out`
+                : ''}
+              .
+              {position.refunded_sale_count > 0
+                ? ` ${formatNumber(position.refunded_sale_count)} refunded sale${position.refunded_sale_count === 1 ? '' : 's'} cancelled out and left the safe unchanged.`
+                : ''}
             </span>
           </>
         ) : (
@@ -396,17 +402,24 @@ function RecentActivityCard({
   baselinePence: number;
 }) {
   const navigate = useNavigate();
+  // Cash in = sales that kept their money. Cash out = withdrawals plus
+  // real refunds (partial clawbacks / older-sale refunds). Refunded sales
+  // net to zero and sit in neither total.
   const paymentTotal = useMemo(
     () => lines.reduce((sum, l) => (l.kind === 'payment' ? sum + l.amount_pence : sum), 0),
     [lines],
   );
-  const withdrawalTotal = useMemo(
-    () => lines.reduce((sum, l) => (l.kind === 'withdrawal' ? sum + l.amount_pence : sum), 0),
+  const cashOutTotal = useMemo(
+    () => lines.reduce((sum, l) => (l.kind === 'withdrawal' || l.kind === 'refund' ? sum + l.amount_pence : sum), 0),
     [lines],
   );
-  const handleOpenPayment = (line: CashPositionPaymentLine) => {
-    if (!line.visit_id) return;
-    navigate(`/visit/${line.visit_id}`);
+  const refundedSaleCount = useMemo(
+    () => lines.reduce((n, l) => (l.kind === 'refunded_sale' ? n + 1 : n), 0),
+    [lines],
+  );
+  const openVisit = (visitId: string | null) => {
+    if (!visitId) return;
+    navigate(`/visit/${visitId}`);
   };
   return (
     <Card padding="lg">
@@ -439,7 +452,10 @@ function RecentActivityCard({
               lineHeight: theme.type.leading.snug,
             }}
           >
-            Opening {formatPence(baselinePence)}. Every payment in and every withdrawal out since. Tap a payment row to open the visit.
+            Opening {formatPence(baselinePence)}. Every payment in and every withdrawal out since.
+            {refundedSaleCount > 0
+              ? ` A refunded sale came in and went straight back out, so it doesn't change the safe.`
+              : ' Tap a payment row to open the visit.'}
           </span>
         </div>
       </div>
@@ -455,22 +471,37 @@ function RecentActivityCard({
         }}
       >
         {lines.map((line, idx) => {
-          const key = line.kind === 'payment' ? line.payment_id : line.withdrawal_id;
-          const interactive = line.kind === 'payment' && !!line.visit_id;
-          const isOut = line.kind === 'withdrawal';
-          const amountColor = isOut ? theme.color.alert : theme.color.accent;
-          const amountPrefix = isOut ? '−' : '+';
+          const key =
+            line.kind === 'payment' || line.kind === 'refunded_sale'
+              ? line.payment_id
+              : line.kind === 'refund'
+                ? line.refund_id
+                : line.withdrawal_id;
+          const visitLink = line.kind === 'payment' || line.kind === 'refunded_sale' ? line.visit_id : null;
+          const interactive = !!visitLink;
+          // Three visual variants: money in (green +), money out (red −,
+          // covers withdrawals and real refunds), and a refunded sale
+          // (neutral, struck-through, tagged — it nets to nothing).
+          const variant: 'in' | 'out' | 'refunded' =
+            line.kind === 'payment' ? 'in' : line.kind === 'refunded_sale' ? 'refunded' : 'out';
           // Mobile-first 2-line layout:
-          //   Line 1 (top):    Label (left, semibold)     · Amount (right)
-          //   Line 2 (bottom): Time + actor/ref (muted)   · Chevron
-          // Stacks vertically on narrow screens without truncating the
-          // actor column the way the old 5-column grid did.
-          const middleLabel = isOut ? withdrawalReasonLabel(line.reason) : (line.patient_name || 'Unknown patient');
+          //   Line 1 (top):    Label + tag (left)     · Amount (right)
+          //   Line 2 (bottom): Time + context (muted) · Chevron
+          const middleLabel =
+            line.kind === 'withdrawal'
+              ? withdrawalReasonLabel(line.reason)
+              : line.kind === 'refund'
+                ? 'Cash refund'
+                : (line.patient_name || 'Unknown patient');
           const subParts: string[] = [formatDateTime(line.taken_at)];
-          if (isOut) {
+          if (line.kind === 'withdrawal') {
             if (line.taken_by_name) subParts.push(`by ${line.taken_by_name}`);
-          } else {
+          } else if (line.kind === 'payment') {
             if (line.appointment_ref) subParts.push(line.appointment_ref);
+          } else if (line.kind === 'refunded_sale') {
+            subParts.push('In and refunded');
+          } else if (line.kind === 'refund') {
+            if (line.patient_name) subParts.push(line.patient_name);
           }
           return (
             <li
@@ -481,7 +512,7 @@ function RecentActivityCard({
             >
               <button
                 type="button"
-                onClick={() => line.kind === 'payment' && handleOpenPayment(line)}
+                onClick={() => openVisit(visitLink)}
                 disabled={!interactive}
                 style={{
                   appearance: 'none',
@@ -515,15 +546,39 @@ function RecentActivityCard({
                 >
                   <span
                     style={{
-                      fontSize: theme.type.size.sm,
-                      fontWeight: theme.type.weight.semibold,
-                      color: theme.color.ink,
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: theme.space[2],
+                      minWidth: 0,
                     }}
                   >
-                    {middleLabel}
+                    <span
+                      style={{
+                        fontSize: theme.type.size.sm,
+                        fontWeight: theme.type.weight.semibold,
+                        color: variant === 'refunded' ? theme.color.inkMuted : theme.color.ink,
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {middleLabel}
+                    </span>
+                    {variant === 'refunded' ? (
+                      <span
+                        style={{
+                          flexShrink: 0,
+                          fontSize: theme.type.size.xs,
+                          fontWeight: theme.type.weight.semibold,
+                          color: theme.color.inkMuted,
+                          background: theme.color.bg,
+                          padding: `2px ${theme.space[2]}px`,
+                          borderRadius: theme.radius.pill,
+                        }}
+                      >
+                        Refunded
+                      </span>
+                    ) : null}
                   </span>
                   <span
                     style={{
@@ -541,13 +596,20 @@ function RecentActivityCard({
                   style={{
                     fontSize: theme.type.size.base,
                     fontWeight: theme.type.weight.semibold,
-                    color: amountColor,
+                    color:
+                      variant === 'in'
+                        ? theme.color.accent
+                        : variant === 'out'
+                          ? theme.color.alert
+                          : theme.color.inkSubtle,
+                    textDecoration: variant === 'refunded' ? 'line-through' : 'none',
                     fontVariantNumeric: 'tabular-nums',
                     whiteSpace: 'nowrap',
                     flexShrink: 0,
                   }}
                 >
-                  {amountPrefix}{formatPence(line.amount_pence)}
+                  {variant === 'in' ? '+' : variant === 'out' ? '−' : ''}
+                  {formatPence(line.amount_pence)}
                 </span>
                 <ChevronRight
                   size={14}
@@ -623,7 +685,7 @@ function RecentActivityCard({
               fontVariantNumeric: 'tabular-nums',
             }}
           >
-            {formatPence(withdrawalTotal)}
+            {formatPence(cashOutTotal)}
           </span>
         </div>
       </div>
@@ -1105,11 +1167,13 @@ function NewCountSheet({
     setInlineWithdrawalAmountText('');
     setInlineWithdrawalReason('bank_deposit');
     setInlineWithdrawalNote('');
-    // Show every active manager including the current account.
-    // Self-sign-off is permitted — the signer's name lands on the
-    // audit row regardless of who's logged in.
+    // Segregation of duties: the person counting (the current account,
+    // recorded as counted_by) can't also sign off. The DB enforces this
+    // with the lng_cash_counts_counter_signer_distinct CHECK, so we
+    // exclude the current account from the picker — otherwise a self
+    // sign-off is only rejected on submit with a raw constraint error.
     listManagers()
-      .then((rows) => setManagers(rows))
+      .then((rows) => setManagers(rows.filter((m) => m.account_id !== currentAccountId)))
       .catch((e) => {
         const message = e instanceof Error ? e.message : String(e);
         setError(`Could not load managers: ${message}`);
@@ -1543,7 +1607,7 @@ function ManagerPicker({
   if (managers.length === 0) {
     return (
       <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.warn }}>
-        No managers configured. Add a Manager-flagged staff member in Admin, Staff first.
+        A count has to be signed off by a different manager. Add a second Manager-flagged staff member in Admin, Staff first.
       </p>
     );
   }

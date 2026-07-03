@@ -213,7 +213,36 @@ export interface CashPositionWithdrawalLine {
   taken_by_name: string | null;
 }
 
-export type CashPositionLine = CashPositionPaymentLine | CashPositionWithdrawalLine;
+export interface CashPositionRefundLine {
+  kind: 'refund';
+  refund_id: string;
+  amount_pence: number;
+  /** Named taken_at (not refunded_at) so refunds sort and render through
+   *  the same chronological path as payments and withdrawals. */
+  taken_at: string;
+  /** Patient the refund traces back to, when the original sale is in
+   *  this window; null for refunds against sales from a prior period. */
+  patient_name: string | null;
+}
+
+/** A cash sale that was taken and then fully refunded in the same
+ *  window. The money came in and went straight back out, so it nets to
+ *  zero and never moves the safe. Shown for the audit trail, not counted
+ *  in "cash in" or "cash out". */
+export interface CashPositionRefundedSaleLine {
+  kind: 'refunded_sale';
+  payment_id: string;
+  amount_pence: number;
+  taken_at: string;
+  patient_name: string;
+  visit_id: string | null;
+}
+
+export type CashPositionLine =
+  | CashPositionPaymentLine
+  | CashPositionWithdrawalLine
+  | CashPositionRefundLine
+  | CashPositionRefundedSaleLine;
 
 export interface CashPosition {
   /** Running balance = baseline + payments − refunds − withdrawals.
@@ -224,6 +253,12 @@ export interface CashPosition {
   baseline_pence: number;
   payment_count: number;
   withdrawal_count: number;
+  /** Refunds that moved the safe — partial clawbacks and refunds against
+   *  older sales. Excludes fully-refunded same-window sales (those net to
+   *  zero and are surfaced as refunded_sale lines instead). */
+  refund_count: number;
+  /** Same-window sales that were taken and fully refunded (net zero). */
+  refunded_sale_count: number;
   earliest_payment_at: string | null;
   latest_payment_at: string | null;
   // Last signed count is the anchor.
@@ -247,6 +282,7 @@ interface RawCashPosition {
   id: string;
   amount_pence: number;
   succeeded_at: string;
+  status: string;
   cart:
     | { visit: RawCashPositionVisit | RawCashPositionVisit[] | null }
     | { visit: RawCashPositionVisit | RawCashPositionVisit[] | null }[]
@@ -289,7 +325,7 @@ export function useCashPosition(): CashPositionResult {
           supabase
             .from('lng_payments')
             .select(
-              `id, amount_pence, succeeded_at,
+              `id, amount_pence, succeeded_at, status,
                cart:lng_carts (
                  visit:lng_visits (
                    id,
@@ -300,14 +336,20 @@ export function useCashPosition(): CashPositionResult {
                )`,
             )
             .eq('method', 'cash')
-            .eq('status', 'succeeded')
+            // Include cancelled sales, not just succeeded: a fully
+            // refunded cash sale flips to 'cancelled' but the cash still
+            // physically entered and left the drawer, so we need it to
+            // net its own refund to zero (below). Filtering it out here
+            // while still subtracting its refund is what made the safe
+            // read £70 light.
+            .in('status', ['succeeded', 'cancelled'])
             .gt('succeeded_at', sinceIso)
             .order('succeeded_at', { ascending: false }),
-          // Cash refunds in the same window. Partial cash refunds
-          // leave the lng_payments row as 'succeeded' but the cash
-          // is back out of the drawer, so the cash position needs
-          // to subtract every succeeded cash refund since the last
-          // signed count.
+          // Cash refunds in the same window. A partial refund leaves the
+          // payment 'succeeded' (real money out — subtracted and shown).
+          // A full refund flips the payment to 'cancelled'; that pair
+          // nets to zero and is shown as a single refunded-sale line
+          // instead of double-counting the cash out.
           supabase
             .from('lng_payment_refunds')
             .select('id, amount_pence, refunded_at, payment_id')
@@ -355,44 +397,93 @@ export function useCashPosition(): CashPositionResult {
         // actual_pence; first-ever-count case starts from zero and
         // accumulates pure flow until the first sign-off.
         const baseline = last?.actual_pence ?? 0;
-        const cashRefundsTotal = refundRows.reduce(
-          (acc, r) => acc + (r.amount_pence ?? 0),
-          0,
-        );
-        const cashWithdrawalsTotal = withdrawalRows.reduce(
-          (acc, w) => acc + (w.amount_pence ?? 0),
-          0,
-        );
-        let total = baseline - cashRefundsTotal - cashWithdrawalsTotal;
+
         let earliest: string | null = null;
         let latest: string | null = null;
+        const track = (iso: string | null) => {
+          if (!iso) return;
+          if (!earliest || iso < earliest) earliest = iso;
+          if (!latest || iso > latest) latest = iso;
+        };
+
+        // Sum every refund against each payment, so we can tell a fully
+        // refunded sale (taken then handed straight back — nets to zero)
+        // from a partial clawback (real money out) or a refund against a
+        // sale from a previous period.
+        const refundedByPayment = new Map<string, number>();
         for (const r of refundRows) {
-          if (!earliest || r.refunded_at < earliest) earliest = r.refunded_at;
-          if (!latest || r.refunded_at > latest) latest = r.refunded_at;
+          if (!r.payment_id) continue;
+          refundedByPayment.set(r.payment_id, (refundedByPayment.get(r.payment_id) ?? 0) + (r.amount_pence ?? 0));
         }
-        const paymentLines: CashPositionPaymentLine[] = raw.map((r) => {
-          total += r.amount_pence;
-          if (!earliest || r.succeeded_at < earliest) earliest = r.succeeded_at;
-          if (!latest || r.succeeded_at > latest) latest = r.succeeded_at;
+        // A sale is "fully refunded" when its refunds cover its full
+        // amount. Those are surfaced as refunded_sale lines and their
+        // refunds are NOT subtracted again (the sale simply isn't counted
+        // as cash in).
+        const fullyRefundedIds = new Set<string>();
+        for (const r of raw) {
+          const refunded = refundedByPayment.get(r.id) ?? 0;
+          if (refunded > 0 && refunded >= r.amount_pence) fullyRefundedIds.add(r.id);
+        }
+
+        let total = baseline;
+        const paymentLines: CashPositionPaymentLine[] = [];
+        const refundedSaleLines: CashPositionRefundedSaleLine[] = [];
+        for (const r of raw) {
+          track(r.succeeded_at);
           const cart = pickOne(r.cart);
           const visit = pickOne(cart?.visit ?? null);
           const patient = pickOne(visit?.patient ?? null);
           const appt = pickOne(visit?.appointment ?? null);
           const walkIn = pickOne(visit?.walk_in ?? null);
-          return {
-            kind: 'payment' as const,
-            payment_id: r.id,
-            amount_pence: r.amount_pence,
-            taken_at: r.succeeded_at,
-            patient_name: composePersonName(patient),
-            appointment_ref: appt?.appointment_ref ?? walkIn?.appointment_ref ?? null,
-            visit_id: visit?.id ?? null,
-          };
-        });
+          const patientName = composePersonName(patient);
+          if (fullyRefundedIds.has(r.id)) {
+            // Money in and straight back out — no effect on the safe.
+            refundedSaleLines.push({
+              kind: 'refunded_sale' as const,
+              payment_id: r.id,
+              amount_pence: r.amount_pence,
+              taken_at: r.succeeded_at,
+              patient_name: patientName,
+              visit_id: visit?.id ?? null,
+            });
+          } else {
+            total += r.amount_pence;
+            paymentLines.push({
+              kind: 'payment' as const,
+              payment_id: r.id,
+              amount_pence: r.amount_pence,
+              taken_at: r.succeeded_at,
+              patient_name: patientName,
+              appointment_ref: appt?.appointment_ref ?? walkIn?.appointment_ref ?? null,
+              visit_id: visit?.id ?? null,
+            });
+          }
+        }
+
+        // Refunds that actually moved the safe: partial clawbacks against
+        // a kept sale, and refunds against sales from a prior period
+        // (whose cash sat in the opening balance). Refunds belonging to a
+        // fully-refunded same-window sale are already netted above.
+        const nameByPaymentId = new Map<string, string>();
+        for (const l of paymentLines) nameByPaymentId.set(l.payment_id, l.patient_name);
+        const refundLines: CashPositionRefundLine[] = [];
+        for (const rr of refundRows) {
+          if (rr.payment_id && fullyRefundedIds.has(rr.payment_id)) continue;
+          total -= rr.amount_pence ?? 0;
+          track(rr.refunded_at);
+          refundLines.push({
+            kind: 'refund' as const,
+            refund_id: rr.id,
+            amount_pence: rr.amount_pence ?? 0,
+            taken_at: rr.refunded_at,
+            patient_name: rr.payment_id ? (nameByPaymentId.get(rr.payment_id) ?? null) : null,
+          });
+        }
+
         const withdrawalLines: CashPositionWithdrawalLine[] = withdrawalRows.map((w) => {
           const actor = pickOne(w.taken_by_account ?? null);
-          if (!earliest || w.taken_at < earliest) earliest = w.taken_at;
-          if (!latest || w.taken_at > latest) latest = w.taken_at;
+          track(w.taken_at);
+          total -= w.amount_pence ?? 0;
           return {
             kind: 'withdrawal' as const,
             withdrawal_id: w.id,
@@ -403,9 +494,10 @@ export function useCashPosition(): CashPositionResult {
             taken_by_name: composePersonName(actor),
           };
         });
+
         // Interleave by time so the activity card reads as a
         // chronological narrative of safe movements.
-        const lines: CashPositionLine[] = [...paymentLines, ...withdrawalLines]
+        const lines: CashPositionLine[] = [...paymentLines, ...refundedSaleLines, ...refundLines, ...withdrawalLines]
           .sort((a, b) => (a.taken_at < b.taken_at ? 1 : a.taken_at > b.taken_at ? -1 : 0));
 
         if (cancelled) return;
@@ -414,6 +506,8 @@ export function useCashPosition(): CashPositionResult {
           baseline_pence: baseline,
           payment_count: paymentLines.length,
           withdrawal_count: withdrawalLines.length,
+          refund_count: refundLines.length,
+          refunded_sale_count: refundedSaleLines.length,
           earliest_payment_at: earliest,
           latest_payment_at: latest,
           last_signed_count: last,
@@ -835,7 +929,7 @@ export async function createCashCount(input: CreateCashCountInput): Promise<{ co
     supabase
       .from('lng_payments')
       .select(
-        `id, amount_pence, succeeded_at,
+        `id, amount_pence, succeeded_at, status,
          cart:lng_carts (
            total_pence,
            visit:lng_visits (
@@ -846,12 +940,15 @@ export async function createCashCount(input: CreateCashCountInput): Promise<{ co
          )`,
       )
       .eq('method', 'cash')
-      .eq('status', 'succeeded')
+      // Include cancelled (fully-refunded) sales so the snapshot can net
+      // them against their refunds instead of subtracting the refund on
+      // its own — the same fix as the live cash position.
+      .in('status', ['succeeded', 'cancelled'])
       .gte('succeeded_at', input.period_start)
       .lte('succeeded_at', input.period_end),
     supabase
       .from('lng_payment_refunds')
-      .select('amount_pence')
+      .select('amount_pence, payment_id')
       .eq('method', 'cash')
       .eq('status', 'succeeded')
       .gte('refunded_at', input.period_start)
@@ -870,9 +967,10 @@ export async function createCashCount(input: CreateCashCountInput): Promise<{ co
   if (refundsSnapshotRes.error) throw new Error(refundsSnapshotRes.error.message);
   if (withdrawalsSnapshotRes.error) throw new Error(withdrawalsSnapshotRes.error.message);
   const baselinePence = (baselineRes.data as { actual_pence: number | null } | null)?.actual_pence ?? 0;
-  const cashRefundsTotal = ((refundsSnapshotRes.data ?? []) as Array<{
+  const refundSnapshotRows = ((refundsSnapshotRes.data ?? []) as Array<{
     amount_pence: number;
-  }>).reduce((acc, r) => acc + (r.amount_pence ?? 0), 0);
+    payment_id: string | null;
+  }>);
   const withdrawalSnapshotRows = ((withdrawalsSnapshotRes.data ?? []) as Array<{
     id: string;
     amount_pence: number;
@@ -893,6 +991,7 @@ export async function createCashCount(input: CreateCashCountInput): Promise<{ co
     id: string;
     amount_pence: number;
     succeeded_at: string;
+    status: string;
     cart:
       | {
           total_pence: number | null;
@@ -927,16 +1026,38 @@ export async function createCashCount(input: CreateCashCountInput): Promise<{ co
       | null;
   }
   const raw = (paymentsRes.data ?? []) as RawSnapshot[];
+  // A sale is fully refunded when its refunds cover its whole amount. Such
+  // a sale never nets any cash into the safe, so it is neither counted as
+  // cash in nor has its refund subtracted (doing both was the £70 bug).
+  const refundedByPayment = new Map<string, number>();
+  for (const r of refundSnapshotRows) {
+    if (!r.payment_id) continue;
+    refundedByPayment.set(r.payment_id, (refundedByPayment.get(r.payment_id) ?? 0) + (r.amount_pence ?? 0));
+  }
+  const fullyRefundedIds = new Set<string>();
+  for (const r of raw) {
+    const refunded = refundedByPayment.get(r.id) ?? 0;
+    if (refunded > 0 && refunded >= r.amount_pence) fullyRefundedIds.add(r.id);
+  }
+  // Kept sales are the ones that actually left cash in the drawer.
+  const keptPayments = raw.filter((r) => !fullyRefundedIds.has(r.id));
+  const keptPaymentsTotal = keptPayments.reduce((s, r) => s + r.amount_pence, 0);
+  // Subtract only refunds that moved the safe: partial clawbacks and
+  // refunds against sales from an earlier period. Refunds belonging to a
+  // fully-refunded same-period sale are already netted by exclusion.
+  const cashRefundsTotal = refundSnapshotRows.reduce(
+    (acc, r) => acc + (r.payment_id && fullyRefundedIds.has(r.payment_id) ? 0 : (r.amount_pence ?? 0)),
+    0,
+  );
   // Running balance: baseline carried from the previous signed count
-  // + period payments − period refunds − period withdrawals. Clamp
-  // at 0 — the DB check (expected_pence >= 0) would otherwise reject
-  // the insert. If you see this clamp fire in practice the
-  // underlying figures are inconsistent (e.g. a refund recorded
-  // without the matching baseline) and the count needs investigating.
+  // + kept cash payments − refunds that moved the safe − withdrawals.
+  // Clamp at 0 — the DB check (expected_pence >= 0) would otherwise
+  // reject the insert. If you see this clamp fire in practice the
+  // underlying figures are inconsistent and the count needs investigating.
   const expected_pence = Math.max(
     0,
     baselinePence
-      + raw.reduce((s, r) => s + r.amount_pence, 0)
+      + keptPaymentsTotal
       - cashRefundsTotal
       - cashWithdrawalsTotal,
   );
@@ -982,8 +1103,11 @@ export async function createCashCount(input: CreateCashCountInput): Promise<{ co
   }
   const count_id = (insertedCount as { id: string }).id;
 
-  if (raw.length > 0) {
-    const lineRows = raw.map((r) => {
+  if (keptPayments.length > 0) {
+    // Snapshot only the sales that kept cash in the drawer, so the stored
+    // per-payment breakdown reconciles to expected_pence. Fully-refunded
+    // sales are intentionally omitted — they netted to nothing.
+    const lineRows = keptPayments.map((r) => {
       const cart = pickOne(r.cart);
       const visit = pickOne(cart?.visit ?? null);
       const patient = pickOne(visit?.patient ?? null);
@@ -1028,7 +1152,7 @@ export async function createCashCount(input: CreateCashCountInput): Promise<{ co
       throw new Error(`Withdrawal lines insert failed (count ${count_id}): ${wLinesErr.message}`);
     }
   }
-  return { count_id, expected_pence, lines_count: raw.length, kind };
+  return { count_id, expected_pence, lines_count: keptPayments.length, kind };
 }
 
 // ── Record a cash withdrawal ───────────────────────────────────────────────
