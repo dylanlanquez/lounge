@@ -509,7 +509,7 @@ function ActiveVisitCard({
         >
           {visit.status === 'complete'
             ? 'Paid'
-            : formatOutstanding(visit.amount_due_pence, visit.amount_paid_pence, visit.payment_done)}
+            : formatOutstanding(visit.amount_due_pence, visit.amount_paid_pence, visit.payment_done, visit.paid_status)}
         </span>
       </div>
     </button>
@@ -626,6 +626,20 @@ function PaymentPill({
       </StatusPill>
     );
   }
+  if (status === 'written_off') {
+    // Remaining balance was forgiven. Money already collected stays
+    // real, but nothing further is owed, so this reads as a quiet,
+    // settled fact — never "owed" or "part paid". Muted outlined tone
+    // keeps it clearly distinct from the solid green "Paid" pill.
+    return (
+      <StatusPill tone="pending" size="sm">
+        <span style={pillInnerStyle}>
+          <CreditCard size={12} aria-hidden />
+          Written off
+        </span>
+      </StatusPill>
+    );
+  }
   if (done) {
     return (
       <StatusPill tone="arrived" size="sm">
@@ -714,7 +728,12 @@ function formatOutstanding(
   amountDuePence: number | null,
   amountPaidPence: number,
   paymentDone: boolean,
+  paidStatus: EnrichedActiveVisit['paid_status'],
 ): string {
+  // A written-off sale had its remaining balance forgiven. Show that
+  // plainly rather than a figure or "Paid" so the board never reads a
+  // forgiven balance as outstanding or as fully collected.
+  if (paidStatus === 'written_off') return 'Written off';
   if (amountDuePence == null) return '—';
   if (amountDuePence === 0) return '—';
   if (paymentDone) return 'Paid';

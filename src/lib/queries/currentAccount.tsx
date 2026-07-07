@@ -75,6 +75,7 @@ export interface CurrentAccount {
   can_view_reports: boolean;
   can_view_financials: boolean;
   can_count_cash: boolean;
+  can_write_off: boolean;
   // Per-page admin grants. When is_admin = false but this array has
   // entries, /admin opens and only the listed tab keys are shown.
   // Super admins and full admins see every tab regardless.
@@ -274,6 +275,8 @@ export function CurrentAccountProvider({ children }: { children: ReactNode }) {
             (isActiveStaff && membership?.can_view_financials === true) || isSuperAdmin,
           can_count_cash:
             (isActiveStaff && membership?.can_count_cash === true) || isSuperAdmin,
+          can_write_off:
+            (isActiveStaff && membership?.can_write_off === true) || isSuperAdmin,
           admin_page_access: isActiveStaff ? (membership?.admin_page_access ?? []) : [],
           marketing_walkthrough_enabled:
             isActiveStaff && membership?.marketing_walkthrough_enabled === true,

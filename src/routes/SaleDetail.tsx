@@ -124,6 +124,12 @@ export function SaleDetail() {
   // Only 'paid' is fully settled. 'owed' is overpaid (refund due),
   // 'partially_paid'/'free_visit'/null is not a completed sale.
   const isPaid = paidState === 'paid';
+  // A written-off sale had its remaining balance forgiven: the money
+  // already collected stays real, but nothing further is owed. It is
+  // settled for workflow purposes, so we never prompt to take payment
+  // and never surface an outstanding balance.
+  const isWrittenOff = paidState === 'written_off';
+  const isSettled = isPaid || isWrittenOff;
   const outstandingPence = Math.max(0, totalPence - amountPaidPence);
   const hasPayments = amountPaidPence > 0;
 
@@ -138,11 +144,13 @@ export function SaleDetail() {
   const saleAt =
     succeededPayments[0]?.succeeded_at ?? cart?.closed_at ?? visit?.closed_at ?? visit?.opened_at ?? null;
 
-  const status: { tone: StatusTone; label: string } = isPaid
-    ? { tone: 'complete', label: 'Paid in full' }
-    : hasPayments
-      ? { tone: 'pending', label: `Part paid · ${formatPence(outstandingPence)} due` }
-      : { tone: 'neutral', label: 'Draft' };
+  const status: { tone: StatusTone; label: string } = isWrittenOff
+    ? { tone: 'pending', label: 'Written off' }
+    : isPaid
+      ? { tone: 'complete', label: 'Paid in full' }
+      : hasPayments
+        ? { tone: 'pending', label: `Part paid · ${formatPence(outstandingPence)} due` }
+        : { tone: 'neutral', label: 'Draft' };
 
   // Discard an open, unpaid sale (rang up but never paid). endVisitEarly
   // soft-deletes the cart lines and flips the visit to 'ended_early', so
@@ -399,7 +407,7 @@ export function SaleDetail() {
                 {hasPayments ? (
                   <SummaryRow label="Paid" valuePence={-amountPaidPence} accent />
                 ) : null}
-                {outstandingPence > 0 ? (
+                {outstandingPence > 0 && !isWrittenOff ? (
                   <SummaryRow label="Outstanding" valuePence={outstandingPence} emphasis />
                 ) : null}
               </div>
@@ -418,7 +426,7 @@ export function SaleDetail() {
                 </Button>
               ) : null}
 
-              {isPaid ? (
+              {isSettled ? (
                 <>
                   <Button variant="secondary" onClick={() => setReceiptOpen(true)}>
                     <span style={btnInner}>

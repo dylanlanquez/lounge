@@ -232,6 +232,7 @@ export type ManagerNotificationActionKind =
   | 'discount_removed'
   | 'refund_issued'
   | 'payment_voided'
+  | 'balance_written_off'
   | 'cash_withdrawn';
 
 export interface SendManagerNotificationInput {

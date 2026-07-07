@@ -68,6 +68,7 @@ type ActionKind =
   | 'discount_removed'
   | 'refund_issued'
   | 'payment_voided'
+  | 'balance_written_off'
   | 'cash_withdrawn';
 
 const ACTION_TITLES: Record<ActionKind, string> = {
@@ -76,6 +77,7 @@ const ACTION_TITLES: Record<ActionKind, string> = {
   discount_removed: 'Discount removed',
   refund_issued: 'Refund issued',
   payment_voided: 'Payment voided',
+  balance_written_off: 'Balance written off',
   cash_withdrawn: 'Cash taken from the safe',
 };
 
@@ -461,6 +463,8 @@ function buildActionSummary(
       return `${amount} refund issued ${target}.`;
     case 'payment_voided':
       return `${amount} payment voided ${target}.`;
+    case 'balance_written_off':
+      return `${amount} outstanding balance written off ${target}.`;
     case 'cash_withdrawn':
       // cash_withdrawn uses its own template — actionSummary is kept
       // here for parity with the manager_notification surface but

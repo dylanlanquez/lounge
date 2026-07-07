@@ -44,6 +44,7 @@ export interface StaffRow {
   can_view_reports: boolean;
   can_view_financials: boolean;
   can_count_cash: boolean;
+  can_write_off: boolean;
   // Per-staff "Require 2FA" policy. Stored alone for now; the
   // sign-in gate that enforces AAL2 lands in chunk 3 alongside the
   // /enroll-2fa and /verify-2fa screens.
@@ -118,6 +119,7 @@ interface RawJoinedRow {
   can_view_reports: boolean | null;
   can_view_financials: boolean | null;
   can_count_cash: boolean | null;
+  can_write_off: boolean | null;
   require_2fa: boolean | null;
   admin_page_access: string[] | null;
   marketing_walkthrough_enabled: boolean | null;
@@ -175,6 +177,7 @@ function mapRow(r: RawJoinedRow): StaffRow {
     can_view_reports: r.can_view_reports === true,
     can_view_financials: r.can_view_financials === true,
     can_count_cash: r.can_count_cash === true,
+    can_write_off: r.can_write_off === true,
     require_2fa: r.require_2fa === true,
     admin_page_access: Array.isArray(r.admin_page_access)
       ? r.admin_page_access.filter((k): k is string => typeof k === 'string')
@@ -202,7 +205,7 @@ function mapRow(r: RawJoinedRow): StaffRow {
 }
 
 const STAFF_SELECT =
-  'id, account_id, is_admin, is_manager, is_customer_service, is_virtual_impression_clinician, clinician_self_serve, clinician_can_edit_own_hours, authorisation_code, can_view_reports, can_view_financials, can_count_cash, require_2fa, admin_page_access, marketing_walkthrough_enabled, role_id, status, hired_at, deactivated_at, invite_sent_at, invite_expires_at, invite_accepted_at, last_sign_in_at, account:accounts!account_id(id, first_name, last_name, name, login_email, location_id, location:locations!location_id(id, name, type, city)), role:lng_staff_roles!role_id(id, name)';
+  'id, account_id, is_admin, is_manager, is_customer_service, is_virtual_impression_clinician, clinician_self_serve, clinician_can_edit_own_hours, authorisation_code, can_view_reports, can_view_financials, can_count_cash, can_write_off, require_2fa, admin_page_access, marketing_walkthrough_enabled, role_id, status, hired_at, deactivated_at, invite_sent_at, invite_expires_at, invite_accepted_at, last_sign_in_at, account:accounts!account_id(id, first_name, last_name, name, login_email, location_id, location:locations!location_id(id, name, type, city)), role:lng_staff_roles!role_id(id, name)';
 
 // Lists every staff member, active and inactive, sorted alphabetically
 // by display name. Inactive rows render with a "Deactivated" badge in
@@ -336,6 +339,17 @@ export async function setCanCountCash(staffMemberId: string, value: boolean): Pr
   const { error } = await supabase
     .from('lng_staff_members')
     .update({ can_count_cash: value })
+    .eq('id', staffMemberId);
+  if (error) throw new Error(error.message);
+}
+
+// Toggles can_write_off. Granting this lets the staff member write off
+// balances (waive an outstanding amount). Super-admin grants only, the
+// UI gates the toggle, but the column itself is just a boolean here.
+export async function setCanWriteOff(staffMemberId: string, value: boolean): Promise<void> {
+  const { error } = await supabase
+    .from('lng_staff_members')
+    .update({ can_write_off: value })
     .eq('id', staffMemberId);
   if (error) throw new Error(error.message);
 }
@@ -1006,6 +1020,7 @@ export interface CurrentStaffMembership {
   can_view_reports: boolean;
   can_view_financials: boolean;
   can_count_cash: boolean;
+  can_write_off: boolean;
   require_2fa: boolean;
   admin_page_access: string[];
   // Per-staff marketing-content walkthrough gate (allowlist, default
@@ -1032,7 +1047,7 @@ export async function fetchCurrentStaffMembership(
   // entire auth gate. Two cheap round-trips, no schema-cache risk.
   const { data, error } = await supabase
     .from('lng_staff_members')
-    .select('id, is_admin, is_manager, is_customer_service, is_virtual_impression_clinician, clinician_can_edit_own_hours, can_view_reports, can_view_financials, can_count_cash, require_2fa, admin_page_access, marketing_walkthrough_enabled, role_id, status')
+    .select('id, is_admin, is_manager, is_customer_service, is_virtual_impression_clinician, clinician_can_edit_own_hours, can_view_reports, can_view_financials, can_count_cash, can_write_off, require_2fa, admin_page_access, marketing_walkthrough_enabled, role_id, status')
     .eq('account_id', accountId)
     .maybeSingle();
   if (error) {
@@ -1047,7 +1062,7 @@ export async function fetchCurrentStaffMembership(
     if (error.code === '42703') {
       const { data: legacy, error: legacyErr } = await supabase
         .from('lng_staff_members')
-        .select('id, is_admin, is_manager, can_view_reports, can_view_financials, can_count_cash, require_2fa, status')
+        .select('id, is_admin, is_manager, can_view_reports, can_view_financials, can_count_cash, can_write_off, require_2fa, status')
         .eq('account_id', accountId)
         .maybeSingle();
       if (legacyErr) throw new Error(legacyErr.message);
@@ -1059,6 +1074,7 @@ export async function fetchCurrentStaffMembership(
         can_view_reports: boolean | null;
         can_view_financials: boolean | null;
         can_count_cash: boolean | null;
+        can_write_off: boolean | null;
         require_2fa: boolean | null;
         status: 'active' | 'inactive';
       };
@@ -1072,6 +1088,7 @@ export async function fetchCurrentStaffMembership(
         can_view_reports: l.can_view_reports === true,
         can_view_financials: l.can_view_financials === true,
         can_count_cash: l.can_count_cash === true,
+        can_write_off: l.can_write_off === true,
         require_2fa: l.require_2fa === true,
         admin_page_access: [],
         marketing_walkthrough_enabled: false,
@@ -1093,6 +1110,7 @@ export async function fetchCurrentStaffMembership(
     can_view_reports: boolean | null;
     can_view_financials: boolean | null;
     can_count_cash: boolean | null;
+    can_write_off: boolean | null;
     require_2fa: boolean | null;
     admin_page_access: unknown;
     marketing_walkthrough_enabled: boolean | null;
@@ -1126,6 +1144,7 @@ export async function fetchCurrentStaffMembership(
     can_view_reports: r.can_view_reports === true,
     can_view_financials: r.can_view_financials === true,
     can_count_cash: r.can_count_cash === true,
+    can_write_off: r.can_write_off === true,
     require_2fa: r.require_2fa === true,
     admin_page_access: Array.isArray(r.admin_page_access)
       ? r.admin_page_access.filter((k): k is string => typeof k === 'string')

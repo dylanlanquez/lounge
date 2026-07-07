@@ -47,6 +47,7 @@ import {
   sendPasswordReset,
   setAdminPageAccess,
   setCanCountCash,
+  setCanWriteOff,
   setCanViewFinancials,
   setCanViewReports,
   setClinicianCanEditOwnHours,
@@ -178,6 +179,7 @@ import { AdminEmailTemplatesTab } from './AdminEmailTemplatesTab.tsx';
 import { AdminSmsTemplatesTab } from './AdminSmsTemplatesTab.tsx';
 import { AdminBrandingTab } from './AdminBrandingTab.tsx';
 import { AdminWidgetTab } from './AdminWidgetTab.tsx';
+import { AdminWriteOffsTab } from './AdminWriteOffsTab.tsx';
 import {
   DndContext,
   closestCenter,
@@ -196,7 +198,7 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 
-type Tab = 'devices' | 'failures' | 'reports' | 'calendly' | 'services' | 'products' | 'booking_types' | 'closures' | 'conflicts' | 'emails' | 'sms' | 'branding' | 'widget' | 'receipts' | 'testing' | 'waivers' | 'staff' | 'sessions' | 'payments' | 'virtual_impressions';
+type Tab = 'devices' | 'failures' | 'reports' | 'calendly' | 'services' | 'products' | 'booking_types' | 'closures' | 'conflicts' | 'emails' | 'sms' | 'branding' | 'widget' | 'receipts' | 'testing' | 'waivers' | 'staff' | 'sessions' | 'payments' | 'virtual_impressions' | 'writeoffs';
 
 // Canonical list of every Admin tab. Drives the SegmentedControl in
 // the Admin header, the per-staff "Admin pages" toggle list in the
@@ -228,6 +230,7 @@ const ADMIN_TABS: { key: Tab; label: string; description: string }[] = [
   { key: 'reports', label: 'Reports', description: 'Operational and revenue dashboards.' },
   { key: 'devices', label: 'Devices', description: 'Stripe Terminal readers + location pairing.' },
   { key: 'payments', label: 'Payments', description: 'Stripe payment log, reconciliation, retries.' },
+  { key: 'writeoffs', label: 'Write-offs', description: 'Uncollectable balances that were written off. Reinstate one to collect it if the patient comes back.' },
   { key: 'staff', label: 'Staff', description: 'Add, deactivate, permissions, and account actions for Lounge staff.' },
   { key: 'sessions', label: 'Sessions', description: 'Live sign-in state per staff member: where and when each is logged in, with remote sign-out.' },
   { key: 'virtual_impressions', label: 'Virtual impressions', description: 'Clinicians who run virtual impression calls, their hours, and the Google accounts that host the rooms.' },
@@ -238,7 +241,7 @@ const ADMIN_TABS: { key: Tab; label: string; description: string }[] = [
 // Admin tabs an admin can grant a non-admin staff member access to.
 // Staff + Testing are full-admin only and never appear as toggleable
 // per-page grants — see the comment on ADMIN_TABS.
-const NON_GRANTABLE_TABS: ReadonlySet<Tab> = new Set<Tab>(['staff', 'sessions', 'testing']);
+const NON_GRANTABLE_TABS: ReadonlySet<Tab> = new Set<Tab>(['staff', 'sessions', 'testing', 'writeoffs']);
 const MANAGEABLE_ADMIN_TABS = ADMIN_TABS.filter((t) => !NON_GRANTABLE_TABS.has(t.key));
 
 export function Admin() {
@@ -373,6 +376,8 @@ export function Admin() {
           <DevicesTab />
         ) : tab === 'payments' ? (
           <PaymentsTab />
+        ) : tab === 'writeoffs' ? (
+          <AdminWriteOffsTab />
         ) : tab === 'staff' ? (
           <StaffTab />
         ) : tab === 'sessions' ? (
@@ -2936,7 +2941,7 @@ function StaffTab() {
   // toast.
   const togglePerm = (
     staffMemberId: string,
-    flag: 'reports' | 'financials' | 'cash',
+    flag: 'reports' | 'financials' | 'cash' | 'writeoff',
     next: boolean,
   ) => {
     const field =
@@ -2944,7 +2949,9 @@ function StaffTab() {
         ? 'can_view_reports'
         : flag === 'financials'
           ? 'can_view_financials'
-          : 'can_count_cash';
+          : flag === 'cash'
+            ? 'can_count_cash'
+            : 'can_write_off';
     const prev = !next;
     setManaging((cur) =>
       cur && cur.staff_member_id === staffMemberId ? { ...cur, [field]: next } : cur,
@@ -2955,7 +2962,9 @@ function StaffTab() {
         ? setCanViewReports(staffMemberId, next)
         : flag === 'financials'
           ? setCanViewFinancials(staffMemberId, next)
-          : setCanCountCash(staffMemberId, next);
+          : flag === 'cash'
+            ? setCanCountCash(staffMemberId, next)
+            : setCanWriteOff(staffMemberId, next);
     mutation
       .then(() => {
         staff.refresh();
@@ -3451,6 +3460,14 @@ function StaffTab() {
                   disabled={!canEditFinancialPerms}
                   disabledReason={canEditFinancialPerms ? undefined : 'Only the super admin can grant Cash counting access.'}
                   onChange={(v) => togglePerm(managing.staff_member_id, 'cash', v)}
+                />
+                <PermissionRow
+                  title="Write off balances"
+                  description="Lets this person forgive an uncollectable outstanding balance on a sale. Fully audited and reversible. Super-admin-grant only."
+                  checked={managing.can_write_off}
+                  disabled={!canEditFinancialPerms}
+                  disabledReason={canEditFinancialPerms ? undefined : 'Only the super admin can grant Write off access.'}
+                  onChange={(v) => togglePerm(managing.staff_member_id, 'writeoff', v)}
                 />
               </div>
             </ManageSection>

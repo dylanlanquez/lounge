@@ -4,7 +4,7 @@ import { Banknote, CreditCard, Phone, ShoppingBag } from 'lucide-react';
 import { BOTTOM_NAV_HEIGHT } from '../components/BottomNav/BottomNav.tsx';
 import { KIOSK_STATUS_BAR_HEIGHT } from '../components/KioskStatusBar/KioskStatusBar.tsx';
 import { useIsMobile } from '../lib/useIsMobile.ts';
-import { BottomSheet, Breadcrumb, Button, Card, EmptyState, Input, Skeleton, StatusPill, Toast } from '../components/index.ts';
+import { BottomSheet, Breadcrumb, Button, Card, DropdownSelect, EmptyState, Input, Skeleton, StatusPill, Toast } from '../components/index.ts';
 import { TerminalPaymentModal } from '../components/TerminalPaymentModal/TerminalPaymentModal.tsx';
 import { MotoPaymentModal } from '../components/MotoPaymentModal/MotoPaymentModal.tsx';
 import { BNPLHelper, type BnplProvider } from '../components/BNPLHelper/BNPLHelper.tsx';
@@ -28,6 +28,11 @@ import {
   type CartPaymentRow,
 } from '../lib/queries/payments.ts';
 import { sendManagerNotification } from '../lib/queries/managerNotifications.ts';
+import {
+  writeOffBalance,
+  WRITE_OFF_REASONS,
+  type WriteOffReasonCategory,
+} from '../lib/queries/writeoffs.ts';
 import { useCurrentAccount } from '../lib/queries/currentAccount.tsx';
 import { ManagerNotificationNotice } from '../components/ManagerNotificationNotice/ManagerNotificationNotice.tsx';
 import { COUNTER_SALE_EMAIL, patientFullName } from '../lib/queries/patients.ts';
@@ -452,6 +457,55 @@ export function Pay() {
       setVoidError(e instanceof Error ? e.message : 'Could not void');
     } finally {
       setVoidBusy(false);
+    }
+  };
+
+  // Write-off sheet state. Admin / can_write_off only. Forgives the
+  // remaining outstanding balance, closes the sale off the board, and
+  // records an audited, reversible lng_balance_writeoffs row. Never a
+  // payment or refund, so collected money and revenue are untouched.
+  const [writeOffOpen, setWriteOffOpen] = useState(false);
+  const [writeOffCategory, setWriteOffCategory] = useState<WriteOffReasonCategory>('uncontactable');
+  const [writeOffNote, setWriteOffNote] = useState('');
+  const [writeOffBusy, setWriteOffBusy] = useState(false);
+  const [writeOffError, setWriteOffError] = useState<string | null>(null);
+  const openWriteOffSheet = () => {
+    setWriteOffCategory('uncontactable');
+    setWriteOffNote('');
+    setWriteOffError(null);
+    setWriteOffOpen(true);
+  };
+  const submitWriteOff = async () => {
+    if (!cart) return;
+    if (writeOffNote.trim().length === 0) {
+      setWriteOffError('A reason is required to write off a balance.');
+      return;
+    }
+    setWriteOffBusy(true);
+    setWriteOffError(null);
+    try {
+      await writeOffBalance({
+        cartId: cart.id,
+        reasonCategory: writeOffCategory,
+        note: writeOffNote,
+      });
+      void sendManagerNotification({
+        actionKind: 'balance_written_off',
+        amountPence: outstandingPence,
+        reason: writeOffNote.trim(),
+        patientId: patient?.id ?? null,
+        visitId: visit?.id ?? null,
+        staffAccountId: currentAccount?.account_id ?? null,
+      });
+      setWriteOffOpen(false);
+      // The sale is now closed (visit complete, cart paid). Return to
+      // the visit, which now reads Written off, rather than dropping
+      // back to the method picker for a balance that no longer exists.
+      goBackToVisit();
+    } catch (e) {
+      setWriteOffError(e instanceof Error ? e.message : 'Could not write off the balance');
+    } finally {
+      setWriteOffBusy(false);
     }
   };
 
@@ -927,6 +981,39 @@ export function Pay() {
                 disabled={!reader || chargeAmountPence <= 0}
               />
             </div>
+
+            {/* Write off remaining balance. Admin / can_write_off only.
+                Forgives the outstanding, closes the sale off the board,
+                and records a reversible audit row. Never collects money,
+                so it sits below the payment methods as a distinct exit. */}
+            {currentAccount?.can_write_off && outstandingPence > 0 ? (
+              <div
+                style={{
+                  marginTop: theme.space[5],
+                  paddingTop: theme.space[5],
+                  borderTop: `1px solid ${theme.color.border}`,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: theme.space[2],
+                  alignItems: 'flex-start',
+                }}
+              >
+                <Button variant="tertiary" onClick={openWriteOffSheet}>
+                  Write off remaining {formatPence(outstandingPence)}
+                </Button>
+                <p
+                  style={{
+                    margin: 0,
+                    fontSize: theme.type.size.sm,
+                    color: theme.color.inkMuted,
+                    lineHeight: theme.type.leading.normal,
+                  }}
+                >
+                  Forgives the balance and closes the sale. The money already collected is
+                  kept. Reversible from Admin, Write-offs.
+                </p>
+              </div>
+            ) : null}
           </div>
         ) : stage === 'cash' ? (
           <Card padding="lg">
@@ -1206,6 +1293,66 @@ export function Pay() {
               }}
             >
               {voidError}
+            </p>
+          ) : null}
+        </div>
+      </BottomSheet>
+
+      {/* Write off remaining balance sheet. Requires a reason category
+          and a note. Forgives the outstanding, closes the sale, and
+          records a reversible lng_balance_writeoffs row. Configured
+          managers are notified by email. */}
+      <BottomSheet
+        open={writeOffOpen}
+        onClose={() => !writeOffBusy && setWriteOffOpen(false)}
+        dismissable={!writeOffBusy}
+        title={`Write off ${formatPence(outstandingPence)}`}
+        description="This forgives the outstanding balance and closes the sale. It is not a refund. The money already collected stays. You can reinstate it later from Admin, Write-offs."
+        footer={
+          <div
+            style={{
+              display: 'flex',
+              gap: theme.space[3],
+              justifyContent: 'flex-end',
+              alignItems: 'center',
+              flexWrap: 'wrap',
+            }}
+          >
+            <Button variant="secondary" onClick={() => setWriteOffOpen(false)} disabled={writeOffBusy}>
+              Cancel
+            </Button>
+            <Button variant="primary" onClick={submitWriteOff} loading={writeOffBusy}>
+              Write off {formatPence(outstandingPence)}
+            </Button>
+          </div>
+        }
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[4] }}>
+          <DropdownSelect<WriteOffReasonCategory>
+            label="Reason"
+            required
+            value={writeOffCategory}
+            options={WRITE_OFF_REASONS.map((r) => ({ value: r.category, label: r.label }))}
+            onChange={setWriteOffCategory}
+          />
+          <Input
+            label="Note"
+            value={writeOffNote}
+            onChange={(e) => setWriteOffNote(e.target.value)}
+            placeholder="e.g. No answer after three calls, balance uncollectable"
+          />
+          <ManagerNotificationNotice />
+          {writeOffError ? (
+            <p
+              role="alert"
+              style={{
+                margin: 0,
+                color: theme.color.alert,
+                fontSize: theme.type.size.sm,
+                fontWeight: theme.type.weight.medium,
+              }}
+            >
+              {writeOffError}
             </p>
           ) : null}
         </div>

@@ -105,7 +105,7 @@ export interface EnrichedActiveVisit {
   // Pricing
   amount_due_pence: number | null;
   amount_paid_pence: number;
-  paid_status: 'free_visit' | 'paid' | 'partially_paid' | 'owed';
+  paid_status: 'free_visit' | 'paid' | 'partially_paid' | 'owed' | 'written_off';
   payment_done: boolean;
   // Booking-time deposit from the parent appointment. Walk-ins (no
   // appointment) and appointments with no deposit configured both
@@ -339,7 +339,7 @@ interface PaidStatusRow {
   visit_id: string;
   amount_due_pence: number | null;
   amount_paid_pence: number;
-  paid_status: 'free_visit' | 'paid' | 'partially_paid' | 'owed';
+  paid_status: 'free_visit' | 'paid' | 'partially_paid' | 'owed' | 'written_off';
 }
 
 interface SignatureRow {
@@ -592,7 +592,11 @@ export function useActiveVisitsBoard(): ClinicBoardResult {
           paid_status: paid?.paid_status ?? 'free_visit',
           payment_done:
             (paid?.paid_status ?? 'free_visit') === 'paid' ||
-            (paid?.paid_status ?? 'free_visit') === 'free_visit',
+            (paid?.paid_status ?? 'free_visit') === 'free_visit' ||
+            // A written-off sale has had its remaining balance forgiven —
+            // nothing further is owed, so treat it as settled, never
+            // outstanding.
+            (paid?.paid_status ?? 'free_visit') === 'written_off',
           deposit_pence: a?.deposit_pence ?? null,
           deposit_status: a?.deposit_status ?? null,
           waiver_status: waiverStatus,

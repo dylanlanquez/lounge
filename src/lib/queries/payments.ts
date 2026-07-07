@@ -105,7 +105,12 @@ export interface VisitPaidStatus {
   cart_id: string | null;
   amount_due_pence: number | null;
   amount_paid_pence: number;
-  paid_status: 'free_visit' | 'paid' | 'partially_paid' | 'owed';
+  // Sum of live (non-reinstated) balance write-offs on this cart.
+  // amount_paid_pence stays real collected money; a write-off never
+  // counts as money in. When a live write-off settles the remaining
+  // balance the paid_status reads 'written_off'.
+  written_off_pence: number;
+  paid_status: 'free_visit' | 'paid' | 'partially_paid' | 'owed' | 'written_off';
 }
 
 // Whether the Shopify order linked to an appointment should credit
