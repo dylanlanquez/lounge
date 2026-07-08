@@ -1,8 +1,30 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '../supabase.ts';
 import { type DateRange, dateRangeToUtcBounds } from '../dateRange.ts';
 import { logFailure } from '../failureLog.ts';
+import { useRealtimeRefresh } from '../useRealtimeRefresh.ts';
 import { properCase } from './appointments.ts';
+
+// Re-sync a cash read whenever the tab becomes visible again. Kiosks
+// and tablets stay on one page all day; without this a device that
+// loaded the safe balance this morning keeps showing that morning's
+// number while the DB (the one source of truth for the one safe) has
+// moved on. Pairs with useRealtimeRefresh: realtime pushes live events
+// while the socket is up, this reconciles whatever was missed while the
+// tablet slept or the socket was down.
+function useRefreshOnVisible(refresh: () => void): void {
+  useEffect(() => {
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') refresh();
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('focus', onVisibility);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('focus', onVisibility);
+    };
+  }, [refresh]);
+}
 
 // Cash reconciliation reads — past counts list, per-count statement,
 // and the live "what should be in the safe right now" computation.
@@ -171,7 +193,14 @@ export function useCashCounts(): CashCountsResult {
     };
   }, [tick]);
 
-  return { data, loading, error, refresh: () => setTick((t) => t + 1) };
+  const refresh = useCallback(() => setTick((t) => t + 1), []);
+  // The history list moves whenever a count is created or signed off.
+  // Push those in live and reconcile on visibility so every device
+  // shows the same list of counts.
+  useRealtimeRefresh([{ table: 'lng_cash_counts' }], refresh);
+  useRefreshOnVisible(refresh);
+
+  return { data, loading, error, refresh };
 }
 
 // ── Current outstanding cash position ───────────────────────────────────────
@@ -532,7 +561,28 @@ export function useCashPosition(): CashPositionResult {
     };
   }, [tick]);
 
-  return { data, loading, error, refresh: () => setTick((t) => t + 1) };
+  const refresh = useCallback(() => setTick((t) => t + 1), []);
+  // "What should be in the safe right now" is the single source of
+  // truth for the one shared safe, so every open device has to converge
+  // on it. Any insert to a table that moves the balance — a cash
+  // payment, a refund, a withdrawal (bank deposit / float top-up), or a
+  // new signed count that resets the baseline — pushes a live refresh;
+  // visibility/focus reconciles a device that was asleep when the event
+  // landed. Without this, a kiosk left open all day keeps rendering the
+  // balance it computed at load time while the DB has already moved on,
+  // which is exactly how two staff end up looking at different numbers.
+  useRealtimeRefresh(
+    [
+      { table: 'lng_payments' },
+      { table: 'lng_payment_refunds' },
+      { table: 'lng_cash_withdrawals' },
+      { table: 'lng_cash_counts' },
+    ],
+    refresh,
+  );
+  useRefreshOnVisible(refresh);
+
+  return { data, loading, error, refresh };
 }
 
 // ── Anomaly thresholds (read) ───────────────────────────────────────────────
@@ -1284,7 +1334,7 @@ export interface CashCountStatement {
   withdrawals: CashCountStatementWithdrawal[];
 }
 
-interface RawStatementCount extends RawCashCount {}
+type RawStatementCount = RawCashCount;
 
 interface StatementResult {
   data: CashCountStatement | null;
