@@ -7,10 +7,16 @@
 // Uses skipWaiting + clients.claim so a deploy takes effect on next
 // page reload without the old SW lingering.
 
-// Bump this whenever the icon manifest changes — paired with the
-// ?v= query string on favicons in index.html / manifest.webmanifest
-// to force a fresh fetch through any caching layer.
-const VERSION = 'v7';
+// Bump this to force every device onto the latest deploy. The
+// kiosk auto-update chain in src/main.tsx only reloads a running tab
+// when the bytes of this file change (new worker -> controllerchange
+// -> reload). A normal code deploy leaves sw.js untouched, so an
+// always-on tablet keeps its old in-memory bundle indefinitely until
+// this VERSION changes. Bump it on any deploy that must reach the
+// kiosks (a correctness fix, not just icon-manifest changes). Also
+// paired with the ?v= query string on favicons in index.html /
+// manifest.webmanifest to force a fresh favicon fetch.
+const VERSION = 'v8';
 
 self.addEventListener('install', (event) => {
   event.waitUntil(self.skipWaiting());
