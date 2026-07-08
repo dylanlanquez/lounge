@@ -16,7 +16,7 @@
 // kiosks (a correctness fix, not just icon-manifest changes). Also
 // paired with the ?v= query string on favicons in index.html /
 // manifest.webmanifest to force a fresh favicon fetch.
-const VERSION = 'v8';
+const VERSION = 'v9';
 
 self.addEventListener('install', (event) => {
   event.waitUntil(self.skipWaiting());

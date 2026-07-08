@@ -41,6 +41,17 @@ if ('serviceWorker' in navigator && import.meta.env.PROD) {
         document.addEventListener('visibilitychange', () => {
           if (document.visibilityState === 'visible') reg.update().catch(() => {});
         });
+        // A kiosk that sits on one page all day and is never locked,
+        // backgrounded, or reloaded never fires visibilitychange, so
+        // load-time + foreground checks alone leave it stranded on the
+        // bundle it booted with — a deploy silently never reaches it.
+        // Poll for a newer worker on a fixed cadence so an untouched
+        // tablet converges on the latest bundle within a minute without
+        // anyone having to walk over and touch it. sw.js is served
+        // no-store, so each check is a cheap conditional GET (304 when
+        // unchanged); the reload only fires via controllerchange above
+        // when the bytes actually differ.
+        setInterval(() => reg.update().catch(() => {}), 60_000);
       })
       .catch((err) => {
         console.warn('[lounge] service worker registration failed', err);
