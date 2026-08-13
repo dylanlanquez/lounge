@@ -4,6 +4,7 @@ import type { PatientRow } from './patients.ts';
 import { useRealtimeRefresh } from '../useRealtimeRefresh.ts';
 import { useStaleQueryLoading } from '../useStaleQueryLoading.ts';
 import { sendAppointmentConfirmation } from './sendAppointmentConfirmation.ts';
+import { logFailure } from '../failureLog.ts';
 
 export interface VisitRow {
   id: string;
@@ -1250,16 +1251,60 @@ export async function completeVisit(input: CompleteVisitInput): Promise<void> {
   // The visit's own captured jb_ref is immutable and survives
   // this clearing, so the timeline + history stay intact.
   if (input.appointment_id) {
-    await supabase
+    const { error } = await supabase
       .from('lng_appointments')
       .update({ jb_ref: null, status: 'complete' })
       .eq('id', input.appointment_id);
+    if (error) {
+      await logFailure({
+        source: 'visits.completeVisit.appointment_status',
+        severity: 'error',
+        message: `Visit completed but the appointment row did not flip to complete: ${error.message}`,
+        context: { visit_id: input.visit_id, appointment_id: input.appointment_id },
+      });
+    }
   }
   if (input.walk_in_id) {
-    await supabase
+    const { error: walkInErr } = await supabase
       .from('lng_walk_ins')
       .update({ jb_ref: null })
       .eq('id', input.walk_in_id);
+    if (walkInErr) {
+      await logFailure({
+        source: 'visits.completeVisit.walk_in_jb',
+        severity: 'error',
+        message: `Visit completed but the walk-in job box was not freed: ${walkInErr.message}`,
+        context: { visit_id: input.visit_id, walk_in_id: input.walk_in_id },
+      });
+    }
+
+    // Walk-ins carry a second row the schedule actually reads: the
+    // calendar marker in lng_appointments written by openWalkInVisit
+    // with status='arrived' and walk_in_id pointing back here. The
+    // visit's own appointment_id stays NULL for walk-ins (the
+    // exactly-one constraint on lng_visits forces walk_in_id
+    // instead), so the branch above never fires for them and the
+    // marker was left on 'arrived' forever. isAppointmentDimmed
+    // treats 'arrived' as an active visit and refuses to dim it at
+    // any age, so a fully processed walk-in kept rendering at full
+    // strength with an "Arrived" pill days after the patient left.
+    // Flip the marker here so walk-ins reach the same terminal
+    // state as booked appointments. Status only: a walk-in's job box
+    // lives on lng_walk_ins.jb_ref (the marker is inserted without
+    // one, and clinicBoard reads the walk-in row for it), and the
+    // branch above already freed it.
+    const { error: markerErr } = await supabase
+      .from('lng_appointments')
+      .update({ status: 'complete' })
+      .eq('walk_in_id', input.walk_in_id);
+    if (markerErr) {
+      await logFailure({
+        source: 'visits.completeVisit.walk_in_marker_status',
+        severity: 'error',
+        message: `Visit completed but the walk-in calendar marker did not flip to complete: ${markerErr.message}`,
+        context: { visit_id: input.visit_id, walk_in_id: input.walk_in_id },
+      });
+    }
   }
 
   await supabase.from('patient_events').insert({
