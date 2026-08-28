@@ -8,8 +8,8 @@
   },
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build && npm run build:widgets",
-    "build:staff": "tsc -b && vite build",
+    "build": "tsc -b && vite build && npm run build:widgets && node scripts/strip-sourcemaps.mjs",
+    "build:staff": "tsc -b && vite build && node scripts/strip-sourcemaps.mjs",
     "build:widget": "tsc -b && VITE_BUILD_TARGET=widget vite build",
     "build:widget-venneir": "VITE_BUILD_TARGET=widget-venneir-bundle vite build && VITE_BUILD_TARGET=widget-venneir-embed vite build",
     "build:widget-denture": "VITE_BUILD_TARGET=widget-denture-bundle vite build && VITE_BUILD_TARGET=widget-denture-embed vite build",

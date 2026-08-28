@@ -3,6 +3,11 @@ import react from '@vitejs/plugin-react';
 import { copyFileSync, existsSync, renameSync, rmSync } from 'node:fs';
 import { resolve } from 'node:path';
 
+// Stamp the build id so a Telemetry issue can be traced to a deployment.
+// Vercel sets VERCEL_GIT_COMMIT_SHA; locally this stays 'dev'.
+process.env.VITE_RELEASE =
+  process.env.VITE_RELEASE || (process.env.VERCEL_GIT_COMMIT_SHA || 'dev').slice(0, 8);
+
 // Build targets share this single config. `VITE_BUILD_TARGET` is
 // the switch:
 //
@@ -107,7 +112,11 @@ function mainOrLegacyConfig(): UserConfig {
     preview: { port: 4173, strictPort: true },
     build: {
       target: 'es2022',
-      sourcemap: true,
+      // Was `true`, which published readable sources of the staff app to anyone
+      // who opened devtools. 'hidden' still emits the .map files, so the
+      // Telemetry symbolicator can consume them, but drops the
+      // //# sourceMappingURL comment so browsers neither find nor fetch them.
+      sourcemap: 'hidden',
       rollupOptions: {
         input: isLegacyWidget
           ? resolve(process.cwd(), 'widget.html')

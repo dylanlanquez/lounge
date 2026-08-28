@@ -4,6 +4,27 @@ import { BrowserRouter } from 'react-router-dom';
 import { App } from './App.tsx';
 import { applyGlobalStyles } from './theme/globalStyles.ts';
 import { installScrollGuard } from './lib/installScrollGuard.ts';
+import { ErrorBoundary, initTelemetry } from './lib/telemetry/index.js';
+
+// ── Telemetry ────────────────────────────────────────────────────────────────
+// Cross-app error monitoring with breadcrumbs. Particularly worth having here:
+// Lounge runs on kiosk tablets that nobody is watching, so a failure has no one
+// present to report it.
+//
+// Lounge already has its own ErrorBoundary at src/components/ErrorBoundary; this
+// adds a reporting boundary ABOVE it. The existing one keeps handling in-app
+// recovery, this one guarantees the failure is recorded even if the app shell
+// itself is what broke.
+initTelemetry({
+  app: 'lounge',
+  ingestUrl: import.meta.env.VITE_TELEMETRY_URL,
+  anonKey: import.meta.env.VITE_TELEMETRY_KEY,
+  release: import.meta.env.VITE_RELEASE,
+  resolveRoute: (path: string) =>
+    path
+      .replace(/\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, '/:id')
+      .replace(/\/\d+/g, '/:n'),
+});
 
 applyGlobalStyles();
 // Block iPad rubber-band on pages whose content already fits. The
@@ -64,8 +85,10 @@ if (!rootEl) throw new Error('Root element #root not found in index.html');
 
 createRoot(rootEl).render(
   <StrictMode>
-    <BrowserRouter>
-      <App />
-    </BrowserRouter>
+    <ErrorBoundary name="root">
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>
+    </ErrorBoundary>
   </StrictMode>
 );
