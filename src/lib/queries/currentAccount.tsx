@@ -10,6 +10,7 @@ import { supabase } from '../supabase.ts';
 import { useAuth } from '../auth.tsx';
 import { fetchCurrentStaffMembership } from './staff.ts';
 import { isConnectivityError } from '../connectivity.ts';
+import { setTelemetryUser } from '../telemetry/index.js';
 
 // useCurrentAccount — resolves the signed-in user's identity row from
 // public.accounts (shared with Meridian) PLUS their lng_staff_members
@@ -301,6 +302,36 @@ export function CurrentAccountProvider({ children }: { children: ReactNode }) {
       cancelled = true;
     };
   }, [authLoading, user, retryTick]);
+
+  // ── Tell Telemetry who this is ───────────────────────────────────────────
+  //
+  // Without this, every error Telemetry receives from Lounge arrives with no
+  // user attached, and the issue page reports "0 people affected" even though
+  // the app cannot be opened without signing in. The SDK is a standalone library
+  // with no access to this provider or to the Supabase session, so it cannot
+  // work this out on its own; setTelemetryUser is the only channel.
+  //
+  // This provider rather than auth.tsx, because the readable name lives here:
+  // auth only has the Supabase user, and an issue attributed to a UUID and an
+  // email is markedly less useful than one attributed to a person.
+  //
+  // Keyed on both, so identity is attached as soon as the session exists and is
+  // then upgraded with the name when the account row lands. Waiting for the
+  // account would lose exactly the errors thrown while it is being fetched,
+  // which is when the interesting failures happen.
+  useEffect(() => {
+    if (!user) {
+      // Cleared on sign-out. The practice shares machines, so leaving it set
+      // would attach one person's identity to the next person's errors.
+      setTelemetryUser(null);
+      return;
+    }
+    setTelemetryUser({
+      id: user.id,
+      email: account?.login_email ?? user.email ?? null,
+      name: account?.display_name ?? null,
+    });
+  }, [user, account]);
 
   // Stable identity for the context value so consumers don't re-render
   // on every parent re-render — only when one of the tracked fields
