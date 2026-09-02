@@ -1,5 +1,14 @@
 import { type CSSProperties, useEffect, useMemo, useState } from 'react';
-import { ChevronDown, Video } from 'lucide-react';
+import {
+  ArrowRight,
+  ChevronDown,
+  Clock,
+  LogIn,
+  LogOut,
+  Stethoscope,
+  UserRound,
+  Video,
+} from 'lucide-react';
 import {
   Card,
   DropdownSelect,
@@ -246,103 +255,336 @@ function statusTone(status: string): StatusTone {
   }
 }
 
-// The expanded per-call detail: who joined, when, and for how long —
-// the same read as the appointment page's attendance card, trimmed to a
-// read-only summary.
+// ── The expanded per-call detail ────────────────────────────────────
+//
+// Answers three questions the collapsed row cannot: who was on the
+// call, when each person joined and left, and whether they were in the
+// room at the same time. The presence track is the point. Two bars on
+// one shared timeline make "the patient sat alone for four minutes"
+// visible without reading a single timestamp.
+//
+// Roles carry their own icon and colour so clinician and patient are
+// separable at a glance: a stethoscope in clinic green for the host, a
+// person glyph in neutral graphite for the patient.
+
+const ROLE_STYLE = {
+  clinician: {
+    label: 'Clinician',
+    fg: theme.color.accent,
+    bg: theme.color.accentBg,
+    Icon: Stethoscope,
+  },
+  patient: {
+    label: 'Patient',
+    fg: theme.category.consult,
+    bg: 'rgba(74, 79, 85, 0.10)',
+    Icon: UserRound,
+  },
+} as const;
+
+// The window every presence bar is drawn against: earliest join to
+// latest leave across the whole call. A session still in progress
+// (leftAt null) is treated as running to the end of the window so its
+// bar reaches the right edge rather than collapsing to nothing.
+interface CallWindow {
+  startMs: number;
+  endMs: number;
+}
+
+function callWindow(sessions: CallSession[]): CallWindow | null {
+  const joins: number[] = [];
+  const leaves: number[] = [];
+  for (const s of sessions) {
+    if (s.joinedAt) joins.push(new Date(s.joinedAt).getTime());
+    if (s.leftAt) leaves.push(new Date(s.leftAt).getTime());
+  }
+  if (joins.length === 0) return null;
+  const startMs = Math.min(...joins);
+  const endMs = leaves.length > 0 ? Math.max(...leaves) : startMs;
+  if (!(endMs > startMs)) return null;
+  return { startMs, endMs };
+}
+
+// One participant's stretch of the call, as a percentage offset and
+// width within the shared window. Returns null when the session never
+// recorded a join, which the row renders as a "no join recorded" note
+// instead of a zero-width bar.
+function presenceSpan(
+  s: CallSession,
+  win: CallWindow,
+): { leftPct: number; widthPct: number } | null {
+  if (!s.joinedAt) return null;
+  const span = win.endMs - win.startMs;
+  const joined = new Date(s.joinedAt).getTime();
+  const left = s.leftAt ? new Date(s.leftAt).getTime() : win.endMs;
+  const leftPct = Math.max(0, Math.min(100, ((joined - win.startMs) / span) * 100));
+  const rawWidth = ((left - joined) / span) * 100;
+  return {
+    leftPct,
+    // Floor the width so a sub-minute appearance is still a visible
+    // sliver rather than an invisible zero.
+    widthPct: Math.max(1.5, Math.min(100 - leftPct, rawWidth)),
+  };
+}
+
+function SessionCard({ session, win }: { session: CallSession; win: CallWindow | null }) {
+  const role = session.isHost ? ROLE_STYLE.clinician : ROLE_STYLE.patient;
+  const { Icon } = role;
+  const span = win ? presenceSpan(session, win) : null;
+  const name = session.participantName?.trim();
+
+  return (
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'flex-start',
+        gap: theme.space[3],
+        padding: `${theme.space[3]}px 0`,
+      }}
+    >
+      {/* Role badge. Icon plus tint does the identifying work, so the
+          textual role label beneath the name is confirmation rather
+          than the only signal. */}
+      <span
+        aria-hidden
+        style={{
+          flexShrink: 0,
+          width: 32,
+          height: 32,
+          borderRadius: theme.radius.pill,
+          background: role.bg,
+          color: role.fg,
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}
+      >
+        <Icon size={16} strokeWidth={2} />
+      </span>
+
+      <div style={{ flex: 1, minWidth: 0 }}>
+        {/* Line 1: name on the left, total time on the right. */}
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'baseline',
+            justifyContent: 'space-between',
+            gap: theme.space[3],
+          }}
+        >
+          <span
+            style={{
+              fontSize: theme.type.size.sm,
+              fontWeight: theme.type.weight.semibold,
+              color: theme.color.ink,
+              whiteSpace: 'nowrap',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+            }}
+          >
+            {name ? name : `${role.label} (name not recorded)`}
+          </span>
+          <span
+            style={{
+              flexShrink: 0,
+              fontSize: theme.type.size.sm,
+              fontWeight: theme.type.weight.semibold,
+              color: session.durationMinutes === null ? theme.color.inkSubtle : theme.color.ink,
+              fontVariantNumeric: 'tabular-nums',
+            }}
+          >
+            {formatCallMinutes(session.durationMinutes)}
+          </span>
+        </div>
+
+        {/* Line 2: role, then the join and leave clock times. */}
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            flexWrap: 'wrap',
+            gap: theme.space[2],
+            marginTop: 2,
+          }}
+        >
+          <span
+            style={{
+              fontSize: theme.type.size.xs,
+              fontWeight: theme.type.weight.semibold,
+              letterSpacing: theme.type.tracking.wide,
+              textTransform: 'uppercase',
+              color: role.fg,
+            }}
+          >
+            {role.label}
+          </span>
+          <span aria-hidden style={{ color: theme.color.border }}>|</span>
+          {session.joinedAt ? (
+            <span
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+                fontSize: theme.type.size.xs,
+                color: theme.color.inkMuted,
+                fontVariantNumeric: 'tabular-nums',
+              }}
+            >
+              <LogIn size={12} aria-hidden />
+              {formatTimeNoZone(session.joinedAt)}
+              <ArrowRight size={12} aria-hidden style={{ opacity: 0.5 }} />
+              {session.leftAt ? (
+                <>
+                  <LogOut size={12} aria-hidden />
+                  {formatTimeNoZone(session.leftAt)}
+                </>
+              ) : (
+                <span style={{ color: theme.color.accent, fontWeight: theme.type.weight.medium }}>
+                  still in the call
+                </span>
+              )}
+            </span>
+          ) : (
+            <span style={{ fontSize: theme.type.size.xs, color: theme.color.inkSubtle }}>
+              No join was recorded
+            </span>
+          )}
+        </div>
+
+        {/* Line 3: presence track. Same left and right edges for every
+            participant, so vertical alignment reads as shared time. */}
+        <div
+          style={{
+            marginTop: theme.space[2],
+            height: 6,
+            borderRadius: theme.radius.pill,
+            background: theme.color.border,
+            position: 'relative',
+            overflow: 'hidden',
+          }}
+        >
+          {span && (
+            <div
+              style={{
+                position: 'absolute',
+                top: 0,
+                bottom: 0,
+                left: `${span.leftPct}%`,
+                width: `${span.widthPct}%`,
+                background: role.fg,
+                borderRadius: theme.radius.pill,
+              }}
+            />
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function CallSessions({ sessions }: { sessions: CallSession[] }) {
+  const win = useMemo(() => callWindow(sessions), [sessions]);
+
+  // Clinician first. The host sets the frame for the call, so reading
+  // top to bottom mirrors how staff talk about it.
+  const ordered = useMemo(
+    () => [...sessions].sort((a, b) => Number(b.isHost) - Number(a.isHost)),
+    [sessions],
+  );
+
   if (sessions.length === 0) {
     return (
-      <p
+      <div
         style={{
-          margin: 0,
-          padding: `0 0 ${theme.space[3]}px`,
-          fontSize: theme.type.size.sm,
+          margin: `0 0 ${theme.space[3]}px`,
+          padding: theme.space[4],
+          background: theme.color.bg,
+          border: `1px solid ${theme.color.border}`,
+          borderRadius: theme.radius.card,
+          display: 'flex',
+          alignItems: 'center',
+          gap: theme.space[3],
           color: theme.color.inkSubtle,
         }}
       >
-        No attendance was recorded for this call.
-      </p>
+        <Clock size={16} aria-hidden />
+        <p style={{ margin: 0, fontSize: theme.type.size.sm }}>
+          No attendance was recorded for this call.
+        </p>
+      </div>
     );
   }
+
   return (
     <div
       style={{
         margin: `0 0 ${theme.space[3]}px`,
-        padding: theme.space[3],
+        padding: `${theme.space[3]}px ${theme.space[4]}px`,
         background: theme.color.bg,
+        border: `1px solid ${theme.color.border}`,
         borderRadius: theme.radius.card,
-        display: 'flex',
-        flexDirection: 'column',
-        gap: theme.space[2],
       }}
     >
-      {sessions.map((s, i) => {
-        const role = s.isHost ? 'Clinician' : 'Patient';
-        const when = s.joinedAt
-          ? `${formatTimeNoZone(s.joinedAt)} to ${s.leftAt ? formatTimeNoZone(s.leftAt) : 'still in'}`
-          : 'No join recorded';
-        return (
-          <div
-            key={i}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'baseline',
+          justifyContent: 'space-between',
+          gap: theme.space[3],
+          paddingBottom: theme.space[2],
+        }}
+      >
+        <h4
+          style={{
+            margin: 0,
+            fontSize: theme.type.size.xs,
+            fontWeight: theme.type.weight.semibold,
+            letterSpacing: theme.type.tracking.wide,
+            textTransform: 'uppercase',
+            color: theme.color.inkMuted,
+          }}
+        >
+          Who was on the call
+        </h4>
+        {win && (
+          <span
             style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              gap: theme.space[3],
+              fontSize: theme.type.size.xs,
+              color: theme.color.inkSubtle,
+              fontVariantNumeric: 'tabular-nums',
             }}
           >
-            <div style={{ display: 'flex', alignItems: 'baseline', gap: theme.space[2], minWidth: 0 }}>
-              <span
-                style={{
-                  fontSize: theme.type.size.sm,
-                  fontWeight: theme.type.weight.medium,
-                  color: theme.color.ink,
-                  whiteSpace: 'nowrap',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                }}
-              >
-                {s.participantName || role}
-              </span>
-              <span
-                style={{
-                  fontSize: theme.type.size.xs,
-                  fontWeight: theme.type.weight.semibold,
-                  letterSpacing: theme.type.tracking.wide,
-                  textTransform: 'uppercase',
-                  color: s.isHost ? theme.color.accent : theme.color.inkSubtle,
-                  flexShrink: 0,
-                }}
-              >
-                {role}
-              </span>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'baseline', gap: theme.space[3], flexShrink: 0 }}>
-              <span
-                style={{
-                  fontSize: theme.type.size.sm,
-                  color: theme.color.inkMuted,
-                  fontVariantNumeric: 'tabular-nums',
-                }}
-              >
-                {when}
-              </span>
-              <span
-                style={{
-                  fontSize: theme.type.size.sm,
-                  fontWeight: theme.type.weight.semibold,
-                  color: theme.color.ink,
-                  fontVariantNumeric: 'tabular-nums',
-                  minWidth: 56,
-                  textAlign: 'right',
-                }}
-              >
-                {formatCallMinutes(s.durationMinutes)}
-              </span>
-            </div>
+            {formatTimeNoZone(new Date(win.startMs).toISOString())} to{' '}
+            {formatTimeNoZone(new Date(win.endMs).toISOString())}
+          </span>
+        )}
+      </div>
+
+      <div>
+        {ordered.map((s, i) => (
+          <div
+            key={i}
+            style={{ borderTop: i === 0 ? 'none' : `1px solid ${theme.color.border}` }}
+          >
+            <SessionCard session={s} win={win} />
           </div>
-        );
-      })}
+        ))}
+      </div>
+
+      {win && (
+        <p
+          style={{
+            margin: `${theme.space[2]}px 0 0`,
+            fontSize: theme.type.size.xs,
+            color: theme.color.inkSubtle,
+            lineHeight: theme.type.leading.normal,
+          }}
+        >
+          Each bar spans the time that person was in the room, drawn against the
+          full call window above. Bars that do not overlap mean the two were
+          never in the call together.
+        </p>
+      )}
     </div>
   );
 }

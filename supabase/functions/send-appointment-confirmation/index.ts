@@ -109,7 +109,7 @@ async function handle(req: Request): Promise<Response> {
   let body: {
     appointmentId?: string;
     oldAppointmentIdToCancel?: string;
-    intent?: 'confirmation' | 'cancellation' | 'no_show';
+    intent?: 'confirmation' | 'cancellation' | 'no_show' | 'walk_in';
   };
   try {
     body = await req.json();
@@ -118,7 +118,8 @@ async function handle(req: Request): Promise<Response> {
   }
   const appointmentId = body.appointmentId;
   const oldAppointmentIdToCancel = body.oldAppointmentIdToCancel ?? null;
-  const intent: 'confirmation' | 'cancellation' | 'no_show' = body.intent ?? 'confirmation';
+  const intent: 'confirmation' | 'cancellation' | 'no_show' | 'walk_in' =
+    body.intent ?? 'confirmation';
   if (!appointmentId) {
     return jsonResponse(400, { ok: false, error: 'appointmentId required' });
   }
@@ -184,15 +185,22 @@ async function handle(req: Request): Promise<Response> {
   //                   the patient's calendar entry is no longer
   //                   load-bearing. Pulls the appointment_no_show
   //                   template.
+  //   walk_in       — send "thanks for coming in" against the
+  //                   walk-in marker appointment. No .ics: the
+  //                   patient is already in the building, so there
+  //                   is no future slot to put in their calendar.
+  //                   Pulls the walk_in_confirmation template.
   //   reschedule    — confirmation intent + oldApt set. REQUEST for
   //                   the new slot + CANCEL for the old, paired in
   //                   one email so calendars update cleanly.
   //   booking       — confirmation intent, no oldApt. REQUEST only.
-  const kind: 'booking' | 'reschedule' | 'cancellation' | 'no_show' =
+  const kind: 'booking' | 'reschedule' | 'cancellation' | 'no_show' | 'walk_in' =
     intent === 'cancellation'
       ? 'cancellation'
       : intent === 'no_show'
       ? 'no_show'
+      : intent === 'walk_in'
+      ? 'walk_in'
       : oldApt
       ? 'reschedule'
       : 'booking';
@@ -201,7 +209,13 @@ async function handle(req: Request): Promise<Response> {
   let primaryIcs: string | null = null;
   let secondaryIcs: string | null = null;
 
-  if (kind === 'no_show') {
+  if (kind === 'walk_in') {
+    // No calendar attachment for a walk-in. The visit is happening
+    // now, in the room, so a REQUEST would put a meaningless entry
+    // in the patient's calendar for a slot they are already sitting
+    // in. Leave both ics slots null; the attachment array below is
+    // skipped entirely.
+  } else if (kind === 'no_show') {
     // No calendar attachment for no-show emails. The patient's
     // calendar entry already passed; sending a REQUEST would just
     // duplicate the past event, sending a CANCEL would imply we'd
@@ -283,6 +297,8 @@ async function handle(req: Request): Promise<Response> {
       ? 'booking_cancellation'
       : kind === 'no_show'
       ? 'appointment_no_show'
+      : kind === 'walk_in'
+      ? 'walk_in_confirmation'
       : kind === 'reschedule'
       ? isVirtual ? 'booking_reschedule_virtual' : 'booking_reschedule'
       : isVirtual ? 'booking_confirmation_virtual' : 'booking_confirmation';
@@ -477,6 +493,8 @@ async function handle(req: Request): Promise<Response> {
         ? 'appointment_cancellation_sent'
         : kind === 'no_show'
         ? 'appointment_no_show_email_sent'
+        : kind === 'walk_in'
+        ? 'walk_in_confirmation_sent'
         : 'appointment_confirmation_sent',
     payload: {
       appointment_id: apt.id,
@@ -516,10 +534,15 @@ async function handle(req: Request): Promise<Response> {
 // 'reschedule' values aren't surfaced; both fold into the
 // confirmation bucket because they share the same template family.
 function emailMessageKind(
-  kind: 'booking' | 'reschedule' | 'cancellation' | 'no_show',
+  kind: 'booking' | 'reschedule' | 'cancellation' | 'no_show' | 'walk_in',
 ): string {
   if (kind === 'cancellation') return 'appointment_cancellation';
   if (kind === 'no_show') return 'appointment_no_show';
+  // Walk-ins get their own bucket rather than folding into the
+  // confirmation family: the admin email filters and the patient
+  // timeline both need to tell "we confirmed a future booking" apart
+  // from "we acknowledged someone who turned up".
+  if (kind === 'walk_in') return 'walk_in_confirmation';
   return 'appointment_confirmation';
 }
 

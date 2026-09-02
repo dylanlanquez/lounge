@@ -953,6 +953,14 @@ export const EMAIL_TEMPLATE_DEFINITIONS: ReadonlyArray<EmailTemplateDefinition> 
     variables: APPOINTMENT_VARIABLES,
   },
   {
+    key: 'walk_in_confirmation',
+    label: 'Walk-in confirmation',
+    group: 'Appointments',
+    description:
+      'Sent automatically when a walk-in is taken through the arrival flow, so someone who turned up on the day still leaves with a written record of the visit. No calendar file is attached: the patient is already in the building.',
+    variables: APPOINTMENT_VARIABLES,
+  },
+  {
     key: 'appointment_reminder',
     label: 'Reminder · 24 hours before',
     group: 'Appointments',

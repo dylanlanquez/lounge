@@ -62,15 +62,98 @@ type Tab =
   | 'voids'
   | 'anomalies';
 
-const OPERATIONAL_TABS: { value: Tab; label: string }[] = [
-  { value: 'overview', label: 'Overview' },
-  { value: 'bookings_vs_walkins', label: 'Bookings vs walk-ins' },
-  { value: 'demographics', label: 'Demographics' },
-  { value: 'marketing', label: 'Marketing' },
-  { value: 'service_mix', label: 'Service mix' },
-  { value: 'lifetime_value', label: 'Lifetime value' },
-  { value: 'online_orders', label: 'Online orders' },
-  { value: 'virtual_impressions', label: 'Virtual impressions' },
+// Every tab carries a one-line answer to "what am I looking at?".
+// Fifteen tabs in a single flat strip meant staff had to open a report
+// to find out whether it was the one they wanted, and several tabs
+// count overlapping things under near-identical names (three separate
+// tabs each show a figure called "unique patients", measured against
+// three different denominators). The blurb is where that gets said out
+// loud, so the nav stops being a guessing game.
+//
+// `seeAlso` names the sibling tab that covers adjacent ground. The
+// tabs are deliberately NOT merged: staff have these URLs bookmarked
+// and each report answers a different question. Pointing at the
+// neighbour is the honest fix for the overlap.
+interface TabDef {
+  value: Tab;
+  label: string;
+  blurb: string;
+  seeAlso?: string;
+}
+
+// Three groups, ordered the way staff actually ask questions: what
+// happened in the clinic, who the patients were, and what it earned.
+type TabGroup = 'operations' | 'patients' | 'money';
+
+const GROUP_LABEL: Record<TabGroup, string> = {
+  operations: 'Operations',
+  patients: 'Patients',
+  money: 'Money',
+};
+
+const OPERATIONS_TABS: TabDef[] = [
+  {
+    value: 'overview',
+    label: 'Overview',
+    blurb:
+      'The daily headline. Every visit opened in this period, split by walk-in and scheduled, with the money taken against them.',
+    seeAlso:
+      'For the booking funnel, no-show rate, and hour-by-hour walk-in demand, use Bookings vs walk-ins.',
+  },
+  {
+    value: 'bookings_vs_walkins',
+    label: 'Bookings vs walk-ins',
+    blurb:
+      'How people reach the clinic. Booked appointments against walk-ins over time, the drop-off at each booking stage, and which hours walk-ins arrive.',
+    seeAlso:
+      'The headline walk-in and scheduled counts also appear on Overview. They are the same figures, counted the same way.',
+  },
+  {
+    value: 'service_mix',
+    label: 'Service mix',
+    blurb:
+      'What was actually sold. Catalogue lines by volume and revenue, grouped by category, for the whole period.',
+    seeAlso: 'Overview shows an abbreviated top-services list from this same data.',
+  },
+  {
+    value: 'online_orders',
+    label: 'Online orders',
+    blurb:
+      'Appointments that arrived with a venneir.com Shopify order attached, and the credit already paid online against them.',
+    seeAlso:
+      'Unique patients here counts only patients with an online order, not every patient seen. Demographics counts the full set.',
+  },
+  {
+    value: 'virtual_impressions',
+    label: 'Virtual impressions',
+    blurb:
+      'Every virtual impression call: how long the patient stayed against the booked slot, whether they answered, and who was in the room.',
+  },
+];
+
+const PATIENT_TABS: TabDef[] = [
+  {
+    value: 'demographics',
+    label: 'Demographics',
+    blurb:
+      'Who came in. Unique patients seen in this period, split new against returning, with age brackets and where they travelled from.',
+    seeAlso:
+      '"Returning" here means the patient had visited before this period. Lifetime value measures repeat behaviour across their whole history.',
+  },
+  {
+    value: 'lifetime_value',
+    label: 'Lifetime value',
+    blurb:
+      'Takes the patients seen in this period and looks at their entire history: total spend to date, how often they come back, and the gap between visits.',
+    seeAlso:
+      'The cohort is the same set of patients Demographics counts. The figures are all-time, not period-bound.',
+  },
+  {
+    value: 'marketing',
+    label: 'Marketing',
+    blurb:
+      'Where patients say they heard about us, and the revenue attributed to each channel.',
+  },
 ];
 
 // Cash reconciliation lives at /cash-counts (top-level route, kiosk
@@ -79,15 +162,60 @@ const OPERATIONAL_TABS: { value: Tab; label: string }[] = [
 // surfaces expected cash + the contributing payment lines without
 // the count-now / sign-off flow, so finance can reconcile from
 // Reports without leaving the dashboard.
-const FINANCIAL_TABS: { value: Tab; label: string }[] = [
-  { value: 'fin_overview', label: 'Financial overview' },
-  { value: 'sales', label: 'Sales' },
-  { value: 'retail_sales', label: 'Retail sales' },
-  { value: 'cash_drawer', label: 'Cash drawer' },
-  { value: 'discounts', label: 'Discounts' },
-  { value: 'voids', label: 'Voids' },
-  { value: 'anomalies', label: 'Anomaly flags' },
+const FINANCIAL_TABS: TabDef[] = [
+  {
+    value: 'fin_overview',
+    label: 'Financial overview',
+    blurb:
+      'Money in for the period, by payment method and by day, across every till and terminal.',
+    seeAlso:
+      'Overview shows a revenue figure from the same payments, narrowed to the carts attached to visits.',
+  },
+  {
+    value: 'sales',
+    label: 'Sales',
+    blurb: 'Every completed sale as a line-by-line list, searchable and openable.',
+  },
+  {
+    value: 'retail_sales',
+    label: 'Retail sales',
+    blurb:
+      'Quick-sale counter takings only: product sold over the counter with no visit attached.',
+    seeAlso: 'These sales are included in the Sales tab and in Financial overview totals.',
+  },
+  {
+    value: 'cash_drawer',
+    label: 'Cash drawer',
+    blurb:
+      'Expected cash for the period and the payment lines that make it up. Read-only.',
+    seeAlso:
+      'To actually count a drawer and sign it off, use Cash counts in the main navigation.',
+  },
+  {
+    value: 'discounts',
+    label: 'Discounts',
+    blurb: 'Every discount applied, what it was worth, and who authorised it.',
+  },
+  {
+    value: 'voids',
+    label: 'Voids',
+    blurb: 'Cancelled and voided transactions, with the reason recorded at the time.',
+  },
+  {
+    value: 'anomalies',
+    label: 'Anomaly flags',
+    blurb:
+      'Transactions the system flagged as worth a second look: unusual refunds, repeated voids, and out-of-pattern discounts.',
+  },
 ];
+
+const OPERATIONAL_TABS: TabDef[] = [...OPERATIONS_TABS, ...PATIENT_TABS];
+
+function groupOf(tab: Tab): TabGroup {
+  if (OPERATIONS_TABS.some((t) => t.value === tab)) return 'operations';
+  if (PATIENT_TABS.some((t) => t.value === tab)) return 'patients';
+  return 'money';
+}
 
 export function Reports() {
   const { user, loading: authLoading } = useAuth();
@@ -129,6 +257,30 @@ export function Reports() {
       navigate(`/reports/${next}`);
     },
     [navigate],
+  );
+
+  // The group row derives from the active tab rather than holding its
+  // own state, so a direct link to /reports/voids opens with Money
+  // already selected instead of defaulting to Operations.
+  const group = groupOf(tab);
+
+  const visibleGroups = useMemo<TabGroup[]>(
+    () =>
+      account?.can_view_financials
+        ? ['operations', 'patients', 'money']
+        : ['operations', 'patients'],
+    [account],
+  );
+
+  const groupTabs = useCallback(
+    (g: TabGroup): TabDef[] =>
+      g === 'operations' ? OPERATIONS_TABS : g === 'patients' ? PATIENT_TABS : FINANCIAL_TABS,
+    [],
+  );
+
+  const activeDef = useMemo(
+    () => [...OPERATIONAL_TABS, ...FINANCIAL_TABS].find((t) => t.value === tab) ?? null,
+    [tab],
   );
 
   // Keep the URL canonical: bare /reports, an unknown tab, or one the
@@ -194,16 +346,77 @@ export function Reports() {
               }}
             >
               {account.can_view_financials
-                ? 'Operational and money-side reports together. Tabs after Lifetime value are gated behind your financials permission.'
-                : 'Live operational reports. Every signed-in staff member sees these. Money-side reports require an additional permission, granted in Admin → Staff.'}
+                ? 'Operations covers what happened in the clinic, Patients covers who came in, Money covers what it earned. Every report follows the date range on the right.'
+                : 'Operations covers what happened in the clinic, Patients covers who came in. Money-side reports need an additional permission, granted in Admin, Staff. Every report follows the date range on the right.'}
             </p>
           </div>
           <DateRangePicker value={range} onChange={setRange} />
         </div>
 
-        <div style={{ marginTop: theme.space[5], marginBottom: theme.space[5] }}>
-          <SegmentedControl<Tab> scrollable value={tab} onChange={setTab} options={tabs} />
+        {/* Two-level navigation. The group row narrows fifteen tabs to
+            at most five, so the tab strip below stops needing a
+            horizontal scroll to reach the report you want. Selecting a
+            group jumps to its first tab; the URL still names the tab,
+            so every existing bookmark keeps working. */}
+        <div style={{ marginTop: theme.space[5], marginBottom: theme.space[4] }}>
+          <SegmentedControl<TabGroup>
+            size="sm"
+            ariaLabel="Report group"
+            value={group}
+            onChange={(g) => {
+              const first = groupTabs(g)[0];
+              if (first) setTab(first.value);
+            }}
+            options={visibleGroups.map((g) => ({ value: g, label: GROUP_LABEL[g] }))}
+          />
         </div>
+
+        <div style={{ marginBottom: theme.space[4] }}>
+          <SegmentedControl<Tab>
+            scrollable
+            ariaLabel="Report"
+            value={tab}
+            onChange={setTab}
+            options={groupTabs(group).map((t) => ({ value: t.value, label: t.label }))}
+          />
+        </div>
+
+        {/* What this report measures. Sits directly above the report so
+            the answer arrives before the numbers do. */}
+        {activeDef && (
+          <div
+            style={{
+              marginBottom: theme.space[5],
+              padding: `${theme.space[3]}px ${theme.space[4]}px`,
+              background: theme.color.surface,
+              border: `1px solid ${theme.color.border}`,
+              borderRadius: theme.radius.card,
+            }}
+          >
+            <p
+              style={{
+                margin: 0,
+                fontSize: theme.type.size.sm,
+                color: theme.color.ink,
+                lineHeight: theme.type.leading.normal,
+              }}
+            >
+              {activeDef.blurb}
+            </p>
+            {activeDef.seeAlso && (
+              <p
+                style={{
+                  margin: `${theme.space[2]}px 0 0`,
+                  fontSize: theme.type.size.xs,
+                  color: theme.color.inkMuted,
+                  lineHeight: theme.type.leading.normal,
+                }}
+              >
+                {activeDef.seeAlso}
+              </p>
+            )}
+          </div>
+        )}
 
         {tab === 'overview' ? (
           <OverviewTab range={range} />

@@ -204,6 +204,30 @@ export async function createWalkInVisit(
         end_at: end.toISOString(),
       },
     });
+
+    // Walk-in confirmation email. Walk-ins previously left the clinic
+    // with nothing in writing: every other arrival path (native
+    // booking, reschedule, cancellation, no-show) emails the patient,
+    // but someone who turned up on the day got silence. The marker
+    // appointment is the anchor because the edge function hydrates
+    // everything it needs from lng_appointments.
+    //
+    // Best-effort, and deliberately so. The walk-in, the visit, and
+    // the patient_events trail are all committed by this point — an
+    // email failure must not unwind a patient who is standing at the
+    // desk. The edge function logs its own failures to
+    // lng_system_failures, so a silent miss here is still traceable.
+    // It also honours the walk_in_confirmation template's enabled
+    // flag, so pausing the template in Admin > Email templates stops
+    // the send without a code change.
+    try {
+      await sendAppointmentConfirmation({
+        appointmentId: markerId,
+        intent: 'walk_in',
+      });
+    } catch {
+      // Intentional: see comment above.
+    }
   }
 
   return {
