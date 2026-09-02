@@ -1,4 +1,4 @@
--- 20260902_01_lng_walk_in_confirmation_seed.sql
+-- 20260902000001_lng_walk_in_confirmation_seed.sql
 --
 -- Seeds the new 'walk_in_confirmation' email template. Sent when a
 -- receptionist takes a walk-in through the arrival flow (see
