@@ -5,7 +5,7 @@ import { supabase } from '../supabase.ts';
 // caller can branch on the reason code (e.g. show "no email on file"
 // inline instead of treating it as a hard error).
 //
-// Four intents:
+// Five intents:
 //
 //   confirmation  default. Sends a REQUEST .ics for the appointment
 //                 — the new-booking and reschedule flows. Reschedule
@@ -20,6 +20,12 @@ import { supabase } from '../supabase.ts';
 //                 flip. Honours the appointment_no_show template's
 //                 enabled flag, which ships disabled per booking
 //                 type until the admin writes the copy.
+//   walk_in       Sends a "thanks for coming in today" email against
+//                 the walk-in marker appointment. No .ics: the
+//                 patient is already in the building, so there is no
+//                 future slot worth putting in their calendar. Fired
+//                 best-effort from createWalkInVisit() once the
+//                 marker row exists. Pulls walk_in_confirmation.
 
 export type SendConfirmationReason =
   | 'delivery_not_configured'
@@ -28,7 +34,12 @@ export type SendConfirmationReason =
   | 'template_not_found'
   | 'template_disabled';
 
-export type SendConfirmationKind = 'booking' | 'reschedule' | 'cancellation' | 'no_show';
+export type SendConfirmationKind =
+  | 'booking'
+  | 'reschedule'
+  | 'cancellation'
+  | 'no_show'
+  | 'walk_in';
 
 export type SendConfirmationResult =
   | {
@@ -46,7 +57,7 @@ export type SendConfirmationResult =
 export async function sendAppointmentConfirmation(args: {
   appointmentId: string;
   oldAppointmentIdToCancel?: string | null;
-  intent?: 'confirmation' | 'cancellation' | 'no_show';
+  intent?: 'confirmation' | 'cancellation' | 'no_show' | 'walk_in';
 }): Promise<SendConfirmationResult> {
   const { data, error } = await supabase.functions.invoke<unknown>(
     'send-appointment-confirmation',
