@@ -8,6 +8,7 @@ import {
   Card,
   CollapsibleCard,
   EmptyState,
+  filesForGrid,
   FinalDeliveries,
   MarketingGallery,
   PatientFilesGrid,
@@ -1168,14 +1169,18 @@ function PatientFilesPanel({
   patient: PatientProfileRow;
   refresh: () => void;
 }) {
+  // Before/after and marketing photos render in their own galleries
+  // higher up this page, so they are neither counted nor carded here.
+  // Counting the raw array would claim files the grid does not show.
+  const gridFiles = useMemo(() => filesForGrid(files), [files]);
   return (
     <CollapsibleCard
       icon={<Files size={18} color={theme.color.ink} aria-hidden />}
       title="Patient files"
-      meta={`${files.length} ${files.length === 1 ? 'file' : 'files'}`}
+      meta={`${gridFiles.length} ${gridFiles.length === 1 ? 'file' : 'files'}`}
     >
       <PatientFilesGrid
-        files={files}
+        files={gridFiles}
         loading={loading}
         patientId={patient.id}
         patientName={`${properCase(patient.first_name)} ${properCase(patient.last_name)}`.trim() || 'Patient'}

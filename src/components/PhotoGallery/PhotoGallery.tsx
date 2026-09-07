@@ -23,6 +23,7 @@ export interface PatientForGallery {
 }
 import { properCase } from '../../lib/queries/appointments.ts';
 import { supabase } from '../../lib/supabase.ts';
+import { logFailure } from '../../lib/failureLog.ts';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PhotoGallery — Before/After + Marketing photo galleries.
@@ -180,7 +181,21 @@ function GalleryCard({
     setBusyKey(labelKey);
     setError(null);
     try {
-      const { data: accId } = await supabase.rpc('auth_account_id');
+      // Attribution, not a gate. A rare RPC blip should not stop a
+      // receptionist adding a photo mid-visit, so we proceed with a
+      // null uploader (the column is nullable, and lng_payments
+      // already takes this trade for taken_by). But it gets logged:
+      // an unattributed patient file is a gap in the audit story, and
+      // this used to discard the error entirely.
+      const { data: accId, error: accErr } = await supabase.rpc('auth_account_id');
+      if (accErr) {
+        await logFailure({
+          source: 'photo_gallery.upload',
+          severity: 'warning',
+          message: `auth_account_id failed, uploading "${labelKey}" without an uploader: ${accErr.message}`,
+          context: { patientId: patient.id, labelKey },
+        });
+      }
       await uploadPatientFile({
         patientId: patient.id,
         patientName,

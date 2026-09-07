@@ -186,6 +186,7 @@ export type {
 } from './AppointmentHero/AppointmentHero.tsx';
 
 export { PatientFilesGrid } from './PatientFilesGrid/PatientFilesGrid.tsx';
+export { filesForGrid } from './PatientFilesGrid/cards.ts';
 
 export { PhotoLightbox } from './PhotoLightbox/PhotoLightbox.tsx';
 export type { LightboxPhoto, PhotoLightboxProps } from './PhotoLightbox/PhotoLightbox.tsx';
