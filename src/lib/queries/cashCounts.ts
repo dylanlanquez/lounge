@@ -88,6 +88,13 @@ export interface CashCountRow {
    *  that predate the rule. */
   witness_name: string | null;
   on_camera: boolean | null;
+  /** Super admin accepted the difference with a note: the original
+   *  difference (counted minus expected), who, when, why. Null when
+   *  nothing was written off. */
+  written_off_pence: number | null;
+  written_off_at: string | null;
+  written_off_by_name: string | null;
+  write_off_reason: string | null;
 }
 
 interface RawCashCount {
@@ -115,6 +122,13 @@ interface RawCashCount {
     | { first_name: string | null; last_name: string | null; name: string | null }[]
     | null;
   on_camera?: boolean | null;
+  written_off_pence?: number | null;
+  written_off_at?: string | null;
+  write_off_reason?: string | null;
+  written_off_by?:
+    | { first_name: string | null; last_name: string | null; name: string | null }
+    | { first_name: string | null; last_name: string | null; name: string | null }[]
+    | null;
 }
 
 export function shapeCashCounts(raw: RawCashCount[]): CashCountRow[] {
@@ -130,13 +144,17 @@ export function shapeCashCounts(raw: RawCashCount[]): CashCountRow[] {
       kind: (r.kind === 'legacy_baseline' ? 'legacy_baseline' : 'regular') as
         | 'regular'
         | 'legacy_baseline',
-      notes: r.notes,
+      notes: r.notes && r.notes.trim().length > 0 ? r.notes : null,
       counted_by_name: composePersonName(pickOne(r.counted_by)),
       counted_at: r.counted_at,
       signed_off_by_name: r.signed_off_by ? composePersonName(pickOne(r.signed_off_by)) : null,
       signed_off_at: r.signed_off_at,
       witness_name: r.witness ? composePersonName(pickOne(r.witness)) : null,
       on_camera: r.on_camera ?? null,
+      written_off_pence: r.written_off_pence ?? null,
+      written_off_at: r.written_off_at ?? null,
+      written_off_by_name: r.written_off_by ? composePersonName(pickOne(r.written_off_by)) : null,
+      write_off_reason: r.write_off_reason ?? null,
     }))
     .sort((a, b) => b.period_end.localeCompare(a.period_end));
 }
@@ -177,9 +195,11 @@ export function useCashCounts(): CashCountsResult {
           .select(
             `id, period_start, period_end, expected_pence, actual_pence, variance_pence,
              status, kind, notes, counted_at, signed_off_at, on_camera,
+             written_off_pence, written_off_at, write_off_reason,
              counted_by:accounts!counted_by ( first_name, last_name, name ),
              signed_off_by:accounts!signed_off_by ( first_name, last_name, name ),
-             witness:accounts!witness_id ( first_name, last_name, name )`,
+             witness:accounts!witness_id ( first_name, last_name, name ),
+             written_off_by:accounts!written_off_by ( first_name, last_name, name )`,
           )
           .order('period_end', { ascending: false });
         if (cancelled) return;
@@ -1343,6 +1363,17 @@ export async function reverseCashWithdrawal(withdrawalId: string, reason: string
   };
 }
 
+/** Accept a signed count's difference with a note. expected becomes the
+ *  counted total, the original difference is kept as written_off_pence.
+ *  Right now is unaffected (it already starts from the counted total). */
+export async function writeOffCountDifference(countId: string, reason: string): Promise<{ written_off_pence: number }> {
+  if (reason.trim().length === 0) throw new Error('Say why the difference is being written off.');
+  const { data, error } = await supabase.rpc('lng_cash_write_off_difference', { p_count_id: countId, p_reason: reason.trim() });
+  if (error) throw new Error(error.message);
+  const out = data as { written_off_pence?: number } | null;
+  return { written_off_pence: out?.written_off_pence ?? 0 };
+}
+
 /** Void a signed count. The safe position re-anchors on the previous
  *  signed count and everything in the voided window flows back into
  *  the open period. */
@@ -1417,9 +1448,11 @@ export function useCashCountStatement(countId: string | null): StatementResult {
             .select(
               `id, period_start, period_end, expected_pence, actual_pence, variance_pence,
                status, kind, notes, counted_at, signed_off_at, on_camera,
+               written_off_pence, written_off_at, write_off_reason,
                counted_by:accounts!counted_by ( first_name, last_name, name ),
                signed_off_by:accounts!signed_off_by ( first_name, last_name, name ),
-               witness:accounts!witness_id ( first_name, last_name, name )`,
+               witness:accounts!witness_id ( first_name, last_name, name ),
+               written_off_by:accounts!written_off_by ( first_name, last_name, name )`,
             )
             .eq('id', countId)
             .maybeSingle(),

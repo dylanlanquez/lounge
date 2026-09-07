@@ -57,6 +57,7 @@ import {
   saveCashCountUnrecorded,
   signCashCount,
   voidCashCount,
+  writeOffCountDifference,
   updateCashCountActual,
   useAnomalyThresholds,
   useCashCounts,
@@ -120,6 +121,7 @@ export function CashCounts() {
   // count's details (closed period, record only).
   const [reverseTarget, setReverseTarget] = useState<ReverseTarget | null>(null);
   const [voidTarget, setVoidTarget] = useState<{ id: string; period_end: string } | null>(null);
+  const [writeOffTarget, setWriteOffTarget] = useState<WriteOffTarget | null>(null);
   // Two-person rule: the safe witnesses on record. Loaded once for the
   // page and shared by the Right-now card (so the rule is visible before
   // anyone opens the safe) and both sheets (which refuse to submit
@@ -306,7 +308,7 @@ export function CashCounts() {
         countId={statementCountId}
         onClose={() => setStatementCountId(null)}
         canCorrect={!!account.is_super_admin}
-        reloadKey={reverseTarget === null && voidTarget === null ? 1 : 0}
+        reloadKey={reverseTarget === null && voidTarget === null && writeOffTarget === null ? 1 : 0}
         onReverse={(w, count) =>
           setReverseTarget({
             withdrawal_id: w.withdrawal_id,
@@ -319,6 +321,17 @@ export function CashCounts() {
           })
         }
         onVoid={(id, periodEnd) => setVoidTarget({ id, period_end: periodEnd })}
+        onWriteOff={(t) => setWriteOffTarget(t)}
+      />
+
+      <WriteOffSheet
+        target={writeOffTarget}
+        onClose={() => setWriteOffTarget(null)}
+        onDone={() => {
+          setWriteOffTarget(null);
+          position.refresh();
+          counts.refresh();
+        }}
       />
 
       <ReverseWithdrawalSheet
@@ -1450,6 +1463,7 @@ function CountRow({
   const expected = count.expected_pence;
   const diff = count.variance_pence;
   const matched = counted !== null && diff === 0;
+  const writtenOff = count.written_off_pence !== null && count.written_off_pence !== 0;
   const showStatus = count.status !== 'signed';
   const isLegacy = count.kind === 'legacy_baseline';
 
@@ -1461,6 +1475,12 @@ function CountRow({
     <>Starting balance {formatPence(counted ?? 0)}</>
   ) : counted === null ? (
     <>Not yet counted · expected {formatPence(expected)}</>
+  ) : matched && writtenOff ? (
+    <>
+      {formatPence(counted)} counted · was {formatPence(Math.abs(count.written_off_pence!))}{' '}
+      {count.written_off_pence! > 0 ? 'over' : 'short'}, written off
+      {count.written_off_by_name ? ` by ${count.written_off_by_name}` : ''}
+    </>
   ) : matched ? (
     <>{formatPence(counted)} counted · matched expected</>
   ) : (
@@ -1509,6 +1529,20 @@ function CountRow({
             </span>
           ) : null}
           {showStatus ? <CountStatus status={count.status} /> : null}
+          {writtenOff && matched ? (
+            <span
+              style={{
+                fontSize: theme.type.size.xs,
+                fontWeight: theme.type.weight.semibold,
+                color: theme.color.inkMuted,
+                background: theme.color.bg,
+                padding: `2px ${theme.space[2]}px`,
+                borderRadius: theme.radius.pill,
+              }}
+            >
+              Written off
+            </span>
+          ) : null}
           {!isLegacy && !matched && counted !== null ? (
             <span
               style={{
@@ -1558,7 +1592,7 @@ function CountRow({
             </>
           ) : null}
         </p>
-        {count.notes ? (
+        {count.notes?.trim() ? (
           <p
             style={{
               margin: `${theme.space[2]}px 0 0`,
@@ -2827,6 +2861,7 @@ function CountDetailsSheet({
   reloadKey,
   onReverse,
   onVoid,
+  onWriteOff,
 }: {
   countId: string | null;
   onClose: () => void;
@@ -2840,6 +2875,7 @@ function CountDetailsSheet({
     count: { period_end: string; expected_pence: number; actual_pence: number | null },
   ) => void;
   onVoid: (countId: string, periodEnd: string) => void;
+  onWriteOff: (target: WriteOffTarget) => void;
 }) {
   const { data, loading, error, refresh } = useCashCountStatement(countId);
   const [downloading, setDownloading] = useState(false);
@@ -2879,6 +2915,23 @@ function CountDetailsSheet({
       }
       footer={
         <div style={{ display: 'flex', gap: theme.space[3], justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+          {canCorrect && data && data.count.status === 'signed' && data.count.variance_pence !== 0 && data.count.actual_pence !== null ? (
+            <Button
+              variant="secondary"
+              onClick={() =>
+                onWriteOff({
+                  count_id: data.count.id,
+                  period_end: data.count.period_end,
+                  expected_pence: data.count.expected_pence,
+                  actual_pence: data.count.actual_pence!,
+                })
+              }
+            >
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
+                <CheckCircle2 size={14} aria-hidden /> Write off the difference
+              </span>
+            </Button>
+          ) : null}
           {canCorrect && data && data.count.status === 'signed' ? (
             <Button variant="tertiary" onClick={() => onVoid(data.count.id, data.count.period_end)}>
               <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2], color: theme.color.alert }}>
@@ -2935,6 +2988,25 @@ function CountDetailsSheet({
               }
             />
           </div>
+          {data.count.written_off_pence !== null && data.count.written_off_pence !== 0 ? (
+            <p
+              style={{
+                margin: 0,
+                padding: `${theme.space[2]}px ${theme.space[3]}px`,
+                borderRadius: theme.radius.input,
+                background: theme.color.bg,
+                fontSize: theme.type.size.sm,
+                color: theme.color.ink,
+                lineHeight: theme.type.leading.snug,
+                fontVariantNumeric: 'tabular-nums',
+              }}
+            >
+              Was {formatPence(Math.abs(data.count.written_off_pence))} {data.count.written_off_pence > 0 ? 'over' : 'short'}, written off
+              {data.count.written_off_by_name ? ` by ${data.count.written_off_by_name}` : ''}
+              {data.count.written_off_at ? ` on ${formatLongDate(data.count.written_off_at)}` : ''}
+              {data.count.write_off_reason ? `: ${data.count.write_off_reason}` : '.'}
+            </p>
+          ) : null}
           <p style={{ margin: 0, fontSize: theme.type.size.xs, color: theme.color.inkMuted }}>
             Counted by{' '}
             <span style={{ color: theme.color.ink, fontWeight: theme.type.weight.medium }}>
@@ -2960,7 +3032,7 @@ function CountDetailsSheet({
               </>
             ) : null}
           </p>
-          {data.count.notes ? (
+          {data.count.notes?.trim() ? (
             <p
               style={{
                 margin: 0,
@@ -3439,6 +3511,130 @@ function ReversalEffect({ target }: { target: ReverseTarget }) {
           : `Right now starts from what was physically counted, so it does not move. The count was only "over" because this withdrawal was recorded when the cash was still in the safe; restating it fixes that. If the count itself was wrong, void the count and count again instead.`}
       </p>
     </div>
+  );
+}
+
+interface WriteOffTarget {
+  count_id: string;
+  period_end: string;
+  expected_pence: number;
+  actual_pence: number;
+}
+
+// Accept a count's difference with a note. The count reads as matched
+// afterwards; the original difference, who, when, and why stay on it.
+function WriteOffSheet({
+  target,
+  onClose,
+  onDone,
+}: {
+  target: WriteOffTarget | null;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    if (target) {
+      setReason('');
+      setError(null);
+    }
+  }, [target]);
+  const diff = target ? target.actual_pence - target.expected_pence : 0;
+  const diffLabel = (d: number) => (d === 0 ? 'Matched' : `${formatPence(Math.abs(d))} ${d > 0 ? 'over' : 'short'}`);
+  const submit = async () => {
+    if (!target) return;
+    setError(null);
+    if (reason.trim().length === 0) {
+      setError('Say why the difference is being written off. It goes on the record.');
+      return;
+    }
+    setBusy(true);
+    try {
+      await writeOffCountDifference(target.count_id, reason);
+      onDone();
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      setError(message);
+      await logFailure({ source: 'cash.count.write_off', severity: 'error', message, context: { count_id: target.count_id } });
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <BottomSheet
+      open={target !== null}
+      onClose={() => !busy && onClose()}
+      dismissable={!busy}
+      title="Write off the difference"
+      description={
+        target
+          ? `The count from ${formatLongDate(target.period_end)} is ${diffLabel(diff)}. Accept that with a note and the count reads as matched. The original figures, your name, and the note stay on the record.`
+          : ''
+      }
+      footer={
+        <div style={{ display: 'flex', gap: theme.space[3], justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+          <Button variant="tertiary" onClick={onClose} disabled={busy}>
+            Cancel
+          </Button>
+          <Button variant="primary" onClick={submit} loading={busy}>
+            Write off {target ? formatPence(Math.abs(diff)) : ''}
+          </Button>
+        </div>
+      }
+    >
+      <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[4] }}>
+        {target ? (
+          <div
+            style={{
+              padding: theme.space[4],
+              borderRadius: theme.radius.input,
+              background: theme.color.bg,
+              border: `1px solid ${theme.color.border}`,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: theme.space[3],
+            }}
+          >
+            <span style={{ fontSize: 11, fontWeight: theme.type.weight.semibold, color: theme.color.inkMuted, textTransform: 'uppercase', letterSpacing: theme.type.tracking.wide }}>
+              What changes
+            </span>
+            {[
+              { label: 'Right now in the safe', before: formatPence(target.actual_pence), after: formatPence(target.actual_pence), same: true },
+              { label: `Expected on the ${formatLongDate(target.period_end)} count`, before: formatPence(target.expected_pence), after: formatPence(target.actual_pence), same: false },
+              { label: 'Difference on that count', before: diffLabel(diff), after: 'Matched', same: false },
+            ].map((r) => (
+              <div key={r.label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: theme.space[3], flexWrap: 'wrap' }}>
+                <span style={{ fontSize: theme.type.size.sm, color: theme.color.ink }}>{r.label}</span>
+                <span style={{ fontSize: theme.type.size.sm, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+                  <span style={{ color: theme.color.inkMuted }}>{r.before}</span>
+                  <span style={{ color: theme.color.inkSubtle }}> to </span>
+                  <span style={{ fontWeight: theme.type.weight.semibold, color: r.same ? theme.color.ink : theme.color.accent }}>{r.after}</span>
+                  {r.same ? <span style={{ color: theme.color.inkMuted }}> (no change)</span> : null}
+                </span>
+              </div>
+            ))}
+            <p style={{ margin: 0, fontSize: theme.type.size.xs, color: theme.color.inkMuted, lineHeight: theme.type.leading.snug }}>
+              Right now already starts from the counted total, so nothing moves in the safe. This settles the record only.
+            </p>
+          </div>
+        ) : null}
+        <Input
+          label="Why is it being written off?"
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          placeholder="e.g. Coins from the change float, never recorded. Accepted."
+          autoFocus
+          fullWidth
+        />
+        {error ? (
+          <p role="alert" style={{ margin: 0, padding: `${theme.space[2]}px ${theme.space[3]}px`, borderRadius: theme.radius.input, background: '#FFEEEC', color: theme.color.alert, fontSize: theme.type.size.sm }}>
+            {error}
+          </p>
+        ) : null}
+      </div>
+    </BottomSheet>
   );
 }
 

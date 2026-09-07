@@ -117,6 +117,26 @@ export async function buildCashCountPdf(
   });
   y += 14;
 
+  // Difference written off by the super admin: the count reads as
+  // matched above; say what it was and why it was accepted.
+  if (statement.count.written_off_pence !== null && statement.count.written_off_pence !== 0) {
+    const wo = statement.count.written_off_pence;
+    pdf.setFont('helvetica', 'normal');
+    pdf.setFontSize(9);
+    pdf.setTextColor(...MUTED);
+    pdf.text(
+      truncate(
+        `Was ${formatGbp(Math.abs(wo))} ${wo > 0 ? 'over' : 'short'}, written off by ${statement.count.written_off_by_name ?? 'the super admin'}${
+          statement.count.written_off_at ? ` on ${formatDate(statement.count.written_off_at)}` : ''
+        }: ${statement.count.write_off_reason ?? ''}`,
+        110,
+      ),
+      MARGIN_L,
+      y,
+    );
+    y += 6;
+  }
+
   // Notes
   if (statement.count.notes) {
     pdf.setFont('helvetica', 'italic');
