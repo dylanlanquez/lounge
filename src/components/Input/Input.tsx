@@ -6,6 +6,9 @@ import {
   type ReactNode,
   forwardRef,
   useId,
+  useImperativeHandle,
+  useLayoutEffect,
+  useRef,
   useState,
 } from 'react';
 import { Eye, EyeOff } from 'lucide-react';
@@ -56,6 +59,34 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
   },
   ref
 ) {
+  // Currency fields show thousands separators while the caller's state
+  // stays plain ("44444.50" in state, "44,444.50" on screen). The value
+  // handed to onChange is always the plain form, so existing callers
+  // that parse with Number() / parseFloat keep working unchanged.
+  const isCurrency = numericFormat === 'currency';
+  const rawValue = rest.value;
+  const displayValue =
+    isCurrency && (typeof rawValue === 'string' || typeof rawValue === 'number')
+      ? formatCurrencyDisplay(String(rawValue))
+      : rawValue;
+  const innerRef = useRef<HTMLInputElement | null>(null);
+  useImperativeHandle(ref, () => innerRef.current as HTMLInputElement);
+  // Caret position to restore after React re-renders the formatted
+  // value: counted in digits before the caret, which survives commas
+  // being inserted or removed around it.
+  const pendingCaretDigits = useRef<number | null>(null);
+  useLayoutEffect(() => {
+    const el = innerRef.current;
+    const digits = pendingCaretDigits.current;
+    if (!el || digits === null) return;
+    pendingCaretDigits.current = null;
+    const pos = caretForDigitCount(el.value, digits);
+    try {
+      el.setSelectionRange(pos, pos);
+    } catch {
+      // Some input types refuse selection APIs; the caret just lands at the end.
+    }
+  });
   const inputMode =
     inputModeProp ??
     (numericFormat === 'integer'
@@ -145,8 +176,9 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
         {leadingIcon ? <span style={iconStyle}>{leadingIcon}</span> : null}
         <input
           {...rest}
+          value={displayValue}
           id={inputId}
-          ref={ref}
+          ref={innerRef}
           required={required}
           type={effectiveType}
           inputMode={inputMode}
@@ -165,6 +197,10 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
           }}
           onChange={(e) => {
             if (numericFormat) {
+              if (isCurrency) {
+                const caret = e.target.selectionStart ?? e.target.value.length;
+                pendingCaretDigits.current = countDigits(e.target.value.slice(0, caret));
+              }
               const cleaned = sanitiseNumeric(e.target.value, numericFormat);
               if (cleaned !== e.target.value) {
                 e.target.value = cleaned;
@@ -300,6 +336,37 @@ function guardNumericPaste(
   const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
   setter?.call(target, next);
   target.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
+// "44444.5" -> "44,444.5"; keeps a trailing "." while the user is mid-typing.
+export function formatCurrencyDisplay(plain: string): string {
+  if (plain.length === 0) return plain;
+  const dot = plain.indexOf('.');
+  const intPart = dot === -1 ? plain : plain.slice(0, dot);
+  const rest = dot === -1 ? '' : plain.slice(dot);
+  const grouped = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  return `${grouped}${rest}`;
+}
+
+function countDigits(s: string): number {
+  let n = 0;
+  for (const ch of s) if ((ch >= '0' && ch <= '9') || ch === '.') n += 1;
+  return n;
+}
+
+// Index in `formatted` just after the Nth digit-or-dot, so the caret
+// lands where the user expects after commas move around.
+function caretForDigitCount(formatted: string, digits: number): number {
+  if (digits <= 0) return 0;
+  let seen = 0;
+  for (let i = 0; i < formatted.length; i += 1) {
+    const ch = formatted[i]!;
+    if ((ch >= '0' && ch <= '9') || ch === '.') {
+      seen += 1;
+      if (seen === digits) return i + 1;
+    }
+  }
+  return formatted.length;
 }
 
 function sanitiseNumeric(raw: string, format: 'integer' | 'decimal' | 'currency'): string {
