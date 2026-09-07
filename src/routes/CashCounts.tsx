@@ -91,6 +91,7 @@ import {
   findDifferenceClues,
 } from '../lib/cashReconcile.ts';
 import { logFailure } from '../lib/failureLog.ts';
+import { CASH_COUNT_DUE_PREVIEW_KEY } from '../components/CashCountDueBanner/CashCountDueBanner.tsx';
 
 // Cash counts — promoted to a top-level route from the old
 // `Reports → Cash reconciliation` tab.
@@ -1707,6 +1708,7 @@ function RotaCard({
   onChanged: () => void;
 }) {
   const isMobile = useIsMobile(640);
+  const navigate = useNavigate();
   const [holders, setHolders] = useState<StaffNameRow[]>([]);
   const [weekdays, setWeekdays] = useState<number[]>([]);
   const [assignee, setAssignee] = useState('');
@@ -1822,11 +1824,27 @@ function RotaCard({
             </p>
             <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkMuted, lineHeight: theme.type.leading.snug }}>{summary}</p>
           </div>
-          {dirty ? (
-            <Button variant="primary" size="sm" onClick={save} loading={busy}>
-              Save rota
+          <div style={{ display: 'flex', gap: theme.space[2], flexWrap: 'wrap' }}>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => {
+                try {
+                  sessionStorage.setItem(CASH_COUNT_DUE_PREVIEW_KEY, 'due');
+                } catch {
+                  // Session storage unavailable: the preview will not show.
+                }
+                navigate('/schedule');
+              }}
+            >
+              Preview on my home screen
             </Button>
-          ) : null}
+            {dirty ? (
+              <Button variant="primary" size="sm" onClick={save} loading={busy}>
+                Save rota
+              </Button>
+            ) : null}
+          </div>
         </div>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
