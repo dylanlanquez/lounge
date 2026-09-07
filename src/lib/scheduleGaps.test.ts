@@ -67,9 +67,41 @@ describe('computeDayFreeTime', () => {
     expect(out.windows).toEqual([]);
   });
 
-  it('closed days and past days have no free time', () => {
+  it('closed days have nothing', () => {
     expect(computeDayFreeTime({ rows: [], dateIso: DAY, hours: null, now: new Date(), isToday: false, isPast: false }).open).toBe(false);
-    expect(computeDayFreeTime({ rows: [], dateIso: DAY, hours: HOURS, now: new Date(), isToday: false, isPast: true }).open).toBe(false);
+  });
+
+  it('today splits into down time behind now and free time ahead', () => {
+    const out = computeDayFreeTime({
+      rows: [row('09:45', '10:00', 'complete'), row('11:00', '11:45', 'complete'), row('15:00', '15:30')],
+      dateIso: DAY, hours: HOURS, now: new Date(at('14:18')), isToday: true, isPast: false,
+    });
+    expect(out.downWindows.map((w) => [w.start, w.end, w.minutes])).toEqual([
+      [at('09:00'), at('09:45'), 45],
+      [at('10:00'), at('11:00'), 60],
+      [at('13:00'), at('14:18'), 78],
+    ]);
+    expect(out.downMinutes).toBe(183);
+    expect(out.windows.map((w) => w.minutes)).toEqual([42, 90]);
+  });
+
+  it('a past day is all down time, nothing to fill', () => {
+    const out = computeDayFreeTime({
+      rows: [row('10:00', '16:00', 'complete')],
+      dateIso: DAY, hours: HOURS, now: new Date('2026-09-20T10:00:00Z'), isToday: false, isPast: true,
+    });
+    expect(out.open).toBe(true);
+    expect(out.windows).toEqual([]);
+    expect(out.downWindows.map((w) => [w.start, w.end])).toEqual([
+      [at('09:00'), at('10:00')],
+      [at('16:00'), at('17:00')],
+    ]);
+  });
+
+  it('a future day has no down time yet', () => {
+    const out = computeDayFreeTime({ rows: [], dateIso: DAY, hours: HOURS, now: new Date('2026-09-01T10:00:00Z'), isToday: false, isPast: false });
+    expect(out.downWindows).toEqual([]);
+    expect(out.freeMinutes).toBe(420);
   });
 
   it('overlapping bookings are merged', () => {

@@ -571,6 +571,7 @@ export function Schedule() {
                 : filterActive
                   ? `${visibleRows.length} of ${day.data.length} shown`
                   : `${day.data.length} appointment${day.data.length === 1 ? '' : 's'}`}
+              {freeTime?.open && freeTime.downMinutes > 0 ? ` · ${formatMinutes(freeTime.downMinutes)} down time` : ''}
               {freeTime?.open && freeTime.freeMinutes > 0 && freeTime.closesAt
                 ? ` · ${formatMinutes(freeTime.freeMinutes)} free before ${formatTimeNoZone(freeTime.closesAt)}`
                 : ''}
@@ -733,7 +734,7 @@ export function Schedule() {
             <SkeletonRows />
           ) : (
             <DayReloadingWrapper loading={day.loading}>
-              {day.data.length === 0 && freeTime?.open && freeTime.windows.length > 0 ? (
+              {day.data.length === 0 && freeTime?.open && (freeTime.windows.length > 0 || freeTime.downWindows.length > 0) ? (
             <ScheduleListView
               rows={[]}
               onPick={setSelected}

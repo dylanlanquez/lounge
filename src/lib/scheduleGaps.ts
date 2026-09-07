@@ -24,12 +24,19 @@ export interface DayFreeTime {
   closesAt: string | null;
   /** Lunch break, when set for the day. */
   lunch: { start: string; end: string } | null;
-  /** Free stretches in chronological order, each at least MIN_FREE_MINUTES. */
+  /** Free stretches still ahead, in chronological order, each at least
+   *  MIN_FREE_MINUTES. */
   windows: FreeWindow[];
   /** Sum of the windows. */
   freeMinutes: number;
+  /** Down time: stretches that have already gone by with nothing
+   *  booked (today up to now; a past day in full). Same threshold. */
+  downWindows: FreeWindow[];
+  downMinutes: number;
   /** Today only: the clinic has already closed. */
   closedForToday: boolean;
+  /** The date is before today. */
+  past: boolean;
 }
 
 /** Shorter gaps are not bookable in practice and would litter the list. */
@@ -52,7 +59,10 @@ const NONE: DayFreeTime = {
   lunch: null,
   windows: [],
   freeMinutes: 0,
+  downWindows: [],
+  downMinutes: 0,
   closedForToday: false,
+  past: false,
 };
 
 export function computeDayFreeTime(input: {
@@ -61,11 +71,11 @@ export function computeDayFreeTime(input: {
   hours: NormalisedDayHours | null;
   now: Date;
   isToday: boolean;
-  /** The date is before today: nothing left to fill. */
+  /** The date is before today: the whole day is down time, nothing left to fill. */
   isPast: boolean;
 }): DayFreeTime {
   const { rows, dateIso, hours, now, isToday, isPast } = input;
-  if (!hours || isPast) return NONE;
+  if (!hours) return NONE;
 
   const opensAt = londonWallClockToDate(dateIso, hours.open);
   const closesAt = londonWallClockToDate(dateIso, hours.close);
@@ -86,16 +96,6 @@ export function computeDayFreeTime(input: {
     lunch,
   };
 
-  // Window we can still fill: from now (today) or opening (future).
-  // Today starts at the next whole minute so the free row sits just
-  // after the live now-line, never a few seconds before it.
-  const nextMinute = Math.ceil(now.getTime() / 60_000) * 60_000;
-  const from = isToday ? Math.max(nextMinute, opensAt.getTime()) : opensAt.getTime();
-  const to = closesAt.getTime();
-  if (from >= to) {
-    return { ...base, windows: [], freeMinutes: 0, closedForToday: isToday };
-  }
-
   // Busy intervals: every blocking booking, plus lunch.
   const busy: Array<[number, number]> = [];
   for (const r of rows) {
@@ -108,22 +108,44 @@ export function computeDayFreeTime(input: {
   if (lunch) busy.push([new Date(lunch.start).getTime(), new Date(lunch.end).getTime()]);
   busy.sort((a, b) => a[0] - b[0]);
 
-  const windows: FreeWindow[] = [];
-  let cursor = from;
-  for (const [s, e] of busy) {
-    if (e <= cursor) continue;
-    if (s > cursor) pushWindow(windows, cursor, Math.min(s, to));
-    cursor = Math.max(cursor, e);
-    if (cursor >= to) break;
-  }
-  if (cursor < to) pushWindow(windows, cursor, to);
+  // The day splits at "now": what went by is down time, what is ahead
+  // is free to fill. Today's split is the next whole minute so the
+  // first free row sits just after the live now-line, never a few
+  // seconds before it. A past day is all down time; a future day is
+  // all still to fill.
+  const nextMinute = Math.ceil(now.getTime() / 60_000) * 60_000;
+  const open = opensAt.getTime();
+  const close = closesAt.getTime();
+  const split = isPast ? close : isToday ? Math.min(Math.max(nextMinute, open), close) : open;
+
+  const downWindows = gapsBetween(busy, open, split);
+  const windows = gapsBetween(busy, split, close);
 
   return {
     ...base,
     windows,
     freeMinutes: windows.reduce((sum, w) => sum + w.minutes, 0),
-    closedForToday: false,
+    downWindows,
+    downMinutes: downWindows.reduce((sum, w) => sum + w.minutes, 0),
+    closedForToday: isToday && split >= close,
+    past: isPast,
   };
+}
+
+/** Free stretches inside [from, to) once the busy intervals are removed. */
+function gapsBetween(busy: Array<[number, number]>, from: number, to: number): FreeWindow[] {
+  const out: FreeWindow[] = [];
+  if (from >= to) return out;
+  let cursor = from;
+  for (const [s, e] of busy) {
+    if (e <= cursor) continue;
+    if (s >= to) break;
+    if (s > cursor) pushWindow(out, cursor, Math.min(s, to));
+    cursor = Math.max(cursor, e);
+    if (cursor >= to) break;
+  }
+  if (cursor < to) pushWindow(out, cursor, to);
+  return out;
 }
 
 function pushWindow(out: FreeWindow[], start: number, end: number): void {
