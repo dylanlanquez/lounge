@@ -833,6 +833,12 @@ const CASH_WITHDRAWAL_NOTIFICATION_VARIABLES: ReadonlyArray<EmailTemplateVariabl
     sample: 'Tue 19 May 2026 at 14:32',
   },
   {
+    name: 'witnessName',
+    label: 'Witnessed by',
+    description: 'First + last name of the safe witness who was present, on camera (two-person rule). Renders as "—" on withdrawals that predate the rule.',
+    sample: 'Robert McCrindle',
+  },
+  {
     name: 'managerName',
     label: 'Manager name (per-recipient)',
     description:

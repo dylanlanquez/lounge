@@ -138,6 +138,9 @@ async function handle(req: Request): Promise<Response> {
     /** cash_withdrawn only: id of the newly-inserted withdrawal row.
      *  Surfaced on the audit log line for traceability. */
     withdrawal_id?: string | null;
+    /** cash_withdrawn only: display name of the safe witness who was
+     *  present (two-person rule). Rendered as {{witnessName}}. */
+    witness_name?: string | null;
   };
   try {
     body = await req.json();
@@ -228,6 +231,7 @@ async function handle(req: Request): Promise<Response> {
     ? (WITHDRAWAL_REASON_LABELS[reasonText] ?? reasonText)
     : reasonText;
   const noteOrEmpty = (body.note ?? '').toString().trim();
+  const witnessName = (body.witness_name ?? '').toString().trim();
   const safeUrl = `${LOUNGE_PUBLIC_URL}/cash-counts`;
 
   // 4. Send one email per recipient. Per-recipient failures are
@@ -252,6 +256,7 @@ async function handle(req: Request): Promise<Response> {
       // template can keep using the existing names.
       takenByName: staffName,
       takenAt: processedAt,
+      witnessName: witnessName.length > 0 ? witnessName : '—',
       safeUrl,
       managerName,
       processedAt,

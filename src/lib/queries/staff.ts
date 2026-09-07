@@ -45,6 +45,9 @@ export interface StaffRow {
   can_view_financials: boolean;
   can_count_cash: boolean;
   can_write_off: boolean;
+  // Two-person rule: may be recorded as the second person present when
+  // the safe is opened. Grants nothing on its own.
+  is_safe_witness: boolean;
   // Per-staff "Require 2FA" policy. Stored alone for now; the
   // sign-in gate that enforces AAL2 lands in chunk 3 alongside the
   // /enroll-2fa and /verify-2fa screens.
@@ -120,6 +123,7 @@ interface RawJoinedRow {
   can_view_financials: boolean | null;
   can_count_cash: boolean | null;
   can_write_off: boolean | null;
+  is_safe_witness?: boolean | null;
   require_2fa: boolean | null;
   admin_page_access: string[] | null;
   marketing_walkthrough_enabled: boolean | null;
@@ -178,6 +182,7 @@ function mapRow(r: RawJoinedRow): StaffRow {
     can_view_financials: r.can_view_financials === true,
     can_count_cash: r.can_count_cash === true,
     can_write_off: r.can_write_off === true,
+    is_safe_witness: r.is_safe_witness === true,
     require_2fa: r.require_2fa === true,
     admin_page_access: Array.isArray(r.admin_page_access)
       ? r.admin_page_access.filter((k): k is string => typeof k === 'string')
@@ -205,7 +210,7 @@ function mapRow(r: RawJoinedRow): StaffRow {
 }
 
 const STAFF_SELECT =
-  'id, account_id, is_admin, is_manager, is_customer_service, is_virtual_impression_clinician, clinician_self_serve, clinician_can_edit_own_hours, authorisation_code, can_view_reports, can_view_financials, can_count_cash, can_write_off, require_2fa, admin_page_access, marketing_walkthrough_enabled, role_id, status, hired_at, deactivated_at, invite_sent_at, invite_expires_at, invite_accepted_at, last_sign_in_at, account:accounts!account_id(id, first_name, last_name, name, login_email, location_id, location:locations!location_id(id, name, type, city)), role:lng_staff_roles!role_id(id, name)';
+  'id, account_id, is_admin, is_manager, is_customer_service, is_virtual_impression_clinician, clinician_self_serve, clinician_can_edit_own_hours, authorisation_code, can_view_reports, can_view_financials, can_count_cash, can_write_off, is_safe_witness, require_2fa, admin_page_access, marketing_walkthrough_enabled, role_id, status, hired_at, deactivated_at, invite_sent_at, invite_expires_at, invite_accepted_at, last_sign_in_at, account:accounts!account_id(id, first_name, last_name, name, login_email, location_id, location:locations!location_id(id, name, type, city)), role:lng_staff_roles!role_id(id, name)';
 
 // Lists every staff member, active and inactive, sorted alphabetically
 // by display name. Inactive rows render with a "Deactivated" badge in
@@ -352,6 +357,40 @@ export async function setCanWriteOff(staffMemberId: string, value: boolean): Pro
     .update({ can_write_off: value })
     .eq('id', staffMemberId);
   if (error) throw new Error(error.message);
+}
+
+// Toggles is_safe_witness. A safe witness is the second person who must
+// be physically present, on camera, whenever the safe is counted or
+// cash is taken from it (migration 20260907000003). The flag grants no
+// action of its own: the database refuses any count or withdrawal
+// whose witness is not an active safe witness.
+export async function setIsSafeWitness(staffMemberId: string, value: boolean): Promise<void> {
+  const { error } = await supabase
+    .from('lng_staff_members')
+    .update({ is_safe_witness: value })
+    .eq('id', staffMemberId);
+  if (error) throw new Error(error.message);
+}
+
+export interface SafeWitnessRow {
+  staff_member_id: string;
+  account_id: string;
+  name: string;
+}
+
+// Active staff flagged as safe witnesses, alphabetical. The count and
+// Take-from-safe sheets refuse to submit without one of these picked.
+export async function listSafeWitnesses(): Promise<SafeWitnessRow[]> {
+  const { data, error } = await supabase
+    .from('lng_staff_members')
+    .select(STAFF_SELECT)
+    .eq('is_safe_witness', true)
+    .eq('status', 'active');
+  if (error) throw new Error(error.message);
+  return ((data ?? []) as RawJoinedRow[])
+    .map(mapRow)
+    .map((s) => ({ staff_member_id: s.staff_member_id, account_id: s.account_id, name: s.display_name }))
+    .sort((a, b) => a.name.localeCompare(b.name));
 }
 
 // Toggles the per-staff marketing-content walkthrough gate. Allowlist:

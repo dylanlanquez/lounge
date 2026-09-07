@@ -48,6 +48,7 @@ import {
   setAdminPageAccess,
   setCanCountCash,
   setCanWriteOff,
+  setIsSafeWitness,
   setCanViewFinancials,
   setCanViewReports,
   setClinicianCanEditOwnHours,
@@ -2941,7 +2942,7 @@ function StaffTab() {
   // toast.
   const togglePerm = (
     staffMemberId: string,
-    flag: 'reports' | 'financials' | 'cash' | 'writeoff',
+    flag: 'reports' | 'financials' | 'cash' | 'writeoff' | 'witness',
     next: boolean,
   ) => {
     const field =
@@ -2951,7 +2952,9 @@ function StaffTab() {
           ? 'can_view_financials'
           : flag === 'cash'
             ? 'can_count_cash'
-            : 'can_write_off';
+            : flag === 'witness'
+              ? 'is_safe_witness'
+              : 'can_write_off';
     const prev = !next;
     setManaging((cur) =>
       cur && cur.staff_member_id === staffMemberId ? { ...cur, [field]: next } : cur,
@@ -2964,7 +2967,9 @@ function StaffTab() {
           ? setCanViewFinancials(staffMemberId, next)
           : flag === 'cash'
             ? setCanCountCash(staffMemberId, next)
-            : setCanWriteOff(staffMemberId, next);
+            : flag === 'witness'
+              ? setIsSafeWitness(staffMemberId, next)
+              : setCanWriteOff(staffMemberId, next);
     mutation
       .then(() => {
         staff.refresh();
@@ -3436,7 +3441,7 @@ function StaffTab() {
 
             <ManageSection
               title="Section access"
-              description="Top-level destinations outside the /admin tab. Reports defaults on; Financials and Cash counting are super-admin grants only."
+              description="Top-level destinations outside the /admin tab. Reports defaults on; Financials, Safe holder, Safe witness, and Write off are super-admin grants only."
             >
               <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
                 <PermissionRow
@@ -3454,12 +3459,20 @@ function StaffTab() {
                   onChange={(v) => togglePerm(managing.staff_member_id, 'financials', v)}
                 />
                 <PermissionRow
-                  title="Cash counting"
-                  description="Lets this person initiate a cash reconciliation count. Sign-off still requires a different manager. Super-admin-grant only."
+                  title="Safe holder"
+                  description="Lets this person count the safe and take cash from it. Every count and withdrawal must be done on camera with a Safe witness present, and a count still needs a different manager to sign off. Super-admin-grant only."
                   checked={managing.can_count_cash}
                   disabled={!canEditFinancialPerms}
-                  disabledReason={canEditFinancialPerms ? undefined : 'Only the super admin can grant Cash counting access.'}
+                  disabledReason={canEditFinancialPerms ? undefined : 'Only the super admin can grant Safe holder access.'}
                   onChange={(v) => togglePerm(managing.staff_member_id, 'cash', v)}
+                />
+                <PermissionRow
+                  title="Safe witness"
+                  description="The second person who must be physically present, on camera, whenever the safe is opened. Recorded on every count and withdrawal. Grants no action on its own. Super-admin-grant only."
+                  checked={managing.is_safe_witness}
+                  disabled={!canEditFinancialPerms}
+                  disabledReason={canEditFinancialPerms ? undefined : 'Only the super admin can grant Safe witness.'}
+                  onChange={(v) => togglePerm(managing.staff_member_id, 'witness', v)}
                 />
                 <PermissionRow
                   title="Write off balances"

@@ -5,7 +5,13 @@
 // A4 layout — header with brand + period, totals block, line table,
 // signature block at the bottom.
 
-import { withdrawalReasonLabel as withdrawalReasonLabelPdf, type CashCountStatement } from './queries/cashCounts.ts';
+import {
+  DENOMINATIONS,
+  withdrawalReasonLabel as withdrawalReasonLabelPdf,
+  type CashCountStatement,
+  type CashPosition,
+} from './queries/cashCounts.ts';
+import { buildActivityStatement } from './cashReconcile.ts';
 import { fmtTzAbbr } from './dateFormat.ts';
 
 interface JsPdfDoc {
@@ -122,6 +128,13 @@ export async function buildCashCountPdf(
   }
   y += 4;
 
+  // How it was counted — the note and coin breakdown, when the counter
+  // entered one. Two columns (notes left, coins right) so it reads like
+  // the paper till sheet it replaces.
+  if (statement.denominations.length > 0) {
+    y = drawDenominations(pdf, y, statement.denominations, statement.count.actual_pence);
+  }
+
   // Lines table header
   pdf.setFont('helvetica', 'bold');
   pdf.setFontSize(8);
@@ -206,6 +219,22 @@ export async function buildCashCountPdf(
     statement.count.signed_off_by_name ?? '— pending —',
     statement.count.signed_off_at,
   );
+  // Two-person rule: who was present and that it was on camera.
+  if (statement.count.witness_name) {
+    y += 22;
+    if (y > PAGE_H - MARGIN_B - 10) {
+      pdf.addPage();
+      y = MARGIN_T;
+    }
+    pdf.setFont('helvetica', 'normal');
+    pdf.setFontSize(9);
+    pdf.setTextColor(...MUTED);
+    pdf.text(
+      `Witnessed by ${statement.count.witness_name}${statement.count.on_camera ? ', on camera' : ''}.`,
+      MARGIN_L,
+      y,
+    );
+  }
 
   return pdf.output('blob');
 }
@@ -236,6 +265,235 @@ function drawSignatureBlock(
   pdf.setDrawColor(...MUTED);
   pdf.setLineWidth(0.2);
   pdf.line(x, y + 14, x + w, y + 14);
+}
+
+function drawDenominations(
+  pdf: JsPdfDoc,
+  yStart: number,
+  rows: Array<{ denomination_pence: number; quantity: number }>,
+  totalPence: number | null,
+): number {
+  let y = yStart;
+  if (y > PAGE_H - MARGIN_B - 50) {
+    pdf.addPage();
+    y = MARGIN_T;
+  }
+  pdf.setFont('helvetica', 'bold');
+  pdf.setFontSize(8);
+  pdf.setTextColor(...MUTED);
+  pdf.text('HOW IT WAS COUNTED', MARGIN_L, y);
+  y += 2;
+  pdf.setDrawColor(...MUTED);
+  pdf.setLineWidth(0.2);
+  pdf.line(MARGIN_L, y, PAGE_W - MARGIN_R, y);
+  y += 5;
+  const byPence = new Map(rows.map((r) => [r.denomination_pence, r.quantity]));
+  const notes = DENOMINATIONS.filter((d) => d.kind === 'note');
+  const coins = DENOMINATIONS.filter((d) => d.kind === 'coin');
+  const colW = (PAGE_W - MARGIN_L - MARGIN_R - 10) / 2;
+  const drawColumn = (x: number, items: typeof notes) => {
+    let yy = y;
+    for (const d of items) {
+      const q = byPence.get(d.pence) ?? 0;
+      pdf.setFont('helvetica', q > 0 ? 'bold' : 'normal');
+      pdf.setFontSize(9);
+      pdf.setTextColor(...(q > 0 ? INK : MUTED));
+      pdf.text(d.label, x, yy);
+      pdf.setFont('helvetica', 'normal');
+      pdf.text(`× ${q}`, x + 18, yy);
+      pdf.text(formatGbp(d.pence * q), x + colW, yy, { align: 'right' });
+      yy += 5;
+    }
+    return yy;
+  };
+  const yNotes = drawColumn(MARGIN_L, notes);
+  const yCoins = drawColumn(MARGIN_L + colW + 10, coins);
+  y = Math.max(yNotes, yCoins);
+  pdf.setDrawColor(...MUTED);
+  pdf.line(MARGIN_L, y, PAGE_W - MARGIN_R, y);
+  y += 5;
+  pdf.setFont('helvetica', 'bold');
+  pdf.setFontSize(9);
+  pdf.setTextColor(...INK);
+  pdf.text('COUNTED', MARGIN_L, y);
+  pdf.text(totalPence === null ? '—' : formatGbp(totalPence), PAGE_W - MARGIN_R, y, { align: 'right' });
+  y += 10;
+  return y;
+}
+
+// ── Cash since last count (unsigned working sheet) ─────────────────────────
+//
+// The export staff take to the safe: every movement since the last
+// signed count, oldest first, with a running balance and a tick box per
+// row so each recorded payment can be checked off against its receipt.
+// Ends with blank Counted / Difference lines to fill in by hand.
+
+export async function buildCashActivityPdf(
+  position: CashPosition,
+  brand: { name: string; addressLine: string | null },
+): Promise<Blob> {
+  const Ctor = await loadJsPdf();
+  const pdf = new Ctor();
+  let y = MARGIN_T;
+  const rows = buildActivityStatement(position);
+
+  pdf.setFont('helvetica', 'bold');
+  pdf.setFontSize(18);
+  pdf.setTextColor(...INK);
+  pdf.text('Cash since last count', MARGIN_L, y);
+  y += 7;
+  pdf.setFont('helvetica', 'normal');
+  pdf.setFontSize(10);
+  pdf.setTextColor(...MUTED);
+  pdf.text(brand.name, MARGIN_L, y);
+  if (brand.addressLine) {
+    y += 5;
+    pdf.text(brand.addressLine, MARGIN_L, y);
+  }
+  pdf.setTextColor(...INK);
+  pdf.setFontSize(10);
+  pdf.text(`${formatDate(position.period_start)} → ${formatDateTime(position.period_end)}`, PAGE_W - MARGIN_R, MARGIN_T, { align: 'right' });
+  pdf.setTextColor(...MUTED);
+  pdf.setFontSize(8);
+  pdf.text('Working sheet, not a signed count', PAGE_W - MARGIN_R, MARGIN_T + 5, { align: 'right' });
+
+  y += 12;
+  pdf.setDrawColor(...MUTED);
+  pdf.setLineWidth(0.2);
+  pdf.line(MARGIN_L, y, PAGE_W - MARGIN_R, y);
+  y += 8;
+
+  const colW = (PAGE_W - MARGIN_L - MARGIN_R) / 3;
+  const blocks = [
+    { label: 'OPENING BALANCE', value: formatGbp(position.baseline_pence) },
+    { label: 'CASH IN', value: formatGbp(rows.reduce((s, r) => s + r.in_pence, 0)) },
+    { label: 'CASH OUT', value: formatGbp(rows.reduce((s, r) => s + r.out_pence, 0)) },
+  ];
+  blocks.forEach((b, i) => {
+    const x = MARGIN_L + colW * i;
+    pdf.setFont('helvetica', 'normal');
+    pdf.setFontSize(8);
+    pdf.setTextColor(...MUTED);
+    pdf.text(b.label, x, y);
+    pdf.setFont('helvetica', 'bold');
+    pdf.setFontSize(14);
+    pdf.setTextColor(...INK);
+    pdf.text(b.value, x, y + 6);
+  });
+  y += 16;
+
+  // Table header. Columns: tick box, date, detail, taken by, in, out, balance.
+  const X_TICK = MARGIN_L;
+  const X_DATE = MARGIN_L + 7;
+  const X_DETAIL = MARGIN_L + 36;
+  const X_BY = MARGIN_L + 96;
+  const X_IN = MARGIN_L + 132;
+  const X_OUT = MARGIN_L + 152;
+  const X_BAL = PAGE_W - MARGIN_R;
+  const header = () => {
+    pdf.setFont('helvetica', 'bold');
+    pdf.setFontSize(8);
+    pdf.setTextColor(...MUTED);
+    pdf.text('DATE', X_DATE, y);
+    pdf.text('DETAIL', X_DETAIL, y);
+    pdf.text('TAKEN BY', X_BY, y);
+    pdf.text('IN', X_IN, y, { align: 'right' });
+    pdf.text('OUT', X_OUT, y, { align: 'right' });
+    pdf.text('BALANCE', X_BAL, y, { align: 'right' });
+    y += 2;
+    pdf.setDrawColor(...MUTED);
+    pdf.line(MARGIN_L, y, PAGE_W - MARGIN_R, y);
+    y += 5;
+  };
+  header();
+
+  pdf.setFont('helvetica', 'normal');
+  pdf.setFontSize(9);
+  pdf.setTextColor(...INK);
+  pdf.text('Opening balance', X_DETAIL, y);
+  pdf.text(formatGbp(position.baseline_pence), X_BAL, y, { align: 'right' });
+  y += 5;
+
+  for (const r of rows) {
+    if (y > PAGE_H - MARGIN_B - 20) {
+      pdf.addPage();
+      y = MARGIN_T;
+      header();
+      pdf.setFont('helvetica', 'normal');
+      pdf.setFontSize(9);
+      pdf.setTextColor(...INK);
+    }
+    // Tick box, only for recorded payments (the rows you check
+    // against receipts).
+    if (r.in_pence > 0) {
+      pdf.setDrawColor(...INK);
+      pdf.setLineWidth(0.3);
+      pdf.rect(X_TICK, y - 3.2, 3.6, 3.6);
+    }
+    pdf.setFont('helvetica', 'normal');
+    pdf.setFontSize(9);
+    pdf.setTextColor(...INK);
+    pdf.text(formatShortDateTime(r.when), X_DATE, y);
+    const detail = r.reference ? `${r.detail} · ${r.reference}` : r.detail;
+    pdf.text(truncate(r.type === 'Cash payment' ? detail : `${r.type}${r.detail ? ` · ${r.detail}` : ''}`, 34), X_DETAIL, y);
+    pdf.text(truncate(r.taken_by ?? '—', 18), X_BY, y);
+    if (r.in_pence > 0) {
+      pdf.setTextColor(...ACCENT);
+      pdf.text(formatGbp(r.in_pence), X_IN, y, { align: 'right' });
+    }
+    if (r.out_pence > 0) {
+      pdf.setTextColor(...ALERT);
+      pdf.text(formatGbp(r.out_pence), X_OUT, y, { align: 'right' });
+    }
+    pdf.setTextColor(...INK);
+    pdf.text(formatGbp(r.balance_pence), X_BAL, y, { align: 'right' });
+    y += 5;
+  }
+
+  y += 2;
+  pdf.setDrawColor(...MUTED);
+  pdf.setLineWidth(0.2);
+  pdf.line(MARGIN_L, y, PAGE_W - MARGIN_R, y);
+  y += 6;
+  if (y > PAGE_H - MARGIN_B - 40) {
+    pdf.addPage();
+    y = MARGIN_T;
+  }
+  pdf.setFont('helvetica', 'bold');
+  pdf.setFontSize(10);
+  pdf.setTextColor(...INK);
+  pdf.text('EXPECTED IN SAFE', MARGIN_L, y);
+  pdf.text(formatGbp(position.expected_in_safe_pence), X_BAL, y, { align: 'right' });
+  y += 12;
+
+  // Blank lines to complete by hand at the safe.
+  const half = (PAGE_W - MARGIN_L - MARGIN_R - 8) / 2;
+  const blank = (x: number, label: string) => {
+    pdf.setFont('helvetica', 'normal');
+    pdf.setFontSize(8);
+    pdf.setTextColor(...MUTED);
+    pdf.text(label, x, y);
+    pdf.setDrawColor(...MUTED);
+    pdf.line(x, y + 10, x + half, y + 10);
+  };
+  blank(MARGIN_L, 'COUNTED IN SAFE');
+  blank(MARGIN_L + half + 8, 'DIFFERENCE');
+  y += 20;
+  blank(MARGIN_L, 'COUNTED BY');
+  blank(MARGIN_L + half + 8, 'DATE AND TIME');
+
+  return pdf.output('blob');
+}
+
+function formatShortDateTime(iso: string): string {
+  return new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/London',
+    day: '2-digit',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(new Date(iso));
 }
 
 function formatGbp(pence: number): string {

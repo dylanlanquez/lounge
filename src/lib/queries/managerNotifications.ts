@@ -250,6 +250,9 @@ export interface SendManagerNotificationInput {
    *  Recorded on the audit log line so the email send can be tied
    *  back to its withdrawal. */
   withdrawalId?: string | null;
+  /** cash_withdrawn only — display name of the safe witness who was
+   *  present (two-person rule). Rendered as {{witnessName}}. */
+  witnessName?: string | null;
 }
 
 export interface SendManagerNotificationResult {
@@ -276,6 +279,7 @@ export async function sendManagerNotification(
           staff_account_id: input.staffAccountId,
           note: input.note ?? null,
           withdrawal_id: input.withdrawalId ?? null,
+          witness_name: input.witnessName ?? null,
         },
       },
     );

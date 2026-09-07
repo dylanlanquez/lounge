@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { aggregateAnomalies, shapeCashCounts, type AnomalyThresholds } from './cashCounts.ts';
+import {
+  aggregateAnomalies,
+  denominationTotalPence,
+  shapeCashCounts,
+  shapeCashPosition,
+  type AnomalyThresholds,
+  type RpcCashPosition,
+} from './cashCounts.ts';
 
 const DEFAULT_THRESHOLDS: AnomalyThresholds = {
   discount_pct: 50,
@@ -140,5 +147,134 @@ describe('aggregateAnomalies', () => {
       NOW,
     );
     expect(r.flags.filter((f) => f.kind === 'discount_above_threshold')).toHaveLength(0);
+  });
+});
+
+describe('shapeCashPosition', () => {
+  const base: RpcCashPosition = {
+    expected_in_safe_pence: 194900,
+    baseline_pence: 56000,
+    location_id: 'loc',
+    period_start: '2026-07-03T17:54:28Z',
+    period_end: '2026-09-07T10:00:00Z',
+    payment_count: 1,
+    withdrawal_count: 1,
+    refund_count: 0,
+    refunded_sale_count: 0,
+    earliest_payment_at: '2026-07-03T17:55:04Z',
+    latest_payment_at: '2026-09-03T14:31:39Z',
+    last_signed_count: {
+      id: 'c1',
+      period_end: '2026-07-03T17:54:28Z',
+      actual_pence: 56000,
+      expected_pence: 56000,
+      variance_pence: 0,
+      signed_off_at: '2026-07-03T17:54:39Z',
+    },
+    lines: [
+      {
+        kind: 'payment',
+        payment_id: 'p1',
+        amount_pence: 7000,
+        taken_at: '2026-09-03T14:31:39Z',
+        patient_first: 'paul',
+        patient_last: 'PATERSON',
+        appointment_ref: 'LAP-01045',
+        visit_id: 'v1',
+        cart_total_pence: 7000,
+        actor_first: 'Lisa',
+        actor_last: 'Mccomb',
+        actor_name: 'Lisa Mccomb',
+      },
+      {
+        kind: 'withdrawal',
+        withdrawal_id: 'w1',
+        amount_pence: 56000,
+        taken_at: '2026-07-03T17:55:04Z',
+        reason: 'bank_deposit',
+        note: null,
+        on_camera: true,
+        actor_first: null,
+        actor_last: null,
+        actor_name: 'Dylan Lane',
+        witness_first: 'robert',
+        witness_last: 'mccrindle',
+      },
+    ],
+    clues: {
+      other_payments: [
+        {
+          payment_id: 'k1',
+          method: 'card_terminal',
+          amount_pence: 28995,
+          taken_at: '2026-07-20T08:11:37Z',
+          patient_first: 'Card',
+          patient_last: 'Payer',
+          appointment_ref: null,
+          visit_id: 'v2',
+          actor_first: 'Jade',
+          actor_last: 'Cassidy',
+        },
+      ],
+      open_balances: [
+        { visit_id: 'v3', opened_at: '2026-09-07T08:40:16Z', owed_pence: 6000, patient_first: 'Peter', patient_last: 'Leitch', appointment_ref: 'LAP-01057' },
+      ],
+    },
+  };
+
+  it('never recomputes the headline figure', () => {
+    const out = shapeCashPosition(base);
+    expect(out.expected_in_safe_pence).toBe(194900);
+    expect(out.baseline_pence).toBe(56000);
+    expect(out.last_signed_count?.variance_pence).toBe(0);
+  });
+
+  it('title-cases names and carries who took each payment', () => {
+    const out = shapeCashPosition(base);
+    const pay = out.lines.find((l) => l.kind === 'payment');
+    expect(pay && pay.kind === 'payment' ? pay.patient_name : null).toBe('Paul Paterson');
+    expect(pay && pay.kind === 'payment' ? pay.taken_by_name : null).toBe('Lisa Mccomb');
+    const wd = out.lines.find((l) => l.kind === 'withdrawal');
+    expect(wd && wd.kind === 'withdrawal' ? wd.taken_by_name : null).toBe('Dylan Lane');
+  });
+
+  it('carries the safe witness and camera flag on withdrawals, null before the rule', () => {
+    const out = shapeCashPosition(base);
+    const wd = out.lines.find((l) => l.kind === 'withdrawal');
+    expect(wd && wd.kind === 'withdrawal' ? wd.witness_name : null).toBe('Robert Mccrindle');
+    expect(wd && wd.kind === 'withdrawal' ? wd.on_camera : null).toBe(true);
+    expect(out.last_signed_count?.witness_name).toBeNull();
+  });
+
+  it('shapes clues', () => {
+    const out = shapeCashPosition(base);
+    expect(out.clues?.other_payments[0]?.patient_name).toBe('Card Payer');
+    expect(out.clues?.other_payments[0]?.taken_by_name).toBe('Jade Cassidy');
+    expect(out.clues?.open_balances[0]?.owed_pence).toBe(6000);
+  });
+
+  it('throws on an empty payload rather than rendering zeros', () => {
+    expect(() => shapeCashPosition(null)).toThrow(/empty response/);
+  });
+
+  it('throws on a line missing its id', () => {
+    expect(() =>
+      shapeCashPosition({ ...base, lines: [{ kind: 'payment', amount_pence: 1, taken_at: '2026-01-01T00:00:00Z' }] }),
+    ).toThrow(/payment_id/);
+  });
+});
+
+describe('denominationTotalPence', () => {
+  it('adds every note and coin', () => {
+    expect(denominationTotalPence({ 2000: 3, 500: 1, 100: 2, 20: 3, 1: 1 })).toBe(6000 + 500 + 200 + 60 + 1);
+  });
+
+  it('treats missing denominations as zero', () => {
+    expect(denominationTotalPence({})).toBe(0);
+  });
+
+  it('rejects a negative or fractional quantity', () => {
+    expect(() => denominationTotalPence({ 100: -1 })).toThrow(/Invalid quantity/);
+    expect(() => denominationTotalPence({ 100: 1.5 })).toThrow(/Invalid quantity/);
   });
 });

@@ -83,6 +83,11 @@ export interface CashCountRow {
   counted_at: string;
   signed_off_by_name: string | null;
   signed_off_at: string | null;
+  /** Two-person rule (migration 20260907000003): the safe witness who
+   *  was present and whether it was done on camera. Null on counts
+   *  that predate the rule. */
+  witness_name: string | null;
+  on_camera: boolean | null;
 }
 
 interface RawCashCount {
@@ -105,6 +110,11 @@ interface RawCashCount {
     | { first_name: string | null; last_name: string | null; name: string | null }
     | { first_name: string | null; last_name: string | null; name: string | null }[]
     | null;
+  witness?:
+    | { first_name: string | null; last_name: string | null; name: string | null }
+    | { first_name: string | null; last_name: string | null; name: string | null }[]
+    | null;
+  on_camera?: boolean | null;
 }
 
 export function shapeCashCounts(raw: RawCashCount[]): CashCountRow[] {
@@ -125,6 +135,8 @@ export function shapeCashCounts(raw: RawCashCount[]): CashCountRow[] {
       counted_at: r.counted_at,
       signed_off_by_name: r.signed_off_by ? composePersonName(pickOne(r.signed_off_by)) : null,
       signed_off_at: r.signed_off_at,
+      witness_name: r.witness ? composePersonName(pickOne(r.witness)) : null,
+      on_camera: r.on_camera ?? null,
     }))
     .sort((a, b) => b.period_end.localeCompare(a.period_end));
 }
@@ -164,9 +176,10 @@ export function useCashCounts(): CashCountsResult {
           .from('lng_cash_counts')
           .select(
             `id, period_start, period_end, expected_pence, actual_pence, variance_pence,
-             status, kind, notes, counted_at, signed_off_at,
+             status, kind, notes, counted_at, signed_off_at, on_camera,
              counted_by:accounts!counted_by ( first_name, last_name, name ),
-             signed_off_by:accounts!signed_off_by ( first_name, last_name, name )`,
+             signed_off_by:accounts!signed_off_by ( first_name, last_name, name ),
+             witness:accounts!witness_id ( first_name, last_name, name )`,
           )
           .order('period_end', { ascending: false });
         if (cancelled) return;
@@ -212,8 +225,12 @@ export function useCashCounts(): CashCountsResult {
 //     float top-up, petty cash, owner draw, other — recorded via
 //     recordCashWithdrawal)
 //
-// When no signed count exists yet, baseline = 0 and the running
-// total accumulates from the very first cash event.
+// The maths lives in ONE place: the lng_cash_safe_position() database
+// function (migrations 20260708000003 + 20260907000002). It is
+// SECURITY DEFINER with a single authorization check, so every device
+// and every permitted account gets the identical figure regardless of
+// its per-table RLS grants. This module only reshapes the payload for
+// display; it never adds numbers up.
 
 export interface CashPositionPaymentLine {
   kind: 'payment';
@@ -228,6 +245,10 @@ export interface CashPositionPaymentLine {
    *  payment that made it onto this row). Null only for the
    *  rare orphan case where the cart was disassociated. */
   visit_id: string | null;
+  /** Staff member who took the cash. First question anyone asks when
+   *  a count is short or over. */
+  taken_by_name: string;
+  cart_total_pence: number | null;
 }
 
 export interface CashPositionWithdrawalLine {
@@ -240,6 +261,10 @@ export interface CashPositionWithdrawalLine {
   reason: WithdrawalReason;
   note: string | null;
   taken_by_name: string | null;
+  /** Safe witness recorded on the withdrawal; null before the
+   *  two-person rule. */
+  witness_name: string | null;
+  on_camera: boolean | null;
 }
 
 export interface CashPositionRefundLine {
@@ -265,6 +290,7 @@ export interface CashPositionRefundedSaleLine {
   taken_at: string;
   patient_name: string;
   visit_id: string | null;
+  taken_by_name: string;
 }
 
 export type CashPositionLine =
@@ -273,13 +299,54 @@ export type CashPositionLine =
   | CashPositionRefundLine
   | CashPositionRefundedSaleLine;
 
+/** A non-cash payment taken in the same window. Evidence for the
+ *  "paid in cash but logged as card" explanation of a surplus. */
+export interface CashClueOtherPayment {
+  payment_id: string;
+  method: string;
+  amount_pence: number;
+  taken_at: string;
+  patient_name: string;
+  appointment_ref: string | null;
+  visit_id: string | null;
+  taken_by_name: string;
+}
+
+/** A visit opened in the window that still owes money. Evidence for
+ *  the "cash was taken but never logged" explanation of a surplus. */
+export interface CashClueOpenBalance {
+  visit_id: string;
+  opened_at: string;
+  owed_pence: number;
+  patient_name: string;
+  appointment_ref: string | null;
+}
+
+export interface CashClues {
+  other_payments: CashClueOtherPayment[];
+  open_balances: CashClueOpenBalance[];
+}
+
+export interface CashPositionAnchor {
+  id: string;
+  period_end: string;
+  actual_pence: number | null;
+  expected_pence: number;
+  variance_pence: number;
+  signed_off_at: string;
+  witness_name?: string | null;
+}
+
 export interface CashPosition {
   /** Running balance = baseline + payments − refunds − withdrawals.
-   *  Now an absolute figure, not a delta. */
+   *  An absolute figure, not a delta. */
   expected_in_safe_pence: number;
   /** Opening balance carried forward from the last signed count's
    *  actual_pence (or 0 when there has never been a signed count). */
   baseline_pence: number;
+  /** Window the figure covers: (period_start, period_end]. */
+  period_start: string;
+  period_end: string;
   payment_count: number;
   withdrawal_count: number;
   /** Refunds that moved the safe — partial clawbacks and refunds against
@@ -291,31 +358,225 @@ export interface CashPosition {
   earliest_payment_at: string | null;
   latest_payment_at: string | null;
   // Last signed count is the anchor.
-  last_signed_count: {
-    id: string;
-    period_end: string;
-    actual_pence: number | null;
-    signed_off_at: string;
-  } | null;
+  last_signed_count: CashPositionAnchor | null;
   lines: CashPositionLine[];
+  /** Present when the position was fetched with clues (the /cash-counts
+   *  page always asks for them so the count sheet can investigate a
+   *  difference without a second round trip). */
+  clues: CashClues | null;
 }
 
-interface RawCashPositionVisit {
-  id: string;
-  patient: { first_name: string | null; last_name: string | null; name: string | null } | { first_name: string | null; last_name: string | null; name: string | null }[] | null;
-  appointment: { appointment_ref: string | null } | { appointment_ref: string | null }[] | null;
-  walk_in: { appointment_ref: string | null } | { appointment_ref: string | null }[] | null;
+// Shape returned by the lng_cash_safe_position() RPC. The server owns
+// the money maths and which rows count; the client only formats names
+// for display. Names arrive as raw first/last (+ account `name` fallback
+// for staff) so the Title-casing stays in composePersonName rather than
+// being duplicated in SQL.
+interface RpcPersonParts {
+  patient_first?: string | null;
+  patient_last?: string | null;
+  actor_first?: string | null;
+  actor_last?: string | null;
+  actor_name?: string | null;
+  witness_first?: string | null;
+  witness_last?: string | null;
+  witness_name?: string | null;
 }
 
-interface RawCashPosition {
-  id: string;
+interface RpcCashPositionLine extends RpcPersonParts {
+  kind: 'payment' | 'refunded_sale' | 'refund' | 'withdrawal';
+  payment_id?: string;
+  refund_id?: string;
+  withdrawal_id?: string;
   amount_pence: number;
-  succeeded_at: string;
-  status: string;
-  cart:
-    | { visit: RawCashPositionVisit | RawCashPositionVisit[] | null }
-    | { visit: RawCashPositionVisit | RawCashPositionVisit[] | null }[]
-    | null;
+  taken_at: string;
+  appointment_ref?: string | null;
+  visit_id?: string | null;
+  cart_total_pence?: number | null;
+  reason?: WithdrawalReason;
+  note?: string | null;
+  on_camera?: boolean | null;
+}
+
+interface RpcOtherPayment extends RpcPersonParts {
+  payment_id: string;
+  method: string;
+  amount_pence: number;
+  taken_at: string;
+  appointment_ref?: string | null;
+  visit_id?: string | null;
+}
+
+interface RpcOpenBalance extends RpcPersonParts {
+  visit_id: string;
+  opened_at: string;
+  owed_pence: number;
+  appointment_ref?: string | null;
+}
+
+export interface RpcCashPosition {
+  expected_in_safe_pence: number;
+  baseline_pence: number;
+  location_id: string;
+  period_start: string;
+  period_end: string;
+  payment_count: number;
+  withdrawal_count: number;
+  refund_count: number;
+  refunded_sale_count: number;
+  earliest_payment_at: string | null;
+  latest_payment_at: string | null;
+  last_signed_count: (CashPositionAnchor & RpcPersonParts) | null;
+  lines: RpcCashPositionLine[];
+  clues?: {
+    other_payments: RpcOtherPayment[];
+    open_balances: RpcOpenBalance[];
+  } | null;
+}
+
+function patientName(p: RpcPersonParts): string {
+  return composePersonName({ first_name: p.patient_first ?? null, last_name: p.patient_last ?? null });
+}
+
+function actorName(p: RpcPersonParts): string {
+  return composePersonName({
+    first_name: p.actor_first ?? null,
+    last_name: p.actor_last ?? null,
+    name: p.actor_name ?? null,
+  });
+}
+
+function witnessName(p: RpcPersonParts): string | null {
+  if (!p.witness_first && !p.witness_last && !p.witness_name) return null;
+  return composePersonName({
+    first_name: p.witness_first ?? null,
+    last_name: p.witness_last ?? null,
+    name: p.witness_name ?? null,
+  });
+}
+
+// Map the authoritative RPC payload onto the CashPosition shape the UI
+// consumes. Pure presentation: no figures are recomputed. Exported for
+// tests.
+export function shapeCashPosition(payload: RpcCashPosition | null): CashPosition {
+  if (!payload) throw new Error('cash_position: empty response from lng_cash_safe_position');
+  const lines: CashPositionLine[] = (payload.lines ?? []).map((l): CashPositionLine => {
+    switch (l.kind) {
+      case 'payment':
+        if (!l.payment_id) throw new Error('cash_position: payment line without payment_id');
+        return {
+          kind: 'payment',
+          payment_id: l.payment_id,
+          amount_pence: l.amount_pence,
+          taken_at: l.taken_at,
+          patient_name: patientName(l),
+          appointment_ref: l.appointment_ref ?? null,
+          visit_id: l.visit_id ?? null,
+          taken_by_name: actorName(l),
+          cart_total_pence: l.cart_total_pence ?? null,
+        };
+      case 'refunded_sale':
+        if (!l.payment_id) throw new Error('cash_position: refunded_sale line without payment_id');
+        return {
+          kind: 'refunded_sale',
+          payment_id: l.payment_id,
+          amount_pence: l.amount_pence,
+          taken_at: l.taken_at,
+          patient_name: patientName(l),
+          visit_id: l.visit_id ?? null,
+          taken_by_name: actorName(l),
+        };
+      case 'refund':
+        if (!l.refund_id) throw new Error('cash_position: refund line without refund_id');
+        return {
+          kind: 'refund',
+          refund_id: l.refund_id,
+          amount_pence: l.amount_pence,
+          taken_at: l.taken_at,
+          // Null when the refund traces to a sale outside this window
+          // (no patient parts returned).
+          patient_name: l.patient_first || l.patient_last ? patientName(l) : null,
+        };
+      case 'withdrawal':
+        if (!l.withdrawal_id || !l.reason) {
+          throw new Error('cash_position: withdrawal line missing id or reason');
+        }
+        return {
+          kind: 'withdrawal',
+          withdrawal_id: l.withdrawal_id,
+          amount_pence: l.amount_pence,
+          taken_at: l.taken_at,
+          reason: l.reason,
+          note: l.note ?? null,
+          taken_by_name: actorName(l),
+          witness_name: witnessName(l),
+          on_camera: l.on_camera ?? null,
+        };
+      default:
+        throw new Error(`cash_position: unknown line kind ${(l as { kind: string }).kind}`);
+    }
+  });
+  const clues: CashClues | null = payload.clues
+    ? {
+        other_payments: (payload.clues.other_payments ?? []).map((p) => ({
+          payment_id: p.payment_id,
+          method: p.method,
+          amount_pence: p.amount_pence,
+          taken_at: p.taken_at,
+          patient_name: patientName(p),
+          appointment_ref: p.appointment_ref ?? null,
+          visit_id: p.visit_id ?? null,
+          taken_by_name: actorName(p),
+        })),
+        open_balances: (payload.clues.open_balances ?? []).map((b) => ({
+          visit_id: b.visit_id,
+          opened_at: b.opened_at,
+          owed_pence: b.owed_pence,
+          patient_name: patientName(b),
+          appointment_ref: b.appointment_ref ?? null,
+        })),
+      }
+    : null;
+  return {
+    expected_in_safe_pence: payload.expected_in_safe_pence,
+    baseline_pence: payload.baseline_pence,
+    period_start: payload.period_start,
+    period_end: payload.period_end,
+    payment_count: payload.payment_count,
+    withdrawal_count: payload.withdrawal_count,
+    refund_count: payload.refund_count,
+    refunded_sale_count: payload.refunded_sale_count,
+    earliest_payment_at: payload.earliest_payment_at,
+    latest_payment_at: payload.latest_payment_at,
+    last_signed_count: payload.last_signed_count
+      ? {
+          id: payload.last_signed_count.id,
+          period_end: payload.last_signed_count.period_end,
+          actual_pence: payload.last_signed_count.actual_pence,
+          expected_pence: payload.last_signed_count.expected_pence,
+          variance_pence: payload.last_signed_count.variance_pence,
+          signed_off_at: payload.last_signed_count.signed_off_at,
+          witness_name: witnessName(payload.last_signed_count),
+        }
+      : null,
+    lines,
+    clues,
+  };
+}
+
+/** One call to the authoritative server function. `periodEnd` pins the
+ *  window for a count snapshot; omitted means "right now". */
+export async function fetchCashPosition(opts: {
+  periodEnd?: string | null;
+  includeClues?: boolean;
+  locationId?: string | null;
+} = {}): Promise<CashPosition> {
+  const res = await supabase.rpc('lng_cash_safe_position', {
+    p_location_id: opts.locationId ?? null,
+    p_period_end: opts.periodEnd ?? null,
+    p_include_clues: opts.includeClues ?? false,
+  });
+  if (res.error) throw new Error(`cash_position: ${res.error.message}`);
+  return shapeCashPosition(res.data as RpcCashPosition | null);
 }
 
 interface CashPositionResult {
@@ -337,211 +598,11 @@ export function useCashPosition(): CashPositionResult {
     setError(null);
     (async () => {
       try {
-        // Anchor: most-recent signed count's period_end.
-        const lastRes = await supabase
-          .from('lng_cash_counts')
-          .select('id, period_end, actual_pence, signed_off_at')
-          .eq('status', 'signed')
-          .order('period_end', { ascending: false })
-          .limit(1)
-          .maybeSingle();
+        // Clues ride along so the count sheet can explain a difference
+        // from the same snapshot the headline figure came from.
+        const out = await fetchCashPosition({ includeClues: true });
         if (cancelled) return;
-        if (lastRes.error) throw new Error(`last_count: ${lastRes.error.message}`);
-        const last = lastRes.data as { id: string; period_end: string; actual_pence: number | null; signed_off_at: string } | null;
-        const sinceIso = last ? last.period_end : '1970-01-01T00:00:00Z';
-
-        const [paymentsRes, refundsRes, withdrawalsRes] = await Promise.all([
-          supabase
-            .from('lng_payments')
-            .select(
-              `id, amount_pence, succeeded_at, status,
-               cart:lng_carts (
-                 visit:lng_visits (
-                   id,
-                   patient:patients ( first_name, last_name ),
-                   appointment:lng_appointments ( appointment_ref ),
-                   walk_in:lng_walk_ins ( appointment_ref )
-                 )
-               )`,
-            )
-            .eq('method', 'cash')
-            // Include cancelled sales, not just succeeded: a fully
-            // refunded cash sale flips to 'cancelled' but the cash still
-            // physically entered and left the drawer, so we need it to
-            // net its own refund to zero (below). Filtering it out here
-            // while still subtracting its refund is what made the safe
-            // read £70 light.
-            .in('status', ['succeeded', 'cancelled'])
-            .gt('succeeded_at', sinceIso)
-            .order('succeeded_at', { ascending: false }),
-          // Cash refunds in the same window. A partial refund leaves the
-          // payment 'succeeded' (real money out — subtracted and shown).
-          // A full refund flips the payment to 'cancelled'; that pair
-          // nets to zero and is shown as a single refunded-sale line
-          // instead of double-counting the cash out.
-          supabase
-            .from('lng_payment_refunds')
-            .select('id, amount_pence, refunded_at, payment_id')
-            .eq('method', 'cash')
-            .eq('status', 'succeeded')
-            .gt('refunded_at', sinceIso)
-            .order('refunded_at', { ascending: false }),
-          // Cash withdrawals — bank deposits, float top-ups, petty
-          // cash etc. Each row drops the running safe balance by its
-          // amount_pence. Joined to accounts for the taken_by display
-          // name on the Right-now card.
-          supabase
-            .from('lng_cash_withdrawals')
-            .select(
-              `id, amount_pence, reason, note, taken_at,
-               taken_by_account:accounts!lng_cash_withdrawals_taken_by_fkey ( first_name, last_name )`,
-            )
-            .gt('taken_at', sinceIso)
-            .order('taken_at', { ascending: false }),
-        ]);
-        if (cancelled) return;
-        if (paymentsRes.error) throw new Error(`cash_payments: ${paymentsRes.error.message}`);
-        if (refundsRes.error) throw new Error(`cash_refunds: ${refundsRes.error.message}`);
-        if (withdrawalsRes.error) throw new Error(`cash_withdrawals: ${withdrawalsRes.error.message}`);
-
-        const raw = (paymentsRes.data ?? []) as RawCashPosition[];
-        const refundRows = ((refundsRes.data ?? []) as Array<{
-          id: string;
-          amount_pence: number;
-          refunded_at: string;
-          payment_id: string | null;
-        }>);
-        const withdrawalRows = ((withdrawalsRes.data ?? []) as Array<{
-          id: string;
-          amount_pence: number;
-          reason: WithdrawalReason;
-          note: string | null;
-          taken_at: string;
-          taken_by_account:
-            | { first_name: string | null; last_name: string | null }
-            | { first_name: string | null; last_name: string | null }[]
-            | null;
-        }>);
-        // Baseline carries forward from the last signed count's
-        // actual_pence; first-ever-count case starts from zero and
-        // accumulates pure flow until the first sign-off.
-        const baseline = last?.actual_pence ?? 0;
-
-        let earliest: string | null = null;
-        let latest: string | null = null;
-        const track = (iso: string | null) => {
-          if (!iso) return;
-          if (!earliest || iso < earliest) earliest = iso;
-          if (!latest || iso > latest) latest = iso;
-        };
-
-        // Sum every refund against each payment, so we can tell a fully
-        // refunded sale (taken then handed straight back — nets to zero)
-        // from a partial clawback (real money out) or a refund against a
-        // sale from a previous period.
-        const refundedByPayment = new Map<string, number>();
-        for (const r of refundRows) {
-          if (!r.payment_id) continue;
-          refundedByPayment.set(r.payment_id, (refundedByPayment.get(r.payment_id) ?? 0) + (r.amount_pence ?? 0));
-        }
-        // A sale is "fully refunded" when its refunds cover its full
-        // amount. Those are surfaced as refunded_sale lines and their
-        // refunds are NOT subtracted again (the sale simply isn't counted
-        // as cash in).
-        const fullyRefundedIds = new Set<string>();
-        for (const r of raw) {
-          const refunded = refundedByPayment.get(r.id) ?? 0;
-          if (refunded > 0 && refunded >= r.amount_pence) fullyRefundedIds.add(r.id);
-        }
-
-        let total = baseline;
-        const paymentLines: CashPositionPaymentLine[] = [];
-        const refundedSaleLines: CashPositionRefundedSaleLine[] = [];
-        for (const r of raw) {
-          track(r.succeeded_at);
-          const cart = pickOne(r.cart);
-          const visit = pickOne(cart?.visit ?? null);
-          const patient = pickOne(visit?.patient ?? null);
-          const appt = pickOne(visit?.appointment ?? null);
-          const walkIn = pickOne(visit?.walk_in ?? null);
-          const patientName = composePersonName(patient);
-          if (fullyRefundedIds.has(r.id)) {
-            // Money in and straight back out — no effect on the safe.
-            refundedSaleLines.push({
-              kind: 'refunded_sale' as const,
-              payment_id: r.id,
-              amount_pence: r.amount_pence,
-              taken_at: r.succeeded_at,
-              patient_name: patientName,
-              visit_id: visit?.id ?? null,
-            });
-          } else {
-            total += r.amount_pence;
-            paymentLines.push({
-              kind: 'payment' as const,
-              payment_id: r.id,
-              amount_pence: r.amount_pence,
-              taken_at: r.succeeded_at,
-              patient_name: patientName,
-              appointment_ref: appt?.appointment_ref ?? walkIn?.appointment_ref ?? null,
-              visit_id: visit?.id ?? null,
-            });
-          }
-        }
-
-        // Refunds that actually moved the safe: partial clawbacks against
-        // a kept sale, and refunds against sales from a prior period
-        // (whose cash sat in the opening balance). Refunds belonging to a
-        // fully-refunded same-window sale are already netted above.
-        const nameByPaymentId = new Map<string, string>();
-        for (const l of paymentLines) nameByPaymentId.set(l.payment_id, l.patient_name);
-        const refundLines: CashPositionRefundLine[] = [];
-        for (const rr of refundRows) {
-          if (rr.payment_id && fullyRefundedIds.has(rr.payment_id)) continue;
-          total -= rr.amount_pence ?? 0;
-          track(rr.refunded_at);
-          refundLines.push({
-            kind: 'refund' as const,
-            refund_id: rr.id,
-            amount_pence: rr.amount_pence ?? 0,
-            taken_at: rr.refunded_at,
-            patient_name: rr.payment_id ? (nameByPaymentId.get(rr.payment_id) ?? null) : null,
-          });
-        }
-
-        const withdrawalLines: CashPositionWithdrawalLine[] = withdrawalRows.map((w) => {
-          const actor = pickOne(w.taken_by_account ?? null);
-          track(w.taken_at);
-          total -= w.amount_pence ?? 0;
-          return {
-            kind: 'withdrawal' as const,
-            withdrawal_id: w.id,
-            amount_pence: w.amount_pence,
-            taken_at: w.taken_at,
-            reason: w.reason,
-            note: w.note,
-            taken_by_name: composePersonName(actor),
-          };
-        });
-
-        // Interleave by time so the activity card reads as a
-        // chronological narrative of safe movements.
-        const lines: CashPositionLine[] = [...paymentLines, ...refundedSaleLines, ...refundLines, ...withdrawalLines]
-          .sort((a, b) => (a.taken_at < b.taken_at ? 1 : a.taken_at > b.taken_at ? -1 : 0));
-
-        if (cancelled) return;
-        setData({
-          expected_in_safe_pence: total,
-          baseline_pence: baseline,
-          payment_count: paymentLines.length,
-          withdrawal_count: withdrawalLines.length,
-          refund_count: refundLines.length,
-          refunded_sale_count: refundedSaleLines.length,
-          earliest_payment_at: earliest,
-          latest_payment_at: latest,
-          last_signed_count: last,
-          lines,
-        });
+        setData(out);
         setLoading(false);
       } catch (e: unknown) {
         if (cancelled) return;
@@ -916,23 +977,24 @@ function ensureNumber(v: number | undefined, key: string): number {
 }
 
 // ── Write mutations ─────────────────────────────────────────────────────────
-// Three-step flow:
+// Four-step flow:
 //   1. createCashCount — opens a pending count for a period, snapshots
 //      every cash payment in that period as an immutable line row,
 //      records expected_pence at snapshot time. The counter is the
 //      caller. Returns the new count id.
-//   2. updateCashCountActual — counter enters the physical amount
+//   2. saveCashCountDenominations — stores how the cash was physically
+//      counted (how many of each note and coin). Optional only for the
+//      "I already have a total" path; the DB refuses to sign a count
+//      whose breakdown disagrees with the total.
+//   3. updateCashCountActual — counter enters the physical amount
 //      they observed in the safe. Variance is the generated column,
 //      so we just write actual_pence + notes. Allowed only while the
 //      count is pending.
-//   3. signCashCount — manager re-auths with their password (parallel
-//      Supabase client, doesn't disturb the cashier session — same
-//      pattern as discount + void approvals). Status flips to signed
-//      with both timestamps + accounts ids landed.
+//   4. signCashCount — a different manager signs. Status flips to
+//      signed with both timestamps + accounts ids landed.
 //
 // Each step throws on validation failure with a meaningful message,
 // no silent fallback.
-
 
 export interface CreateCashCountInput {
   location_id: string;
@@ -945,171 +1007,45 @@ export interface CreateCashCountInput {
   // admins (and the history list) can tell baselines apart from
   // routine reconciliation counts.
   kind?: 'regular' | 'legacy_baseline';
+  /** Two-person rule: the safe witness who is physically present, and
+   *  confirmation that the count is happening on camera. The database
+   *  refuses the insert without both (migration 20260907000003). */
+  witness_id: string;
+  on_camera: boolean;
 }
 
 export async function createCashCount(input: CreateCashCountInput): Promise<{ count_id: string; expected_pence: number; lines_count: number; kind: 'regular' | 'legacy_baseline' }> {
   if (input.period_end <= input.period_start) {
     throw new Error('Period end must be after period start.');
   }
+  if (!input.witness_id) throw new Error('Pick the safe witness who is present before counting.');
+  if (input.on_camera !== true) throw new Error('Confirm the count is being done in front of the camera.');
   const { data: meId } = await supabase.rpc('auth_account_id');
   const counterId = (meId as string | null) ?? null;
   if (!counterId) throw new Error('Could not resolve current account.');
+  if (input.witness_id === counterId) throw new Error('The safe witness must be a different person from the counter.');
 
-  // Snapshot the cash payments, refunds AND withdrawals that fall in
-  // this period. We do this BEFORE inserting the count row so we
-  // know expected_pence up front. Once the count is signed the
-  // lines are immutable; even if payments are voided / withdrawals
-  // are corrected afterwards, the count's record stays exact.
-  //
-  // Cash refunds drop expected_pence by exactly their amount — the
-  // cash left the drawer when the staff member handed it back.
-  // Withdrawals do the same (bank deposit, float top-up, etc.).
-  // Baseline is the previous signed count's actual_pence (the
-  // opening balance the safe carries into this period); zero when
-  // this is the first ever count.
-  const [baselineRes, paymentsRes, refundsSnapshotRes, withdrawalsSnapshotRes] = await Promise.all([
-    supabase
-      .from('lng_cash_counts')
-      .select('actual_pence, period_end')
-      .eq('status', 'signed')
-      .lte('period_end', input.period_start)
-      .order('period_end', { ascending: false })
-      .limit(1)
-      .maybeSingle(),
-    supabase
-      .from('lng_payments')
-      .select(
-        `id, amount_pence, succeeded_at, status,
-         cart:lng_carts (
-           total_pence,
-           visit:lng_visits (
-             patient:patients ( first_name, last_name ),
-             appointment:lng_appointments ( appointment_ref ),
-             walk_in:lng_walk_ins ( appointment_ref )
-           )
-         )`,
-      )
-      .eq('method', 'cash')
-      // Include cancelled (fully-refunded) sales so the snapshot can net
-      // them against their refunds instead of subtracting the refund on
-      // its own — the same fix as the live cash position.
-      .in('status', ['succeeded', 'cancelled'])
-      .gte('succeeded_at', input.period_start)
-      .lte('succeeded_at', input.period_end),
-    supabase
-      .from('lng_payment_refunds')
-      .select('amount_pence, payment_id')
-      .eq('method', 'cash')
-      .eq('status', 'succeeded')
-      .gte('refunded_at', input.period_start)
-      .lte('refunded_at', input.period_end),
-    supabase
-      .from('lng_cash_withdrawals')
-      .select(
-        `id, amount_pence, reason, note, taken_at,
-         taken_by_account:accounts!lng_cash_withdrawals_taken_by_fkey ( first_name, last_name )`,
-      )
-      .gte('taken_at', input.period_start)
-      .lte('taken_at', input.period_end),
-  ]);
-  if (baselineRes.error) throw new Error(baselineRes.error.message);
-  if (paymentsRes.error) throw new Error(paymentsRes.error.message);
-  if (refundsSnapshotRes.error) throw new Error(refundsSnapshotRes.error.message);
-  if (withdrawalsSnapshotRes.error) throw new Error(withdrawalsSnapshotRes.error.message);
-  const baselinePence = (baselineRes.data as { actual_pence: number | null } | null)?.actual_pence ?? 0;
-  const refundSnapshotRows = ((refundsSnapshotRes.data ?? []) as Array<{
-    amount_pence: number;
-    payment_id: string | null;
-  }>);
-  const withdrawalSnapshotRows = ((withdrawalsSnapshotRes.data ?? []) as Array<{
-    id: string;
-    amount_pence: number;
-    reason: WithdrawalReason;
-    note: string | null;
-    taken_at: string;
-    taken_by_account:
-      | { first_name: string | null; last_name: string | null }
-      | { first_name: string | null; last_name: string | null }[]
-      | null;
-  }>);
-  const cashWithdrawalsTotal = withdrawalSnapshotRows.reduce(
-    (acc, w) => acc + (w.amount_pence ?? 0),
-    0,
+  // Ask the ONE authoritative function for the figure as of period_end.
+  // It anchors on the last signed count, nets fully-refunded sales,
+  // subtracts real refunds and withdrawals, and returns the exact lines
+  // that make up the number. We store what it tells us; we never add
+  // the figures up a second time on the client.
+  const position = await fetchCashPosition({ periodEnd: input.period_end, locationId: input.location_id });
+  if (position.expected_in_safe_pence < 0) {
+    // The DB check (expected_pence >= 0) would reject the insert. A
+    // negative running balance means the recorded figures are
+    // inconsistent (more taken out than ever went in) and the chain
+    // needs a fresh baseline, not a clamped number.
+    throw new Error(
+      `The recorded balance is below zero (${position.expected_in_safe_pence} pence). Reset the chain with a legacy count before counting again.`,
+    );
+  }
+  const expected_pence = position.expected_in_safe_pence;
+  const keptPayments = position.lines.filter(
+    (l): l is CashPositionPaymentLine => l.kind === 'payment',
   );
-
-  interface RawSnapshot {
-    id: string;
-    amount_pence: number;
-    succeeded_at: string;
-    status: string;
-    cart:
-      | {
-          total_pence: number | null;
-          visit:
-            | {
-                patient: { first_name: string | null; last_name: string | null; name: string | null } | { first_name: string | null; last_name: string | null; name: string | null }[] | null;
-                appointment: { appointment_ref: string | null } | { appointment_ref: string | null }[] | null;
-                walk_in: { appointment_ref: string | null } | { appointment_ref: string | null }[] | null;
-              }
-            | {
-                patient: { first_name: string | null; last_name: string | null; name: string | null } | { first_name: string | null; last_name: string | null; name: string | null }[] | null;
-                appointment: { appointment_ref: string | null } | { appointment_ref: string | null }[] | null;
-                walk_in: { appointment_ref: string | null } | { appointment_ref: string | null }[] | null;
-              }[]
-            | null;
-        }
-      | {
-          total_pence: number | null;
-          visit:
-            | {
-                patient: { first_name: string | null; last_name: string | null; name: string | null } | { first_name: string | null; last_name: string | null; name: string | null }[] | null;
-                appointment: { appointment_ref: string | null } | { appointment_ref: string | null }[] | null;
-                walk_in: { appointment_ref: string | null } | { appointment_ref: string | null }[] | null;
-              }
-            | {
-                patient: { first_name: string | null; last_name: string | null; name: string | null } | { first_name: string | null; last_name: string | null; name: string | null }[] | null;
-                appointment: { appointment_ref: string | null } | { appointment_ref: string | null }[] | null;
-                walk_in: { appointment_ref: string | null } | { appointment_ref: string | null }[] | null;
-              }[]
-            | null;
-        }[]
-      | null;
-  }
-  const raw = (paymentsRes.data ?? []) as RawSnapshot[];
-  // A sale is fully refunded when its refunds cover its whole amount. Such
-  // a sale never nets any cash into the safe, so it is neither counted as
-  // cash in nor has its refund subtracted (doing both was the £70 bug).
-  const refundedByPayment = new Map<string, number>();
-  for (const r of refundSnapshotRows) {
-    if (!r.payment_id) continue;
-    refundedByPayment.set(r.payment_id, (refundedByPayment.get(r.payment_id) ?? 0) + (r.amount_pence ?? 0));
-  }
-  const fullyRefundedIds = new Set<string>();
-  for (const r of raw) {
-    const refunded = refundedByPayment.get(r.id) ?? 0;
-    if (refunded > 0 && refunded >= r.amount_pence) fullyRefundedIds.add(r.id);
-  }
-  // Kept sales are the ones that actually left cash in the drawer.
-  const keptPayments = raw.filter((r) => !fullyRefundedIds.has(r.id));
-  const keptPaymentsTotal = keptPayments.reduce((s, r) => s + r.amount_pence, 0);
-  // Subtract only refunds that moved the safe: partial clawbacks and
-  // refunds against sales from an earlier period. Refunds belonging to a
-  // fully-refunded same-period sale are already netted by exclusion.
-  const cashRefundsTotal = refundSnapshotRows.reduce(
-    (acc, r) => acc + (r.payment_id && fullyRefundedIds.has(r.payment_id) ? 0 : (r.amount_pence ?? 0)),
-    0,
-  );
-  // Running balance: baseline carried from the previous signed count
-  // + kept cash payments − refunds that moved the safe − withdrawals.
-  // Clamp at 0 — the DB check (expected_pence >= 0) would otherwise
-  // reject the insert. If you see this clamp fire in practice the
-  // underlying figures are inconsistent and the count needs investigating.
-  const expected_pence = Math.max(
-    0,
-    baselinePence
-      + keptPaymentsTotal
-      - cashRefundsTotal
-      - cashWithdrawalsTotal,
+  const withdrawals = position.lines.filter(
+    (l): l is CashPositionWithdrawalLine => l.kind === 'withdrawal',
   );
 
   // Insert the count row. lines come next.
@@ -1123,32 +1059,12 @@ export async function createCashCount(input: CreateCashCountInput): Promise<{ co
       expected_pence,
       counted_by: counterId,
       kind,
+      witness_id: input.witness_id,
+      on_camera: true,
     })
     .select('id')
     .single();
   if (countErr) {
-    // 42703 = column does not exist on this Meridian deploy (migration
-    // 20260512000009 not yet applied). Retry without the kind column
-    // rather than block the cash count entirely — staff at a venue
-    // that hasn't shipped the migration yet still need to count cash.
-    if (countErr.code === '42703' && kind === 'regular') {
-      const retry = await supabase
-        .from('lng_cash_counts')
-        .insert({
-          location_id: input.location_id,
-          period_start: input.period_start,
-          period_end: input.period_end,
-          expected_pence,
-          counted_by: counterId,
-        })
-        .select('id')
-        .single();
-      if (retry.error || !retry.data) {
-        throw new Error(`Could not create count: ${retry.error?.message ?? 'no row returned'}`);
-      }
-      const count_id_fallback = (retry.data as { id: string }).id;
-      return { count_id: count_id_fallback, expected_pence, lines_count: 0, kind };
-    }
     throw new Error(`Could not create count: ${countErr.message}`);
   }
   const count_id = (insertedCount as { id: string }).id;
@@ -1157,22 +1073,15 @@ export async function createCashCount(input: CreateCashCountInput): Promise<{ co
     // Snapshot only the sales that kept cash in the drawer, so the stored
     // per-payment breakdown reconciles to expected_pence. Fully-refunded
     // sales are intentionally omitted — they netted to nothing.
-    const lineRows = keptPayments.map((r) => {
-      const cart = pickOne(r.cart);
-      const visit = pickOne(cart?.visit ?? null);
-      const patient = pickOne(visit?.patient ?? null);
-      const appt = pickOne(visit?.appointment ?? null);
-      const walkIn = pickOne(visit?.walk_in ?? null);
-      return {
-        count_id,
-        payment_id: r.id,
-        amount_pence: r.amount_pence,
-        taken_at: r.succeeded_at,
-        patient_name_snapshot: composePersonName(patient),
-        cart_total_pence_snapshot: cart?.total_pence ?? null,
-        appointment_ref_snapshot: appt?.appointment_ref ?? walkIn?.appointment_ref ?? null,
-      };
-    });
+    const lineRows = keptPayments.map((r) => ({
+      count_id,
+      payment_id: r.payment_id,
+      amount_pence: r.amount_pence,
+      taken_at: r.taken_at,
+      patient_name_snapshot: r.patient_name,
+      cart_total_pence_snapshot: r.cart_total_pence,
+      appointment_ref_snapshot: r.appointment_ref,
+    }));
     const { error: linesErr } = await supabase.from('lng_cash_count_lines').insert(lineRows);
     if (linesErr) {
       throw new Error(`Lines insert failed (count ${count_id}): ${linesErr.message}`);
@@ -1182,19 +1091,16 @@ export async function createCashCount(input: CreateCashCountInput): Promise<{ co
   // Snapshot the withdrawals that count against this period. Same
   // pattern as the payment lines above — denormalise reason / note /
   // taken_by name so the statement reads accurately later.
-  if (withdrawalSnapshotRows.length > 0) {
-    const withdrawalRows = withdrawalSnapshotRows.map((w) => {
-      const actor = pickOne(w.taken_by_account ?? null);
-      return {
-        count_id,
-        withdrawal_id: w.id,
-        amount_pence: w.amount_pence,
-        reason_snapshot: w.reason,
-        note_snapshot: w.note,
-        taken_at: w.taken_at,
-        taken_by_name_snapshot: composePersonName(actor),
-      };
-    });
+  if (withdrawals.length > 0) {
+    const withdrawalRows = withdrawals.map((w) => ({
+      count_id,
+      withdrawal_id: w.withdrawal_id,
+      amount_pence: w.amount_pence,
+      reason_snapshot: w.reason,
+      note_snapshot: w.note,
+      taken_at: w.taken_at,
+      taken_by_name_snapshot: w.taken_by_name,
+    }));
     const { error: wLinesErr } = await supabase
       .from('lng_cash_count_withdrawal_lines')
       .insert(withdrawalRows);
@@ -1203,6 +1109,77 @@ export async function createCashCount(input: CreateCashCountInput): Promise<{ co
     }
   }
   return { count_id, expected_pence, lines_count: keptPayments.length, kind };
+}
+
+// ── Denomination breakdown ─────────────────────────────────────────────────
+//
+// UK circulating notes and coins, largest first. Mirrors the CHECK on
+// lng_cash_count_denominations.denomination_pence (migration
+// 20260907000001). Adding a denomination requires a migration AND an
+// entry here.
+
+export interface Denomination {
+  pence: number;
+  label: string;
+  kind: 'note' | 'coin';
+}
+
+export const DENOMINATIONS: readonly Denomination[] = [
+  { pence: 5000, label: '£50', kind: 'note' },
+  { pence: 2000, label: '£20', kind: 'note' },
+  { pence: 1000, label: '£10', kind: 'note' },
+  { pence: 500, label: '£5', kind: 'note' },
+  { pence: 200, label: '£2', kind: 'coin' },
+  { pence: 100, label: '£1', kind: 'coin' },
+  { pence: 50, label: '50p', kind: 'coin' },
+  { pence: 20, label: '20p', kind: 'coin' },
+  { pence: 10, label: '10p', kind: 'coin' },
+  { pence: 5, label: '5p', kind: 'coin' },
+  { pence: 2, label: '2p', kind: 'coin' },
+  { pence: 1, label: '1p', kind: 'coin' },
+];
+
+/** quantity of each denomination, keyed by pence. Missing = 0. */
+export type DenominationCounts = Record<number, number>;
+
+export function denominationTotalPence(counts: DenominationCounts): number {
+  let total = 0;
+  for (const d of DENOMINATIONS) {
+    const q = counts[d.pence] ?? 0;
+    if (!Number.isInteger(q) || q < 0) {
+      throw new Error(`Invalid quantity for ${d.label}: ${q}`);
+    }
+    total += d.pence * q;
+  }
+  return total;
+}
+
+export interface CashCountDenominationRow {
+  denomination_pence: number;
+  quantity: number;
+}
+
+/** Persist the breakdown against a pending count. Rows with quantity 0
+ *  are skipped so the stored record is only what was actually there.
+ *  Throws if the breakdown does not add up to `actualPence`; the DB
+ *  trigger enforces the same rule at sign-off. */
+export async function saveCashCountDenominations(
+  countId: string,
+  counts: DenominationCounts,
+  actualPence: number,
+): Promise<void> {
+  const total = denominationTotalPence(counts);
+  if (total !== actualPence) {
+    throw new Error(
+      `The note and coin breakdown adds up to ${total} pence but the counted total is ${actualPence} pence.`,
+    );
+  }
+  const rows = DENOMINATIONS
+    .filter((d) => (counts[d.pence] ?? 0) > 0)
+    .map((d) => ({ count_id: countId, denomination_pence: d.pence, quantity: counts[d.pence] }));
+  if (rows.length === 0) return;
+  const { error } = await supabase.from('lng_cash_count_denominations').insert(rows);
+  if (error) throw new Error(`Could not save the note and coin breakdown: ${error.message}`);
 }
 
 // ── Record a cash withdrawal ───────────────────────────────────────────────
@@ -1220,6 +1197,10 @@ export interface RecordCashWithdrawalInput {
   amount_pence: number;
   reason: WithdrawalReason;
   note?: string | null;
+  /** Two-person rule: the safe witness present and the on-camera
+   *  confirmation. Refused by the database without both. */
+  witness_id: string;
+  on_camera: boolean;
 }
 
 export interface RecordCashWithdrawalResult {
@@ -1235,9 +1216,12 @@ export async function recordCashWithdrawal(
   if (!WITHDRAWAL_REASONS.find((r) => r.value === input.reason)) {
     throw new Error(`Unknown withdrawal reason: ${input.reason}`);
   }
+  if (!input.witness_id) throw new Error('Pick the safe witness who is present before taking cash.');
+  if (input.on_camera !== true) throw new Error('Confirm this is being done in front of the camera.');
   const { data: meId } = await supabase.rpc('auth_account_id');
   const takenBy = (meId as string | null) ?? null;
   if (!takenBy) throw new Error('Could not resolve current account.');
+  if (input.witness_id === takenBy) throw new Error('The safe witness must be a different person from the one taking the cash.');
   const trimmedNote = input.note?.trim();
   const { data: inserted, error } = await supabase
     .from('lng_cash_withdrawals')
@@ -1247,6 +1231,8 @@ export async function recordCashWithdrawal(
       reason: input.reason,
       note: trimmedNote && trimmedNote.length > 0 ? trimmedNote : null,
       taken_by: takenBy,
+      witness_id: input.witness_id,
+      on_camera: true,
     })
     .select('id')
     .single();
@@ -1332,6 +1318,9 @@ export interface CashCountStatement {
   count: CashCountRow;
   lines: CashCountStatementLine[];
   withdrawals: CashCountStatementWithdrawal[];
+  /** How the cash was physically counted. Empty for counts made before
+   *  the breakdown existed, or entered as a plain total. */
+  denominations: CashCountDenominationRow[];
 }
 
 type RawStatementCount = RawCashCount;
@@ -1358,14 +1347,15 @@ export function useCashCountStatement(countId: string | null): StatementResult {
     setError(null);
     (async () => {
       try {
-        const [countRes, linesRes, withdrawalLinesRes] = await Promise.all([
+        const [countRes, linesRes, withdrawalLinesRes, denominationsRes] = await Promise.all([
           supabase
             .from('lng_cash_counts')
             .select(
               `id, period_start, period_end, expected_pence, actual_pence, variance_pence,
-               status, notes, counted_at, signed_off_at,
+               status, kind, notes, counted_at, signed_off_at, on_camera,
                counted_by:accounts!counted_by ( first_name, last_name, name ),
-               signed_off_by:accounts!signed_off_by ( first_name, last_name, name )`,
+               signed_off_by:accounts!signed_off_by ( first_name, last_name, name ),
+               witness:accounts!witness_id ( first_name, last_name, name )`,
             )
             .eq('id', countId)
             .maybeSingle(),
@@ -1379,11 +1369,17 @@ export function useCashCountStatement(countId: string | null): StatementResult {
             .select('withdrawal_id, amount_pence, taken_at, reason_snapshot, note_snapshot, taken_by_name_snapshot')
             .eq('count_id', countId)
             .order('taken_at', { ascending: true }),
+          supabase
+            .from('lng_cash_count_denominations')
+            .select('denomination_pence, quantity')
+            .eq('count_id', countId)
+            .order('denomination_pence', { ascending: false }),
         ]);
         if (cancelled) return;
         if (countRes.error) throw new Error(countRes.error.message);
         if (linesRes.error) throw new Error(linesRes.error.message);
         if (withdrawalLinesRes.error) throw new Error(withdrawalLinesRes.error.message);
+        if (denominationsRes.error) throw new Error(denominationsRes.error.message);
         if (!countRes.data) throw new Error('Count not found');
         const [shaped] = shapeCashCounts([countRes.data as RawStatementCount]);
         if (!shaped) throw new Error('Count not found');
@@ -1416,7 +1412,12 @@ export function useCashCountStatement(countId: string | null): StatementResult {
           taken_by_name: w.taken_by_name_snapshot,
         }));
         if (cancelled) return;
-        setData({ count: shaped, lines, withdrawals });
+        const denominations = ((denominationsRes.data ?? []) as CashCountDenominationRow[]).map((d) => ({
+          denomination_pence: d.denomination_pence,
+          quantity: d.quantity,
+        }));
+        if (cancelled) return;
+        setData({ count: shaped, lines, withdrawals, denominations });
         setLoading(false);
       } catch (e: unknown) {
         if (cancelled) return;

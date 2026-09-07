@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { supabase } from '../supabase.ts';
 import { logFailure } from '../failureLog.ts';
 import { properCase } from './appointments.ts';
+import { type CashPositionPaymentLine, fetchCashPosition } from './cashCounts.ts';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Cash drawer report queries (Reports → Cash drawer tab).
@@ -17,11 +18,9 @@ import { properCase } from './appointments.ts';
 //     location. Includes voided rows so the reconciliation story holds
 //     ("took £100, voided £40, net £60").
 //
-// These deliberately do NOT share the existing useCashPosition() — that
-// hook anchors on the most recent signed count GLOBALLY, which is the
-// right behaviour for the single-location /cash-counts page (RLS narrows
-// it to the viewer's own location) but is wrong for a multi-location
-// report where the chosen location should drive the anchor.
+// Since-last-count calls the same lng_cash_safe_position() function as
+// /cash-counts, passing the chosen location explicitly, so Reports and
+// the Cash counts page can never disagree about one safe.
 // ─────────────────────────────────────────────────────────────────────────────
 
 function pickOne<T>(value: T | T[] | null | undefined): T | null {
@@ -140,74 +139,34 @@ export function useCashDrawerSinceLastCount(
     setError(null);
     (async () => {
       try {
-        // 1. Anchor on the most recent signed count AT THIS LOCATION.
-        const lastRes = await supabase
-          .from('lng_cash_counts')
-          .select('id, period_end, actual_pence, signed_off_at')
-          .eq('location_id', locationId)
-          .eq('status', 'signed')
-          .order('period_end', { ascending: false })
-          .limit(1)
-          .maybeSingle();
+        // One source of truth. The same server function that drives
+        // /cash-counts, asked for this specific location. Until 7 Sep
+        // 2026 this hook summed cash payments on its own and ignored
+        // refunds and withdrawals, so Reports could show a different
+        // "expected in safe" from the Cash counts page for the same
+        // safe. Now it cannot.
+        const position = await fetchCashPosition({ locationId });
         if (cancelled) return;
-        if (lastRes.error) throw new Error(`last_count: ${lastRes.error.message}`);
-        const last = lastRes.data as
-          | {
-              id: string;
-              period_end: string;
-              actual_pence: number | null;
-              signed_off_at: string;
-            }
-          | null;
-        const sinceIso = last ? last.period_end : '1970-01-01T00:00:00Z';
-
-        // 2. Cash payments at this location, since the anchor.
-        // !inner forces the cart→visit join so the location filter
-        // narrows the result set in SQL — without it Supabase returns
-        // every payment and filters client-side, which is wrong.
-        const paymentsRes = await supabase
-          .from('lng_payments')
-          .select(
-            `id, amount_pence, status, succeeded_at, cancelled_at, failure_reason,
-             taken_by:accounts!taken_by ( first_name, last_name, name ),
-             cart:lng_carts!inner (
-               visit:lng_visits!inner (
-                 location_id,
-                 patient:patients ( first_name, last_name ),
-                 appointment:lng_appointments ( appointment_ref ),
-                 walk_in:lng_walk_ins ( appointment_ref )
-               )
-             )`,
-          )
-          .eq('method', 'cash')
-          .eq('status', 'succeeded')
-          .gt('succeeded_at', sinceIso)
-          .eq('cart.visit.location_id', locationId)
-          .order('succeeded_at', { ascending: false });
-        if (cancelled) return;
-        if (paymentsRes.error)
-          throw new Error(`cash_payments: ${paymentsRes.error.message}`);
-
-        const raw = (paymentsRes.data ?? []) as RawPayment[];
-        let total = 0;
-        let earliest: string | null = null;
-        let latest: string | null = null;
-        const lines: CashDrawerLine[] = raw.map((r) => {
-          total += r.amount_pence;
-          const occurredAt = r.succeeded_at ?? r.cancelled_at ?? '';
-          if (!earliest || occurredAt < earliest) earliest = occurredAt;
-          if (!latest || occurredAt > latest) latest = occurredAt;
-          return shapeLine(r);
-        });
-
-        if (cancelled) return;
+        const paymentLines = position.lines.filter(
+          (l): l is CashPositionPaymentLine => l.kind === 'payment',
+        );
+        const lines: CashDrawerLine[] = paymentLines.map((l) => ({
+          payment_id: l.payment_id,
+          amount_pence: l.amount_pence,
+          occurred_at: l.taken_at,
+          status: 'succeeded',
+          patient_name: l.patient_name,
+          appointment_ref: l.appointment_ref,
+          taken_by_name: l.taken_by_name,
+          void_reason: null,
+        }));
         setData({
           location_id: locationId,
-          expected_in_safe_pence: total,
-          payment_count: lines.length,
-          earliest_payment_at: earliest,
-          latest_payment_at: latest,
-          last_signed_count: last,
+          expected_in_safe_pence: position.expected_in_safe_pence,
+          payment_count: position.payment_count,
+          earliest_payment_at: position.earliest_payment_at,
+          latest_payment_at: position.latest_payment_at,
+          last_signed_count: position.last_signed_count,
           lines,
         });
         setLoading(false);
