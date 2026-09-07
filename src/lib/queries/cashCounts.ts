@@ -265,6 +265,11 @@ export interface CashPositionWithdrawalLine {
    *  two-person rule. */
   witness_name: string | null;
   on_camera: boolean | null;
+  /** Set when the super admin reversed this withdrawal (mistake). A
+   *  reversed withdrawal no longer moves the safe. */
+  reversed_at: string | null;
+  reversal_reason: string | null;
+  reversed_by_name: string | null;
 }
 
 export interface CashPositionRefundLine {
@@ -380,6 +385,9 @@ interface RpcPersonParts {
   witness_first?: string | null;
   witness_last?: string | null;
   witness_name?: string | null;
+  reverser_first?: string | null;
+  reverser_last?: string | null;
+  reverser_name?: string | null;
 }
 
 interface RpcCashPositionLine extends RpcPersonParts {
@@ -395,6 +403,8 @@ interface RpcCashPositionLine extends RpcPersonParts {
   reason?: WithdrawalReason;
   note?: string | null;
   on_camera?: boolean | null;
+  reversed_at?: string | null;
+  reversal_reason?: string | null;
 }
 
 interface RpcOtherPayment extends RpcPersonParts {
@@ -510,6 +520,16 @@ export function shapeCashPosition(payload: RpcCashPosition | null): CashPosition
           taken_by_name: actorName(l),
           witness_name: witnessName(l),
           on_camera: l.on_camera ?? null,
+          reversed_at: l.reversed_at ?? null,
+          reversal_reason: l.reversal_reason ?? null,
+          reversed_by_name:
+            l.reverser_first || l.reverser_last || l.reverser_name
+              ? composePersonName({
+                  first_name: l.reverser_first ?? null,
+                  last_name: l.reverser_last ?? null,
+                  name: l.reverser_name ?? null,
+                })
+              : null,
         };
       default:
         throw new Error(`cash_position: unknown line kind ${(l as { kind: string }).kind}`);
@@ -1185,6 +1205,9 @@ export interface RecordCashWithdrawalInput {
    *  confirmation. Refused by the database without both. */
   witness_id: string;
   on_camera: boolean;
+  /** When the cash actually left the safe. Defaults to now. The
+   *  database refuses a future date or one inside a closed period. */
+  taken_at?: string | null;
 }
 
 export interface RecordCashWithdrawalResult {
@@ -1217,6 +1240,7 @@ export async function recordCashWithdrawal(
       taken_by: takenBy,
       witness_id: input.witness_id,
       on_camera: true,
+      ...(input.taken_at ? { taken_at: input.taken_at } : {}),
     })
     .select('id')
     .single();
@@ -1279,6 +1303,36 @@ export async function signCashCount(input: {
   if (updErr) throw new Error(`Sign failed: ${updErr.message}`);
 }
 
+// ── Super-admin corrections ────────────────────────────────────────────────
+//
+// Mistakes on the safe record are reversed, never deleted. Both calls
+// are SECURITY DEFINER functions gated on auth_is_super_admin() in the
+// database (migration 20260907000015) and land in lng_event_log.
+
+/** Reverse a withdrawal. Returns whether the running balance moved
+ *  (true when the withdrawal sits in the open period; false when its
+ *  period was already closed by a signed count, in which case the
+ *  reversal is for the record only). */
+export async function reverseCashWithdrawal(withdrawalId: string, reason: string): Promise<{ moves_balance: boolean }> {
+  if (reason.trim().length === 0) throw new Error('Say why this withdrawal is being reversed.');
+  const { data, error } = await supabase.rpc('lng_cash_reverse_withdrawal', {
+    p_withdrawal_id: withdrawalId,
+    p_reason: reason.trim(),
+  });
+  if (error) throw new Error(error.message);
+  const out = data as { moves_balance?: boolean } | null;
+  return { moves_balance: out?.moves_balance === true };
+}
+
+/** Void a signed count. The safe position re-anchors on the previous
+ *  signed count and everything in the voided window flows back into
+ *  the open period. */
+export async function voidCashCount(countId: string, reason: string): Promise<void> {
+  if (reason.trim().length === 0) throw new Error('Say why this count is being voided.');
+  const { error } = await supabase.rpc('lng_cash_void_count', { p_count_id: countId, p_reason: reason.trim() });
+  if (error) throw new Error(error.message);
+}
+
 // ── Per-count statement read ───────────────────────────────────────────────
 
 export interface CashCountStatementLine {
@@ -1296,6 +1350,10 @@ export interface CashCountStatementWithdrawal {
   reason: WithdrawalReason;
   note: string | null;
   taken_by_name: string | null;
+  /** Live reversal state of the underlying withdrawal (the snapshot
+   *  line itself is immutable). */
+  reversed_at: string | null;
+  reversal_reason: string | null;
 }
 
 export interface CashCountStatement {
@@ -1313,12 +1371,15 @@ interface StatementResult {
   data: CashCountStatement | null;
   loading: boolean;
   error: string | null;
+  refresh: () => void;
 }
 
 export function useCashCountStatement(countId: string | null): StatementResult {
   const [data, setData] = useState<CashCountStatement | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [tick, setTick] = useState(0);
+  const refresh = useCallback(() => setTick((t) => t + 1), []);
 
   useEffect(() => {
     if (!countId) {
@@ -1350,7 +1411,7 @@ export function useCashCountStatement(countId: string | null): StatementResult {
             .order('taken_at', { ascending: true }),
           supabase
             .from('lng_cash_count_withdrawal_lines')
-            .select('withdrawal_id, amount_pence, taken_at, reason_snapshot, note_snapshot, taken_by_name_snapshot')
+            .select('withdrawal_id, amount_pence, taken_at, reason_snapshot, note_snapshot, taken_by_name_snapshot, withdrawal:lng_cash_withdrawals!withdrawal_id ( reversed_at, reversal_reason )')
             .eq('count_id', countId)
             .order('taken_at', { ascending: true }),
           supabase
@@ -1387,14 +1448,23 @@ export function useCashCountStatement(countId: string | null): StatementResult {
           reason_snapshot: string;
           note_snapshot: string | null;
           taken_by_name_snapshot: string | null;
-        }>).map((w) => ({
-          withdrawal_id: w.withdrawal_id,
-          amount_pence: w.amount_pence,
-          taken_at: w.taken_at,
-          reason: w.reason_snapshot as WithdrawalReason,
-          note: w.note_snapshot,
-          taken_by_name: w.taken_by_name_snapshot,
-        }));
+          withdrawal:
+            | { reversed_at: string | null; reversal_reason: string | null }
+            | { reversed_at: string | null; reversal_reason: string | null }[]
+            | null;
+        }>).map((w) => {
+          const live = pickOne(w.withdrawal);
+          return {
+            withdrawal_id: w.withdrawal_id,
+            amount_pence: w.amount_pence,
+            taken_at: w.taken_at,
+            reason: w.reason_snapshot as WithdrawalReason,
+            note: w.note_snapshot,
+            taken_by_name: w.taken_by_name_snapshot,
+            reversed_at: live?.reversed_at ?? null,
+            reversal_reason: live?.reversal_reason ?? null,
+          };
+        });
         if (cancelled) return;
         const unrecorded: CashCountUnrecordedRow[] = ((unrecordedRes.data ?? []) as Array<{
           id: string;
@@ -1433,7 +1503,7 @@ export function useCashCountStatement(countId: string | null): StatementResult {
     return () => {
       cancelled = true;
     };
-  }, [countId]);
+  }, [countId, tick]);
 
-  return { data, loading, error };
+  return { data, loading, error, refresh };
 }

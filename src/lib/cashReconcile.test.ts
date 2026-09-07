@@ -47,6 +47,9 @@ function withdrawal(id: string, amount: number, at: string): CashPositionLine {
     taken_by_name: 'Dylan Lane',
     witness_name: 'Robert McCrindle',
     on_camera: true,
+    reversed_at: null,
+    reversal_reason: null,
+    reversed_by_name: null,
   };
 }
 
@@ -277,6 +280,9 @@ describe('buildCashActivityCsv', () => {
           taken_by_name: 'Dylan Lane',
           witness_name: null,
           on_camera: null,
+          reversed_at: null,
+          reversal_reason: null,
+          reversed_by_name: null,
         },
       ],
       baseline_pence: 100,

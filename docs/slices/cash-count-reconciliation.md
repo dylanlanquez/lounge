@@ -25,7 +25,9 @@ Investigation showed the software's arithmetic was consistent: £560 counted on 
    - A verdict when nothing recorded matches.
 6. **Tick-off list and exports.** Every recorded cash payment (one envelope each) with a checkbox, progress in money and count, and CSV / PDF downloads (running-balance statement with a Checked column; the PDF has tick boxes and blank Counted / Difference lines). The same exports sit on the Activity since last count card.
 7. **Two-person rule, no manager step.** The safe is only opened by a safe holder (Admin → Staff → "Safe holder", currently Dylan and Jade), in front of the camera, with the safe witness physically present (Admin → Staff → "Safe witness", currently Robert McCrindle). No codes: both sheets require the witness to be picked and two confirmations ticked ("X is here, watching the safe", "The camera is on and pointed at the safe"). The witness signs the count as the second person; there is no separate manager sign-off. The database refuses any count or withdrawal without a valid active witness, a witness different from the actor, and the camera confirmation (`lng_cash_assert_two_person`). Witness and camera are recorded on the count, the withdrawal, the activity card, past counts, the signed PDF, and the managers' withdrawal email.
-8. **Who sees the page.** The Cash counts page and its wallet icon are shown only to safe holders and to "Safe viewer" (Admin → Staff, currently Stephen Vazquez, read-only). Financials access no longer opens it; Reports → Cash drawer still shows the figure to finance viewers.
+8. **Corrections, super admin only.** A withdrawal recorded by mistake is reversed, never deleted: a reason is required, the row is stamped with who reversed it and when, and the event lands in `lng_event_log`. Reversed in the open period, the balance goes back up; reversed inside a period already closed by a signed count, the record is corrected and the balance stays (that count recorded what was physically there). A count signed by mistake can be voided the same way: it shows as Voided, Lounge re-anchors on the previous count, and everything since flows back into the open period. Both are `SECURITY DEFINER` functions gated on `auth_is_super_admin()`.
+9. **Date on Take from safe.** The sheet asks when the cash left. Today keeps the exact time; an earlier day is stamped midday. The database refuses a future date or one before the last signed count.
+10. **Who sees the page.** The Cash counts page and its wallet icon are shown only to safe holders and to "Safe viewer" (Admin → Staff, currently Stephen Vazquez, read-only). Financials access no longer opens it; Reports → Cash drawer still shows the figure to finance viewers.
 
 ## Smoke test (plain English)
 
@@ -42,6 +44,9 @@ Investigation showed the software's arithmetic was consistent: £560 counted on 
 11. The Right now card states the rule and names the witness. Open **Take from safe**, enter an amount, and tap **Record withdrawal** without ticking anything: it refuses and says to confirm the witness is here. Tick "Robert McCrindle is here", tap again: it refuses until "The camera is on" is ticked. Tick both: the withdrawal saves, the activity row reads "by Jade Cassidy · witnessed by Robert McCrindle", and the managers' email shows "Witnessed by Robert McCrindle".
 12. Sign in as Hajar or Omar Farouk (Financials, not safe): the wallet icon is absent and /cash-counts redirects home. Sign in as Stephen Vazquez: the page opens, read-only, with no Count or Take buttons.
 13. In Admin → Staff, open Karly: "Safe holder" is off. Open Robert McCrindle: "Safe witness" is on and nothing else. Open Stephen Vazquez: "Safe viewer" is on.
+14. As Dylan, the activity card shows a **Reverse** pill on each live withdrawal. Tap one, give a reason, confirm: the row turns grey and struck through with "reversed by Dylan Lane: reason", and the Right now figure goes back up. As Jade, no Reverse pill appears and the database refuses the call.
+15. Open a past count as Dylan: each withdrawal has Reverse, and the footer has **Void this count**. Reverse one: it is struck through with "reversed after this count" and the balance does not change. Void the count: it shows Voided in Past counts and the Right now card's "Last count" moves back to the previous one.
+16. Take from safe: "Date the cash left" defaults to today; pick an earlier day after the last count and the withdrawal appears on that day in the activity. Picking a day before the last count is not possible in the picker, and typing one is refused.
 
 ## Automated
 
@@ -57,5 +62,6 @@ Investigation showed the software's arithmetic was consistent: £560 counted on 
 - `20260907000012_lng_cash_two_person_rule.sql` (witness flag, witness columns, enforcement triggers, safe-holder narrowing, Rob's staff row, RPC v3)
 - `20260907000013_lng_cash_withdrawal_email_witness.sql` (adds Witnessed by to the withdrawal email; `send-manager-notification` redeployed with `{{witnessName}}`)
 - `20260907000014_lng_cash_safe_viewer_and_total_only.sql` (Safe viewer flag and read access, drops the denomination table, `lng_cash_count_unrecorded` envelope log)
+- `20260907000015_lng_cash_reversals_and_backdating.sql` (withdrawal reversal columns and `lng_cash_reverse_withdrawal`, `lng_cash_void_count`, backdating guard, RPC skips reversed withdrawals)
 
 All applied to the shadow, dry-run on Meridian inside a rolled-back transaction with a counter's identity, then applied to Meridian.

@@ -434,6 +434,22 @@ export function buildActivityStatement(position: CashPosition): ActivityStatemen
         });
         break;
       case 'withdrawal':
+        if (l.reversed_at) {
+          // Reversed by the super admin: stays on the statement for
+          // the record, moves nothing.
+          rows.push({
+            when: l.taken_at,
+            type: `Taken from safe, reversed: ${withdrawalReasonLabel(l.reason)}`,
+            detail: [l.note, l.reversal_reason ? `Reversed: ${l.reversal_reason}` : null].filter(Boolean).join(' · '),
+            reference: null,
+            taken_by: l.taken_by_name,
+            in_pence: 0,
+            out_pence: 0,
+            balance_pence: balance,
+            visit_id: null,
+          });
+          break;
+        }
         balance -= l.amount_pence;
         rows.push({
           when: l.taken_at,
@@ -538,7 +554,7 @@ export interface EnvelopeListRow {
 
 export function envelopeListSince(position: CashPosition): { since: string; rows: EnvelopeListRow[] } {
   const lastOut = position.lines
-    .filter((l) => l.kind === 'withdrawal')
+    .filter((l) => l.kind === 'withdrawal' && !l.reversed_at)
     .map((l) => l.taken_at)
     .sort()
     .pop();

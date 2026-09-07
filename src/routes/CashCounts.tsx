@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type React from 'react';
 import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import {
   AlertTriangle,
   ArrowDownToLine,
+  CalendarClock,
   CheckCircle2,
   ChevronRight,
   Download,
@@ -17,6 +18,7 @@ import {
   Search,
   SearchCheck,
   ShieldCheck,
+  Undo2,
   Wallet,
 } from 'lucide-react';
 import {
@@ -24,8 +26,10 @@ import {
   Button,
   Card,
   Checkbox,
+  DatePicker,
   DropdownSelect,
   EmptyState,
+  FieldTrigger,
   Input,
   Section,
   Skeleton,
@@ -41,14 +45,18 @@ import { fmtTzAbbr } from '../lib/dateFormat.ts';
 import {
   type CashCountRow,
   type CashPosition,
+  type CashCountStatement,
   type CashPositionPaymentLine,
+  type CashPositionWithdrawalLine,
   type UnrecordedEnvelopeInput,
   type WithdrawalReason,
   WITHDRAWAL_REASONS,
   createCashCount,
   recordCashWithdrawal,
+  reverseCashWithdrawal,
   saveCashCountUnrecorded,
   signCashCount,
+  voidCashCount,
   updateCashCountActual,
   useAnomalyThresholds,
   useCashCounts,
@@ -107,6 +115,11 @@ export function CashCounts() {
   const [sheetKind, setSheetKind] = useState<'regular' | 'legacy_baseline'>('regular');
   const [statementCountId, setStatementCountId] = useState<string | null>(null);
   const [takeFromSafeOpen, setTakeFromSafeOpen] = useState(false);
+  // Super-admin corrections. A withdrawal picked for reversal from the
+  // activity card (open period, moves the balance) or from a past
+  // count's details (closed period, record only).
+  const [reverseTarget, setReverseTarget] = useState<ReverseTarget | null>(null);
+  const [voidTarget, setVoidTarget] = useState<{ id: string; period_end: string } | null>(null);
   // Two-person rule: the safe witnesses on record. Loaded once for the
   // page and shared by the Right-now card (so the rule is visible before
   // anyone opens the safe) and both sheets (which refuse to submit
@@ -230,6 +243,16 @@ export function CashCounts() {
                 baselinePence={position.data.baseline_pence}
                 onExportCsv={() => exportActivityCsv(position.data!)}
                 onExportPdf={() => void exportActivityPdf(position.data!)}
+                canReverse={!!account.is_super_admin}
+                onReverse={(line) =>
+                  setReverseTarget({
+                    withdrawal_id: line.withdrawal_id,
+                    amount_pence: line.amount_pence,
+                    label: line.note?.trim() || withdrawalReasonLabel(line.reason),
+                    taken_at: line.taken_at,
+                    moves_balance: true,
+                  })
+                }
               />
             ) : null}
             <HistoryCard
@@ -268,6 +291,7 @@ export function CashCounts() {
         open={takeFromSafeOpen}
         onClose={() => setTakeFromSafeOpen(false)}
         currentExpectedPence={position.data?.expected_in_safe_pence ?? 0}
+        earliestDateIso={position.data?.last_signed_count?.period_end ?? null}
         currentAccountId={account.account_id ?? null}
         witnesses={witnesses}
         witnessesError={witnessesError}
@@ -280,6 +304,39 @@ export function CashCounts() {
       <CountDetailsSheet
         countId={statementCountId}
         onClose={() => setStatementCountId(null)}
+        canCorrect={!!account.is_super_admin}
+        reloadKey={reverseTarget === null && voidTarget === null ? 1 : 0}
+        onReverse={(w) =>
+          setReverseTarget({
+            withdrawal_id: w.withdrawal_id,
+            amount_pence: w.amount_pence,
+            label: w.note?.trim() || withdrawalReasonLabel(w.reason),
+            taken_at: w.taken_at,
+            moves_balance: false,
+          })
+        }
+        onVoid={(id, periodEnd) => setVoidTarget({ id, period_end: periodEnd })}
+      />
+
+      <ReverseWithdrawalSheet
+        target={reverseTarget}
+        onClose={() => setReverseTarget(null)}
+        onDone={() => {
+          setReverseTarget(null);
+          position.refresh();
+          counts.refresh();
+        }}
+      />
+
+      <VoidCountSheet
+        target={voidTarget}
+        onClose={() => setVoidTarget(null)}
+        onDone={() => {
+          setVoidTarget(null);
+          setStatementCountId(null);
+          position.refresh();
+          counts.refresh();
+        }}
       />
     </main>
   );
@@ -483,11 +540,16 @@ function RecentActivityCard({
   baselinePence,
   onExportCsv,
   onExportPdf,
+  canReverse,
+  onReverse,
 }: {
   lines: CashPosition['lines'];
   baselinePence: number;
   onExportCsv: () => void;
   onExportPdf: () => void;
+  /** Super admin only: reverse a withdrawal recorded by mistake. */
+  canReverse: boolean;
+  onReverse: (line: CashPositionWithdrawalLine) => void;
 }) {
   const navigate = useNavigate();
   // Cash in = sales that kept their money. Cash out = withdrawals plus
@@ -498,7 +560,12 @@ function RecentActivityCard({
     [lines],
   );
   const cashOutTotal = useMemo(
-    () => lines.reduce((sum, l) => (l.kind === 'withdrawal' || l.kind === 'refund' ? sum + l.amount_pence : sum), 0),
+    () =>
+      lines.reduce(
+        (sum, l) =>
+          (l.kind === 'withdrawal' && !l.reversed_at) || l.kind === 'refund' ? sum + l.amount_pence : sum,
+        0,
+      ),
     [lines],
   );
   const refundedSaleCount = useMemo(
@@ -580,10 +647,13 @@ function RecentActivityCard({
           const visitLink = line.kind === 'payment' || line.kind === 'refunded_sale' ? line.visit_id : null;
           const interactive = !!visitLink;
           // Three visual variants: money in (green +), money out (red −,
-          // covers withdrawals and real refunds), and a refunded sale
-          // (neutral, struck-through, tagged — it nets to nothing).
+          // covers withdrawals and real refunds), and a neutral
+          // struck-through row for anything that nets to nothing: a
+          // refunded sale, or a withdrawal the super admin reversed.
+          const reversed = line.kind === 'withdrawal' && !!line.reversed_at;
           const variant: 'in' | 'out' | 'refunded' =
-            line.kind === 'payment' ? 'in' : line.kind === 'refunded_sale' ? 'refunded' : 'out';
+            line.kind === 'payment' ? 'in' : line.kind === 'refunded_sale' || reversed ? 'refunded' : 'out';
+          const reversible = canReverse && line.kind === 'withdrawal' && !reversed;
           // Mobile-first 2-line layout:
           //   Line 1 (top):    Label + tag (left)     · Amount (right)
           //   Line 2 (bottom): Time + context (muted) · Chevron
@@ -604,6 +674,11 @@ function RecentActivityCard({
           if (line.kind === 'withdrawal') {
             if (line.taken_by_name) subParts.push(`by ${line.taken_by_name}`);
             if (line.witness_name) subParts.push(`witnessed by ${line.witness_name}`);
+            if (reversed) {
+              subParts.push(
+                `reversed${line.reversed_by_name ? ` by ${line.reversed_by_name}` : ''}${line.reversal_reason ? `: ${line.reversal_reason}` : ''}`,
+              );
+            }
           } else if (line.kind === 'payment') {
             if (line.appointment_ref) subParts.push(line.appointment_ref);
             subParts.push(`by ${line.taken_by_name}`);
@@ -617,6 +692,8 @@ function RecentActivityCard({
               key={key}
               style={{
                 borderTop: idx === 0 ? 'none' : `1px solid ${theme.color.border}`,
+                display: 'flex',
+                alignItems: 'stretch',
               }}
             >
               <button
@@ -626,7 +703,8 @@ function RecentActivityCard({
                 style={{
                   appearance: 'none',
                   fontFamily: 'inherit',
-                  width: '100%',
+                  flex: 1,
+                  minWidth: 0,
                   background: 'transparent',
                   border: 'none',
                   padding: `${theme.space[3]}px ${theme.space[4]}px`,
@@ -685,7 +763,7 @@ function RecentActivityCard({
                           borderRadius: theme.radius.pill,
                         }}
                       >
-                        Refunded
+                        {reversed ? 'Reversed' : 'Refunded'}
                       </span>
                     ) : null}
                   </span>
@@ -720,15 +798,47 @@ function RecentActivityCard({
                   {variant === 'in' ? '+' : variant === 'out' ? '−' : ''}
                   {formatPence(line.amount_pence)}
                 </span>
-                <ChevronRight
-                  size={14}
-                  aria-hidden
-                  style={{
-                    color: interactive ? theme.color.inkSubtle : 'transparent',
-                    flexShrink: 0,
-                  }}
-                />
+                {!reversible ? (
+                  <ChevronRight
+                    size={14}
+                    aria-hidden
+                    style={{
+                      color: interactive ? theme.color.inkSubtle : 'transparent',
+                      flexShrink: 0,
+                    }}
+                  />
+                ) : null}
               </button>
+              {reversible ? (
+                <div style={{ display: 'flex', alignItems: 'center', paddingRight: theme.space[4] }}>
+                  <button
+                    type="button"
+                    aria-label="Reverse this withdrawal"
+                    onClick={() => {
+                      if (line.kind === 'withdrawal') onReverse(line);
+                    }}
+                    style={{
+                      appearance: 'none',
+                      fontFamily: 'inherit',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: theme.space[1],
+                      flexShrink: 0,
+                      height: 32,
+                      fontSize: theme.type.size.xs,
+                      fontWeight: theme.type.weight.semibold,
+                      color: theme.color.ink,
+                      border: `1px solid ${theme.color.border}`,
+                      borderRadius: theme.radius.pill,
+                      padding: `0 ${theme.space[3]}px`,
+                      background: theme.color.surface,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <Undo2 size={12} aria-hidden /> Reverse
+                  </button>
+                </div>
+              ) : null}
             </li>
           );
         })}
@@ -815,6 +925,7 @@ function TakeFromSafeSheet({
   open,
   onClose,
   currentExpectedPence,
+  earliestDateIso,
   currentAccountId,
   witnesses,
   witnessesError,
@@ -823,6 +934,10 @@ function TakeFromSafeSheet({
   open: boolean;
   onClose: () => void;
   currentExpectedPence: number;
+  /** period_end of the last signed count. A withdrawal cannot be dated
+   *  before it (that period is closed). Null when there has never been
+   *  a count. */
+  earliestDateIso: string | null;
   witnesses: SafeWitnessRow[] | null;
   witnessesError: string | null;
   /** accounts.id of the signed-in staff member. Passed through to
@@ -838,6 +953,14 @@ function TakeFromSafeSheet({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const twoPerson = useTwoPersonState(open, witnesses, currentAccountId);
+  // The day the cash actually left the safe. Defaults to today; a
+  // window cleaner paid on the 23rd and entered on the 7th goes on the
+  // 23rd so the activity reads in the order it happened.
+  const [dateIso, setDateIso] = useState(localDateIso(new Date()));
+  const [dateOpen, setDateOpen] = useState(false);
+  const dateTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const todayIso = localDateIso(new Date());
+  const minDateIso = earliestDateIso ? localDateIso(new Date(earliestDateIso)) : undefined;
 
   useEffect(() => {
     if (!open) return;
@@ -845,6 +968,8 @@ function TakeFromSafeSheet({
     setReason('bank_deposit');
     setNote('');
     setError(null);
+    setDateIso(localDateIso(new Date()));
+    setDateOpen(false);
   }, [open]);
 
   const amountPence = useMemo(() => {
@@ -870,6 +995,15 @@ function TakeFromSafeSheet({
       setError(rule);
       return;
     }
+    // Today keeps the exact moment; an earlier day is stamped midday so
+    // it sorts inside that day without pretending to a precise time.
+    const takenAt = dateIso === todayIso ? null : `${dateIso}T12:00:00`;
+    if (takenAt && earliestDateIso && new Date(takenAt).getTime() <= new Date(earliestDateIso).getTime()) {
+      setError(
+        `That date is before the last count on ${formatLongDate(earliestDateIso)}. That period is closed, so pick a date after it.`,
+      );
+      return;
+    }
 
     setBusy(true);
     try {
@@ -881,6 +1015,7 @@ function TakeFromSafeSheet({
         note,
         witness_id: twoPerson.witnessId!,
         on_camera: true,
+        taken_at: takenAt ? new Date(takenAt).toISOString() : null,
       });
       // Manager-notification email is fire-and-forget; if it fails
       // the withdrawal row itself is already persisted, so the
@@ -982,6 +1117,33 @@ function TakeFromSafeSheet({
           placeholder="e.g. 400.00"
           autoFocus
         />
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
+          <FieldTrigger
+            ref={dateTriggerRef}
+            label="Date the cash left"
+            icon={<CalendarClock size={16} aria-hidden />}
+            value={dateIso === todayIso ? `Today, ${formatLongDate(dateIso)}` : formatLongDate(dateIso)}
+            placeholder="Pick a date"
+            open={dateOpen}
+            onClick={() => setDateOpen((v) => !v)}
+          />
+          <p style={{ margin: 0, fontSize: theme.type.size.xs, color: theme.color.inkMuted, lineHeight: theme.type.leading.snug }}>
+            {earliestDateIso
+              ? `Any day from the last count on ${formatLongDate(earliestDateIso)} up to today.`
+              : 'Today, or an earlier day if the cash left before it was entered.'}
+          </p>
+          <DatePicker
+            open={dateOpen}
+            onClose={() => setDateOpen(false)}
+            value={dateIso}
+            onChange={(iso) => setDateIso(iso)}
+            anchorRef={dateTriggerRef}
+            title="When did the cash leave the safe?"
+            minIso={minDateIso}
+            maxIso={todayIso}
+          />
+        </div>
 
         <DropdownSelect
           label="Reason"
@@ -1427,7 +1589,7 @@ function CountStatus({ status }: { status: 'pending' | 'signed' | 'disputed' }) 
   if (status === 'disputed') {
     return (
       <StatusPill tone="no_show" size="sm">
-        Disputed
+        Voided
       </StatusPill>
     );
   }
@@ -2658,12 +2820,27 @@ function PaymentChecklist({
 function CountDetailsSheet({
   countId,
   onClose,
+  canCorrect,
+  reloadKey,
+  onReverse,
+  onVoid,
 }: {
   countId: string | null;
   onClose: () => void;
+  /** Super admin only: reverse a withdrawal in this count, or void the
+   *  count itself. */
+  canCorrect: boolean;
+  /** Bumps when a correction sheet closes so the statement re-reads. */
+  reloadKey: number;
+  onReverse: (w: CashCountStatement['withdrawals'][number]) => void;
+  onVoid: (countId: string, periodEnd: string) => void;
 }) {
-  const { data, loading, error } = useCashCountStatement(countId);
+  const { data, loading, error, refresh } = useCashCountStatement(countId);
   const [downloading, setDownloading] = useState(false);
+  useEffect(() => {
+    if (countId) refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reloadKey]);
 
   const onDownload = async () => {
     if (!data) return;
@@ -2695,7 +2872,14 @@ function CountDetailsSheet({
           : ''
       }
       footer={
-        <div style={{ display: 'flex', gap: theme.space[3], justifyContent: 'flex-end' }}>
+        <div style={{ display: 'flex', gap: theme.space[3], justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+          {canCorrect && data && data.count.status === 'signed' ? (
+            <Button variant="tertiary" onClick={() => onVoid(data.count.id, data.count.period_end)}>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2], color: theme.color.alert }}>
+                <Undo2 size={14} aria-hidden /> Void this count
+              </span>
+            </Button>
+          ) : null}
           <Button variant="tertiary" onClick={onClose}>
             Close
           </Button>
@@ -2950,9 +3134,11 @@ function CountDetailsSheet({
                           margin: 0,
                           fontSize: theme.type.size.sm,
                           fontWeight: theme.type.weight.semibold,
+                          color: w.reversed_at ? theme.color.inkMuted : theme.color.ink,
+                          textDecoration: w.reversed_at ? 'line-through' : 'none',
                         }}
                       >
-                        {withdrawalReasonLabel(w.reason)}
+                        {w.note?.trim() || withdrawalReasonLabel(w.reason)}
                         {w.taken_by_name ? <span style={{ color: theme.color.inkMuted, fontWeight: theme.type.weight.medium }}> · by {w.taken_by_name}</span> : null}
                       </p>
                       <p
@@ -2963,19 +3149,30 @@ function CountDetailsSheet({
                           fontVariantNumeric: 'tabular-nums',
                         }}
                       >
+                        {w.note?.trim() ? `${withdrawalReasonLabel(w.reason)} · ` : ''}
                         {formatDateTime(w.taken_at)}
-                        {w.note ? ` · ${w.note}` : ''}
+                        {w.reversed_at ? ` · reversed after this count${w.reversal_reason ? `: ${w.reversal_reason}` : ''}` : ''}
                       </p>
                     </div>
-                    <span
-                      style={{
-                        fontSize: theme.type.size.sm,
-                        fontWeight: theme.type.weight.semibold,
-                        color: theme.color.alert,
-                        fontVariantNumeric: 'tabular-nums',
-                      }}
-                    >
-                      −{formatPence(w.amount_pence)}
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[3] }}>
+                      <span
+                        style={{
+                          fontSize: theme.type.size.sm,
+                          fontWeight: theme.type.weight.semibold,
+                          color: w.reversed_at ? theme.color.inkSubtle : theme.color.alert,
+                          textDecoration: w.reversed_at ? 'line-through' : 'none',
+                          fontVariantNumeric: 'tabular-nums',
+                        }}
+                      >
+                        −{formatPence(w.amount_pence)}
+                      </span>
+                      {canCorrect && !w.reversed_at ? (
+                        <Button variant="tertiary" size="sm" onClick={() => onReverse(w)}>
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
+                            <Undo2 size={12} aria-hidden /> Reverse
+                          </span>
+                        </Button>
+                      ) : null}
                     </span>
                   </li>
                 ))}
@@ -3041,6 +3238,192 @@ async function exportActivityPdf(position: CashPosition): Promise<void> {
       context: { period_end: position.period_end },
     });
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Super-admin corrections
+//
+// Mistakes are reversed, never deleted. Each correction asks for a
+// reason, is gated in the database on the super admin, and lands in
+// the event log. Both sheets say plainly what will happen to the
+// balance before the button is pressed.
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface ReverseTarget {
+  withdrawal_id: string;
+  amount_pence: number;
+  label: string;
+  taken_at: string;
+  /** True when the withdrawal is in the open period (the balance goes
+   *  back up); false when its period was closed by a signed count (the
+   *  record is corrected, the balance stays). */
+  moves_balance: boolean;
+}
+
+function ReverseWithdrawalSheet({
+  target,
+  onClose,
+  onDone,
+}: {
+  target: ReverseTarget | null;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    if (target) {
+      setReason('');
+      setError(null);
+    }
+  }, [target]);
+  const submit = async () => {
+    if (!target) return;
+    setError(null);
+    if (reason.trim().length === 0) {
+      setError('Say why this withdrawal is being reversed. It goes on the record.');
+      return;
+    }
+    setBusy(true);
+    try {
+      await reverseCashWithdrawal(target.withdrawal_id, reason);
+      onDone();
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      setError(message);
+      await logFailure({ source: 'cash.withdrawal.reverse', severity: 'error', message, context: { withdrawal_id: target.withdrawal_id } });
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <BottomSheet
+      open={target !== null}
+      onClose={() => !busy && onClose()}
+      dismissable={!busy}
+      title="Reverse this withdrawal"
+      description={
+        target
+          ? target.moves_balance
+            ? `${formatPence(target.amount_pence)} for "${target.label}" on ${formatLongDate(target.taken_at)}. The safe balance goes back up by ${formatPence(target.amount_pence)}. The withdrawal stays on the record, marked reversed with your reason.`
+            : `${formatPence(target.amount_pence)} for "${target.label}" on ${formatLongDate(target.taken_at)}. This sits inside a count that has already been signed, and that count recorded what was physically in the safe, so the balance does not change. The withdrawal is marked reversed with your reason, for the record.`
+          : ''
+      }
+      footer={
+        <div style={{ display: 'flex', gap: theme.space[3], justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+          <Button variant="tertiary" onClick={onClose} disabled={busy}>
+            Cancel
+          </Button>
+          <Button variant="primary" onClick={submit} loading={busy}>
+            Reverse withdrawal
+          </Button>
+        </div>
+      }
+    >
+      <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[4] }}>
+        <Input
+          label="Why is it being reversed?"
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          placeholder="e.g. Entered twice, the second one is this."
+          autoFocus
+          fullWidth
+        />
+        {error ? (
+          <p role="alert" style={{ margin: 0, padding: `${theme.space[2]}px ${theme.space[3]}px`, borderRadius: theme.radius.input, background: '#FFEEEC', color: theme.color.alert, fontSize: theme.type.size.sm }}>
+            {error}
+          </p>
+        ) : null}
+      </div>
+    </BottomSheet>
+  );
+}
+
+function VoidCountSheet({
+  target,
+  onClose,
+  onDone,
+}: {
+  target: { id: string; period_end: string } | null;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    if (target) {
+      setReason('');
+      setError(null);
+    }
+  }, [target]);
+  const submit = async () => {
+    if (!target) return;
+    setError(null);
+    if (reason.trim().length === 0) {
+      setError('Say why this count is being voided. It goes on the record.');
+      return;
+    }
+    setBusy(true);
+    try {
+      await voidCashCount(target.id, reason);
+      onDone();
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      setError(message);
+      await logFailure({ source: 'cash.count.void', severity: 'error', message, context: { count_id: target.id } });
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <BottomSheet
+      open={target !== null}
+      onClose={() => !busy && onClose()}
+      dismissable={!busy}
+      title="Void this count"
+      description={
+        target
+          ? `The count from ${formatLongDate(target.period_end)} is marked voided and stops being the starting point. Lounge goes back to the count before it, and every payment and withdrawal since then counts towards the safe again. Only do this if the count was a mistake.`
+          : ''
+      }
+      footer={
+        <div style={{ display: 'flex', gap: theme.space[3], justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+          <Button variant="tertiary" onClick={onClose} disabled={busy}>
+            Cancel
+          </Button>
+          <Button variant="primary" onClick={submit} loading={busy}>
+            Void count
+          </Button>
+        </div>
+      }
+    >
+      <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[4] }}>
+        <Input
+          label="Why is it being voided?"
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          placeholder="e.g. Signed before the last envelope was counted."
+          autoFocus
+          fullWidth
+        />
+        {error ? (
+          <p role="alert" style={{ margin: 0, padding: `${theme.space[2]}px ${theme.space[3]}px`, borderRadius: theme.radius.input, background: '#FFEEEC', color: theme.color.alert, fontSize: theme.type.size.sm }}>
+            {error}
+          </p>
+        ) : null}
+      </div>
+    </BottomSheet>
+  );
+}
+
+// YYYY-MM-DD in the device's local calendar (the kiosks run in London).
+function localDateIso(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
 }
 
 async function resolveLocationId(): Promise<string> {

@@ -178,11 +178,18 @@ export async function buildCashCountPdf(
         pdf.addPage();
         y = MARGIN_T;
       }
+      pdf.setTextColor(...(w.reversed_at ? MUTED : INK));
       pdf.text(formatDateTime(w.taken_at), MARGIN_L, y);
-      pdf.text(truncate(withdrawalReasonLabelPdf(w.reason), 38), MARGIN_L + 38, y);
+      pdf.text(truncate(w.note ? `${withdrawalReasonLabelPdf(w.reason)} · ${w.note}` : withdrawalReasonLabelPdf(w.reason), 38), MARGIN_L + 38, y);
       pdf.text(truncate(w.taken_by_name ?? '—', 24), MARGIN_L + 110, y);
-      pdf.text(`−${formatGbp(w.amount_pence)}`, PAGE_W - MARGIN_R, y, { align: 'right' });
+      pdf.text(w.reversed_at ? `(−${formatGbp(w.amount_pence)}) reversed` : `−${formatGbp(w.amount_pence)}`, PAGE_W - MARGIN_R, y, { align: 'right' });
       y += 5;
+      if (w.reversed_at) {
+        pdf.setTextColor(...MUTED);
+        pdf.text(truncate(`Reversed after this count: ${w.reversal_reason ?? ''}`, 90), MARGIN_L + 38, y);
+        y += 5;
+      }
+      pdf.setTextColor(...INK);
     }
   }
 
