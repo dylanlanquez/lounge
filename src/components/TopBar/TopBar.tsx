@@ -25,7 +25,7 @@ export function TopBar({ variant = 'home', title, backTo, right }: TopBarProps) 
   const showAdminButton = !!account && (account.is_admin || account.is_super_admin);
   const showReportsButton = !!account && account.can_view_reports;
   const showCashCountsButton =
-    !!account && (account.can_count_cash || account.can_view_financials);
+    !!account && (account.can_count_cash || account.can_view_safe);
 
   if (variant === 'subpage') {
     return (

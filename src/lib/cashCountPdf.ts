@@ -6,7 +6,6 @@
 // signature block at the bottom.
 
 import {
-  DENOMINATIONS,
   withdrawalReasonLabel as withdrawalReasonLabelPdf,
   type CashCountStatement,
   type CashPosition,
@@ -128,13 +127,6 @@ export async function buildCashCountPdf(
   }
   y += 4;
 
-  // How it was counted — the note and coin breakdown, when the counter
-  // entered one. Two columns (notes left, coins right) so it reads like
-  // the paper till sheet it replaces.
-  if (statement.denominations.length > 0) {
-    y = drawDenominations(pdf, y, statement.denominations, statement.count.actual_pence);
-  }
-
   // Lines table header
   pdf.setFont('helvetica', 'bold');
   pdf.setFontSize(8);
@@ -194,6 +186,42 @@ export async function buildCashCountPdf(
     }
   }
 
+  // Envelopes found at the count that no recorded payment matched:
+  // what was written on them, how much was inside, who processed them.
+  if (statement.unrecorded.length > 0) {
+    y += 8;
+    if (y > PAGE_H - MARGIN_B - 20) {
+      pdf.addPage();
+      y = MARGIN_T;
+    }
+    pdf.setFont('helvetica', 'bold');
+    pdf.setFontSize(10);
+    pdf.setTextColor(...INK);
+    pdf.text('ENVELOPES NOT RECORDED IN LOUNGE', MARGIN_L, y);
+    y += 5;
+    pdf.setFont('helvetica', 'normal');
+    pdf.setFontSize(9);
+    for (const u of statement.unrecorded) {
+      if (y > PAGE_H - MARGIN_B - 20) {
+        pdf.addPage();
+        y = MARGIN_T;
+      }
+      pdf.text(truncate(u.order_ref ?? '—', 16), MARGIN_L, y);
+      pdf.text(truncate(u.customer_name ?? '—', 38), MARGIN_L + 38, y);
+      pdf.text(truncate(u.processed_by_name ? `by ${u.processed_by_name}` : '—', 24), MARGIN_L + 110, y);
+      pdf.setTextColor(...ACCENT);
+      pdf.text(`+${formatGbp(u.amount_pence)}`, PAGE_W - MARGIN_R, y, { align: 'right' });
+      pdf.setTextColor(...INK);
+      y += 5;
+      if (u.note) {
+        pdf.setTextColor(...MUTED);
+        pdf.text(truncate(u.note, 90), MARGIN_L + 38, y);
+        pdf.setTextColor(...INK);
+        y += 5;
+      }
+    }
+  }
+
   y += 4;
   pdf.setDrawColor(...MUTED);
   pdf.line(MARGIN_L, y, PAGE_W - MARGIN_R, y);
@@ -215,12 +243,11 @@ export async function buildCashCountPdf(
     MARGIN_L + sigW + 8,
     y,
     sigW,
-    'Signed off by',
-    statement.count.signed_off_by_name ?? '— pending —',
+    statement.count.witness_name ? 'Witnessed and signed by' : 'Signed off by',
+    statement.count.signed_off_by_name ?? statement.count.witness_name ?? '— pending —',
     statement.count.signed_off_at,
   );
-  // Two-person rule: who was present and that it was on camera.
-  if (statement.count.witness_name) {
+  if (statement.count.on_camera) {
     y += 22;
     if (y > PAGE_H - MARGIN_B - 10) {
       pdf.addPage();
@@ -229,11 +256,7 @@ export async function buildCashCountPdf(
     pdf.setFont('helvetica', 'normal');
     pdf.setFontSize(9);
     pdf.setTextColor(...MUTED);
-    pdf.text(
-      `Witnessed by ${statement.count.witness_name}${statement.count.on_camera ? ', on camera' : ''}.`,
-      MARGIN_L,
-      y,
-    );
+    pdf.text('Done in front of the camera with the safe witness present.', MARGIN_L, y);
   }
 
   return pdf.output('blob');
@@ -265,60 +288,6 @@ function drawSignatureBlock(
   pdf.setDrawColor(...MUTED);
   pdf.setLineWidth(0.2);
   pdf.line(x, y + 14, x + w, y + 14);
-}
-
-function drawDenominations(
-  pdf: JsPdfDoc,
-  yStart: number,
-  rows: Array<{ denomination_pence: number; quantity: number }>,
-  totalPence: number | null,
-): number {
-  let y = yStart;
-  if (y > PAGE_H - MARGIN_B - 50) {
-    pdf.addPage();
-    y = MARGIN_T;
-  }
-  pdf.setFont('helvetica', 'bold');
-  pdf.setFontSize(8);
-  pdf.setTextColor(...MUTED);
-  pdf.text('HOW IT WAS COUNTED', MARGIN_L, y);
-  y += 2;
-  pdf.setDrawColor(...MUTED);
-  pdf.setLineWidth(0.2);
-  pdf.line(MARGIN_L, y, PAGE_W - MARGIN_R, y);
-  y += 5;
-  const byPence = new Map(rows.map((r) => [r.denomination_pence, r.quantity]));
-  const notes = DENOMINATIONS.filter((d) => d.kind === 'note');
-  const coins = DENOMINATIONS.filter((d) => d.kind === 'coin');
-  const colW = (PAGE_W - MARGIN_L - MARGIN_R - 10) / 2;
-  const drawColumn = (x: number, items: typeof notes) => {
-    let yy = y;
-    for (const d of items) {
-      const q = byPence.get(d.pence) ?? 0;
-      pdf.setFont('helvetica', q > 0 ? 'bold' : 'normal');
-      pdf.setFontSize(9);
-      pdf.setTextColor(...(q > 0 ? INK : MUTED));
-      pdf.text(d.label, x, yy);
-      pdf.setFont('helvetica', 'normal');
-      pdf.text(`× ${q}`, x + 18, yy);
-      pdf.text(formatGbp(d.pence * q), x + colW, yy, { align: 'right' });
-      yy += 5;
-    }
-    return yy;
-  };
-  const yNotes = drawColumn(MARGIN_L, notes);
-  const yCoins = drawColumn(MARGIN_L + colW + 10, coins);
-  y = Math.max(yNotes, yCoins);
-  pdf.setDrawColor(...MUTED);
-  pdf.line(MARGIN_L, y, PAGE_W - MARGIN_R, y);
-  y += 5;
-  pdf.setFont('helvetica', 'bold');
-  pdf.setFontSize(9);
-  pdf.setTextColor(...INK);
-  pdf.text('COUNTED', MARGIN_L, y);
-  pdf.text(totalPence === null ? '—' : formatGbp(totalPence), PAGE_W - MARGIN_R, y, { align: 'right' });
-  y += 10;
-  return y;
 }
 
 // ── Cash since last count (unsigned working sheet) ─────────────────────────

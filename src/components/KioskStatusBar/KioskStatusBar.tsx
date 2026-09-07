@@ -52,7 +52,7 @@ export function KioskStatusBar() {
   const showAdminButton = !!account && (account.is_admin || account.is_super_admin);
   const showReportsButton = !!account && account.can_view_reports;
   const showCashCountsButton =
-    !!account && (account.can_count_cash || account.can_view_financials);
+    !!account && (account.can_count_cash || account.can_view_safe);
   // A virtual impression clinician whose admin has switched on self-edit
   // gets a direct top-bar shortcut to their own availability editor —
   // the same destination buried in the profile sheet, surfaced as a

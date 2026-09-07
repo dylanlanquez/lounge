@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
   aggregateAnomalies,
-  denominationTotalPence,
   shapeCashCounts,
   shapeCashPosition,
   type AnomalyThresholds,
@@ -261,20 +260,5 @@ describe('shapeCashPosition', () => {
     expect(() =>
       shapeCashPosition({ ...base, lines: [{ kind: 'payment', amount_pence: 1, taken_at: '2026-01-01T00:00:00Z' }] }),
     ).toThrow(/payment_id/);
-  });
-});
-
-describe('denominationTotalPence', () => {
-  it('adds every note and coin', () => {
-    expect(denominationTotalPence({ 2000: 3, 500: 1, 100: 2, 20: 3, 1: 1 })).toBe(6000 + 500 + 200 + 60 + 1);
-  });
-
-  it('treats missing denominations as zero', () => {
-    expect(denominationTotalPence({})).toBe(0);
-  });
-
-  it('rejects a negative or fractional quantity', () => {
-    expect(() => denominationTotalPence({ 100: -1 })).toThrow(/Invalid quantity/);
-    expect(() => denominationTotalPence({ 100: 1.5 })).toThrow(/Invalid quantity/);
   });
 });

@@ -12,6 +12,7 @@ import {
   FileText,
   Info,
   ListChecks,
+  Mail,
   Plus,
   Search,
   SearchCheck,
@@ -27,7 +28,6 @@ import {
   EmptyState,
   Input,
   Section,
-  SegmentedControl,
   Skeleton,
   StatusPill,
 } from '../components/index.ts';
@@ -42,14 +42,12 @@ import {
   type CashCountRow,
   type CashPosition,
   type CashPositionPaymentLine,
-  type DenominationCounts,
+  type UnrecordedEnvelopeInput,
   type WithdrawalReason,
-  DENOMINATIONS,
   WITHDRAWAL_REASONS,
   createCashCount,
-  denominationTotalPence,
   recordCashWithdrawal,
-  saveCashCountDenominations,
+  saveCashCountUnrecorded,
   signCashCount,
   updateCashCountActual,
   useAnomalyThresholds,
@@ -60,9 +58,16 @@ import {
 } from '../lib/queries/cashCounts.ts';
 import { formatNumber, formatPence } from '../lib/queries/carts.ts';
 import { sendManagerNotification } from '../lib/queries/managerNotifications.ts';
-import { listManagers, listSafeWitnesses, type ManagerRow, type SafeWitnessRow } from '../lib/queries/staff.ts';
+import { listActiveStaffNames, listSafeWitnesses, type SafeWitnessRow, type StaffNameRow } from '../lib/queries/staff.ts';
 import { buildCashActivityPdf, buildCashCountPdf, downloadCashCountPdf } from '../lib/cashCountPdf.ts';
-import { type CashClue, buildCashActivityCsv, downloadTextFile, findDifferenceClues } from '../lib/cashReconcile.ts';
+import {
+  type CashClue,
+  buildCashActivityCsv,
+  buildEnvelopeListCsv,
+  downloadTextFile,
+  envelopeListSince,
+  findDifferenceClues,
+} from '../lib/cashReconcile.ts';
 import { logFailure } from '../lib/failureLog.ts';
 
 // Cash counts — promoted to a top-level route from the old
@@ -142,9 +147,9 @@ export function CashCounts() {
 
   if (authLoading || accountLoading) return null;
   if (!user) return <Navigate to="/sign-in" replace />;
-  // Either permission opens the door. Counting is gated by
-  // can_count_cash separately at the CTA.
-  if (!account || (!account.can_count_cash && !account.can_view_financials)) {
+  // Safe holders and safe viewers only. Counting and taking are gated
+  // by can_count_cash separately at the CTA.
+  if (!account || (!account.can_count_cash && !account.can_view_safe)) {
     return <Navigate to="/" replace />;
   }
 
@@ -191,8 +196,8 @@ export function CashCounts() {
               lineHeight: theme.type.leading.snug,
             }}
           >
-            Counts every cash payment between sign-offs and double-checks the safe.
-            One count per close, signed by a different manager.
+            Every cash payment goes into the safe in an envelope. A count checks the safe
+            against Lounge's records. Two people, on camera, every time.
           </p>
         </header>
 
@@ -1367,7 +1372,7 @@ function CountRow({
           }}
         >
           Counted by <span style={{ color: theme.color.ink, fontWeight: theme.type.weight.medium }}>{count.counted_by_name}</span>
-          {count.signed_off_by_name ? (
+          {count.signed_off_by_name && count.signed_off_by_name !== count.witness_name ? (
             <>
               {' · '}
               Signed by <span style={{ color: theme.color.ink, fontWeight: theme.type.weight.medium }}>{count.signed_off_by_name}</span>
@@ -1425,22 +1430,38 @@ function CountStatus({ status }: { status: 'pending' | 'signed' | 'disputed' }) 
 // ─────────────────────────────────────────────────────────────────────────────
 // New-count sheet — the closing-up form
 //
-// Order of the sheet, top to bottom, mirrors how a count actually
-// happens at the safe:
+// Deliberately short. Top to bottom:
 //
 //   1. Expected in safe — what Lounge has recorded.
-//   2. Count the cash — how many of each note and coin. Lounge adds it
-//      up, so the total can never be an arithmetic slip, and the
-//      breakdown is stored with the count as evidence that a physical
-//      count happened. "Total only" stays available for a bank-bagged
-//      float that has already been counted.
-//   3. The difference — plain English, then "Find the difference": the
-//      recorded evidence that could explain it (see cashReconcile.ts),
-//      and a tick-off list of every recorded payment with CSV / PDF
-//      exports for checking against receipts.
-//   4. Note — required above the variance threshold.
-//   5. Manager sign-off — a different manager.
+//   2. Counted in safe — one total, typed.
+//   3. The difference, in plain English.
+//      More than expected: every cash payment went into the safe in an
+//      envelope marked with the order number and the customer's name, so
+//      the counter downloads the envelope list, matches each envelope,
+//      and logs the leftovers (order number, customer, amount, who
+//      processed it) on this count for Dylan to review.
+//      Less than expected: the recorded evidence that could explain it
+//      (see cashReconcile.ts) and the same envelope list to tick off.
+//   4. Note — required above the variance threshold unless the logged
+//      envelopes explain the whole difference.
+//   5. Two people, on camera — the safe witness is the second person and
+//      signs the count. There is no separate manager step.
 // ─────────────────────────────────────────────────────────────────────────────
+
+interface EnvelopeDraft {
+  key: number;
+  order_ref: string;
+  customer_name: string;
+  amountText: string;
+  processed_by: string;
+}
+
+function envelopeAmountPence(text: string): number | null {
+  if (text.trim().length === 0) return null;
+  const float = Number(text.replace(/[^\d.]/g, ''));
+  if (!Number.isFinite(float) || float <= 0) return null;
+  return Math.round(float * 100);
+}
 
 function NewCountSheet({
   open,
@@ -1478,15 +1499,13 @@ function NewCountSheet({
   kind?: 'regular' | 'legacy_baseline';
 }) {
   const isMobile = useIsMobile(640);
-  const [entryMode, setEntryMode] = useState<'breakdown' | 'total'>('breakdown');
-  const [denomCounts, setDenomCounts] = useState<DenominationCounts>({});
   const [actualText, setActualText] = useState('');
   const [notes, setNotes] = useState('');
-  const [managerId, setManagerId] = useState('');
-  const [managers, setManagers] = useState<ManagerRow[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [checkedPayments, setCheckedPayments] = useState<Set<string>>(new Set());
+  const [envelopes, setEnvelopes] = useState<EnvelopeDraft[]>([]);
+  const [staffNames, setStaffNames] = useState<StaffNameRow[]>([]);
   const twoPerson = useTwoPersonState(open, witnesses, currentAccountId);
   // Legacy-baseline only: optional inline withdrawal recorded
   // immediately AFTER the count is signed. Lets the operator seed
@@ -1499,29 +1518,24 @@ function NewCountSheet({
 
   useEffect(() => {
     if (!open) return;
-    setEntryMode('breakdown');
-    setDenomCounts({});
     setActualText('');
     setNotes('');
-    setManagerId('');
     setError(null);
     setCheckedPayments(new Set());
+    setEnvelopes([]);
     setInlineWithdrawalOpen(false);
     setInlineWithdrawalAmountText('');
     setInlineWithdrawalReason('bank_deposit');
     setInlineWithdrawalNote('');
-    // Segregation of duties: the person counting (the current account,
-    // recorded as counted_by) can't also sign off. The DB enforces this
-    // with the lng_cash_counts_counter_signer_distinct CHECK, so we
-    // exclude the current account from the picker — otherwise a self
-    // sign-off is only rejected on submit with a raw constraint error.
-    listManagers()
-      .then((rows) => setManagers(rows.filter((m) => m.account_id !== currentAccountId)))
+    // Staff list for "who processed this envelope". Loaded on open so a
+    // new starter added this morning is in the list tonight.
+    listActiveStaffNames()
+      .then(setStaffNames)
       .catch((e) => {
         const message = e instanceof Error ? e.message : String(e);
-        setError(`Could not load managers: ${message}`);
+        setError(`Could not load the staff list: ${message}`);
       });
-  }, [open, currentAccountId]);
+  }, [open]);
 
   const periodStart = useMemo(() => {
     if (position.last_signed_count) return position.last_signed_count.period_end;
@@ -1533,77 +1547,102 @@ function NewCountSheet({
 
   const isLegacyBaseline = kind === 'legacy_baseline';
 
-  // The counted figure comes from ONE of two places: the breakdown
-  // (Lounge adds it up) or a typed total. Never both.
-  const breakdownTotal = useMemo(() => denominationTotalPence(denomCounts), [denomCounts]);
-  const breakdownTouched = useMemo(
-    () => DENOMINATIONS.some((d) => (denomCounts[d.pence] ?? 0) > 0),
-    [denomCounts],
-  );
-  const coinsPence = useMemo(
-    () => DENOMINATIONS.filter((d) => d.kind === 'coin').reduce((s, d) => s + d.pence * (denomCounts[d.pence] ?? 0), 0),
-    [denomCounts],
-  );
-  const typedPence = useMemo(() => {
+  const actualPence = useMemo(() => {
     if (actualText.trim().length === 0) return null;
     const float = Number(actualText.replace(/[^\d.]/g, ''));
     if (!Number.isFinite(float)) return null;
     return Math.round(float * 100);
   }, [actualText]);
-  const actualPence = entryMode === 'breakdown' ? (breakdownTouched ? breakdownTotal : null) : typedPence;
 
   const inlineWithdrawalPence = useMemo(() => {
     if (!isLegacyBaseline || !inlineWithdrawalOpen) return null;
-    const float = Number(inlineWithdrawalAmountText.replace(/[^\d.]/g, ''));
-    if (!Number.isFinite(float) || float <= 0) return null;
-    return Math.round(float * 100);
+    return envelopeAmountPence(inlineWithdrawalAmountText);
   }, [isLegacyBaseline, inlineWithdrawalOpen, inlineWithdrawalAmountText]);
-  const diff = actualPence === null ? null : actualPence - position.expected_in_safe_pence;
-  // Variance against expected is meaningless for a baseline — the
-  // whole point of a legacy_baseline count is to seed the safe with
-  // whatever is physically there, regardless of what Lounge has
-  // recorded (which is normally £0 because no payments have been
-  // processed yet at launch). Skip the over-threshold note gate.
-  const diffNeedsNote =
-    !isLegacyBaseline
-    && thresholds !== null
-    && diff !== null
-    && Math.abs(diff) >= thresholds.cash_variance_pence;
 
-  // Detective work runs the moment a difference appears, from the same
-  // snapshot the headline figure came from.
+  const diff = actualPence === null || isLegacyBaseline ? null : actualPence - position.expected_in_safe_pence;
+  const over = diff !== null && diff > 0;
+  const short = diff !== null && diff < 0;
+
+  // Money the logged envelopes account for, and what is still unexplained.
+  const envelopesPence = useMemo(
+    () => envelopes.reduce((s, e) => s + (envelopeAmountPence(e.amountText) ?? 0), 0),
+    [envelopes],
+  );
+  const unexplainedPence = over ? diff - envelopesPence : diff ?? 0;
+
+  // Note is required above the threshold, unless the envelopes explain
+  // every penny of a surplus (the envelopes ARE the explanation).
+  const diffNeedsNote =
+    thresholds !== null
+    && diff !== null
+    && diff !== 0
+    && Math.abs(unexplainedPence) >= thresholds.cash_variance_pence;
+
+  // Detective work. For a shortfall the full engine; for a surplus only
+  // the strong leads, shown under the envelope log as a nudge.
   const clues = useMemo<CashClue[]>(() => {
-    if (isLegacyBaseline || diff === null || diff === 0) return [];
-    return findDifferenceClues({
-      diff_pence: diff,
-      position,
-      coins_pence: entryMode === 'breakdown' ? coinsPence : null,
-    });
-  }, [isLegacyBaseline, diff, position, entryMode, coinsPence]);
+    if (diff === null || diff === 0) return [];
+    const all = findDifferenceClues({ diff_pence: diff, position });
+    return over ? all.filter((c) => c.tone === 'strong' && c.kind !== 'pence') : all;
+  }, [diff, over, position]);
 
   const paymentLines = useMemo(
     () => position.lines.filter((l): l is CashPositionPaymentLine => l.kind === 'payment'),
     [position.lines],
   );
 
+  const addEnvelope = () =>
+    setEnvelopes((prev) => [
+      ...prev,
+      { key: Date.now() + prev.length, order_ref: '', customer_name: '', amountText: '', processed_by: '' },
+    ]);
+  const updateEnvelope = (key: number, patch: Partial<EnvelopeDraft>) =>
+    setEnvelopes((prev) => prev.map((e) => (e.key === key ? { ...e, ...patch } : e)));
+  const removeEnvelope = (key: number) => setEnvelopes((prev) => prev.filter((e) => e.key !== key));
+
   const submit = async () => {
     setError(null);
     if (actualPence === null || actualPence < 0) {
+      setError('Enter the total counted in the safe, in pounds, e.g. 405.00.');
+      return;
+    }
+    // Every logged envelope must be complete: what it said, how much was
+    // in it, who processed it. Half a record is worse than none.
+    const envelopeInputs: UnrecordedEnvelopeInput[] = [];
+    for (let i = 0; i < envelopes.length; i += 1) {
+      const e = envelopes[i]!;
+      const pence = envelopeAmountPence(e.amountText);
+      if (!e.order_ref.trim() && !e.customer_name.trim()) {
+        setError(`Envelope ${i + 1}: enter the order number or the customer's name written on it.`);
+        return;
+      }
+      if (pence === null) {
+        setError(`Envelope ${i + 1}: enter the amount that was inside it.`);
+        return;
+      }
+      if (!e.processed_by) {
+        setError(`Envelope ${i + 1}: pick the employee who processed it.`);
+        return;
+      }
+      envelopeInputs.push({
+        amount_pence: pence,
+        order_ref: e.order_ref.trim() || null,
+        customer_name: e.customer_name.trim() || null,
+        processed_by: e.processed_by,
+      });
+    }
+    if (over && envelopesPence > diff) {
       setError(
-        entryMode === 'breakdown'
-          ? 'Count the notes and coins first. Enter how many of each you have; Lounge adds them up.'
-          : 'Enter the amount in pounds, e.g. 405.00.',
+        `The envelopes you logged add up to ${formatPence(envelopesPence)}, more than the ${formatPence(diff)} extra. Check the amounts.`,
       );
       return;
     }
     if (diffNeedsNote && notes.trim().length === 0) {
       setError(
-        `That's over the ${formatPence(thresholds!.cash_variance_pence)} threshold for unexplained differences. Add a quick note about what happened.`,
+        over
+          ? `${formatPence(unexplainedPence)} of the extra is still unexplained. Log the envelopes it came from, or add a note saying what it is.`
+          : `That's over the ${formatPence(thresholds!.cash_variance_pence)} threshold for unexplained differences. Add a quick note about what happened.`,
       );
-      return;
-    }
-    if (!managerId) {
-      setError('Pick the manager signing off this count.');
       return;
     }
     const rule = twoPerson.validate();
@@ -1619,16 +1658,13 @@ function NewCountSheet({
       setError('No cash activity yet — there is nothing to count.');
       return;
     }
-    // Inline-withdrawal validation (legacy_baseline only).
     if (isLegacyBaseline && inlineWithdrawalOpen) {
       if (inlineWithdrawalPence === null) {
         setError('Enter the withdrawal amount in pounds, e.g. 400.00.');
         return;
       }
       if (inlineWithdrawalPence > actualPence) {
-        setError(
-          `Withdrawal can't exceed the starting balance (${formatPence(actualPence)}).`,
-        );
+        setError(`Withdrawal can't exceed the starting balance (${formatPence(actualPence)}).`);
         return;
       }
     }
@@ -1650,13 +1686,14 @@ function NewCountSheet({
         on_camera: true,
       });
       pendingCountId = created.count_id;
-      if (entryMode === 'breakdown') {
-        await saveCashCountDenominations(created.count_id, denomCounts, actualPence);
-      }
       await updateCashCountActual(created.count_id, actualPence, notes);
+      if (envelopeInputs.length > 0) {
+        await saveCashCountUnrecorded(created.count_id, envelopeInputs);
+      }
+      // The safe witness is the second person and signs the count.
       await signCashCount({
         count_id: created.count_id,
-        signer_account_id: managerId,
+        signer_account_id: twoPerson.witnessId!,
       });
       pendingCountId = null;
       // Inline withdrawal records AFTER the count is signed, so the
@@ -1688,8 +1725,8 @@ function NewCountSheet({
     } catch (e) {
       // Roll back a pending count so the next retry isn't blocked
       // by orphan history. Best-effort; if the delete fails too
-      // (RLS, network) we still surface the original error. The
-      // denomination rows cascade with the count.
+      // (RLS, network) we still surface the original error. Envelope
+      // rows cascade with the count.
       if (pendingCountId) {
         const { supabase } = await import('../lib/supabase.ts');
         await supabase
@@ -1704,12 +1741,14 @@ function NewCountSheet({
         source: 'cash.count.write',
         severity: 'error',
         message,
-        context: { actualPence, periodStart, periodEnd, entryMode },
+        context: { actualPence, periodStart, periodEnd, envelopes: envelopeInputs.length },
       });
     } finally {
       setBusy(false);
     }
   };
+
+  const envelopeList = useMemo(() => envelopeListSince(position), [position]);
 
   return (
     <BottomSheet
@@ -1719,8 +1758,8 @@ function NewCountSheet({
       title={kind === 'legacy_baseline' ? 'Legacy cash count — start fresh' : 'Count cash'}
       description={
         kind === 'legacy_baseline'
-          ? 'Count what is physically in the safe right now and have a manager sign off. This becomes the baseline. Every count after this starts from this point.'
-          : 'Count the cash in the safe note by note and coin by coin, with the safe witness present and the camera on. Lounge adds it up, shows any difference, and helps you find where it came from. A different manager signs off.'
+          ? 'Count what is physically in the safe right now, with the safe witness present and the camera on. This becomes the baseline. Every count after this starts from this point.'
+          : 'Count the cash in the safe with the safe witness present and the camera on. Enter the total; Lounge shows any difference and how to account for it.'
       }
       footer={
         <div
@@ -1794,84 +1833,69 @@ function NewCountSheet({
           </p>
         </div>
 
-        <SheetBlock
-          title="Count the cash"
-          sub={
-            entryMode === 'breakdown'
-              ? 'Enter how many of each note and coin are in the safe. Lounge adds it up.'
-              : 'Enter the total you have already counted.'
-          }
-          aside={
-            <SegmentedControl
-              size="sm"
-              ariaLabel="How to enter the count"
-              value={entryMode}
-              onChange={(v) => {
-                setEntryMode(v);
-                setError(null);
-              }}
-              options={[
-                { value: 'breakdown', label: 'Notes and coins' },
-                { value: 'total', label: 'Total only' },
-              ]}
-            />
-          }
-        >
-          {entryMode === 'breakdown' ? (
-            <DenominationGrid
-              counts={denomCounts}
-              onChange={setDenomCounts}
-              isMobile={isMobile}
-              disabled={busy}
-              coinsPence={coinsPence}
-              totalPence={breakdownTotal}
-            />
-          ) : (
-            <Input
-              label="Counted in safe (£)"
-              numericFormat="currency"
-              value={actualText}
-              onChange={(e) => setActualText(e.target.value)}
-              placeholder="e.g. 405.00"
-              autoFocus
-              fullWidth
-            />
-          )}
-        </SheetBlock>
+        <Input
+          label="Counted in safe (£)"
+          numericFormat="currency"
+          value={actualText}
+          onChange={(e) => setActualText(e.target.value)}
+          placeholder="e.g. 1949.00"
+          autoFocus
+          fullWidth
+        />
 
-        {!isLegacyBaseline && diff !== null ? (
+        {diff !== null ? (
           <DifferencePanel
             diff={diff}
             actualPence={actualPence ?? 0}
             expectedPence={position.expected_in_safe_pence}
             thresholdPence={thresholds?.cash_variance_pence ?? null}
+            explainedPence={over ? envelopesPence : 0}
           />
         ) : null}
 
-        {!isLegacyBaseline && diff !== null && diff !== 0 ? (
-          <>
-            <SheetBlock
-              title="Find the difference"
-              sub="Lounge checked everything recorded in this period for something that explains it."
-              icon={<SearchCheck size={16} aria-hidden />}
-            >
-              <ClueList clues={clues} />
-            </SheetBlock>
-            <PaymentChecklist
-              lines={paymentLines}
-              checked={checkedPayments}
-              onToggle={(id) =>
-                setCheckedPayments((prev) => {
-                  const next = new Set(prev);
-                  if (next.has(id)) next.delete(id);
-                  else next.add(id);
-                  return next;
-                })
-              }
-              onExportCsv={onExportCsv}
-              onExportPdf={onExportPdf}
-            />
-          </>
+        {over ? (
+          <ExtraCashBlock
+            diffPence={diff}
+            envelopes={envelopes}
+            staffNames={staffNames}
+            onAdd={addEnvelope}
+            onUpdate={updateEnvelope}
+            onRemove={removeEnvelope}
+            envelopesPence={envelopesPence}
+            envelopeCount={envelopeList.rows.length}
+            envelopeSince={envelopeList.since}
+            onDownloadList={() => exportEnvelopeListCsv(position)}
+            isMobile={isMobile}
+            disabled={busy}
+            clues={clues}
+          />
+        ) : null}
+
+        {short ? (
+          <SheetBlock
+            title="Find the difference"
+            sub="Lounge checked everything recorded in this period for something that explains it."
+            icon={<SearchCheck size={16} aria-hidden />}
+          >
+            <ClueList clues={clues} />
+          </SheetBlock>
+        ) : null}
+
+        {over || short ? (
+          <PaymentChecklist
+            lines={paymentLines}
+            checked={checkedPayments}
+            onToggle={(id) =>
+              setCheckedPayments((prev) => {
+                const next = new Set(prev);
+                if (next.has(id)) next.delete(id);
+                else next.add(id);
+                return next;
+              })
+            }
+            onExportCsv={onExportCsv}
+            onExportPdf={onExportPdf}
+          />
         ) : null}
 
         <Input
@@ -1881,9 +1905,11 @@ function NewCountSheet({
           placeholder={
             isLegacyBaseline
               ? 'Optional context, e.g. cash collected pre-launch.'
-              : diff !== null && diff !== 0
-                ? 'What explains the difference? e.g. the coins are the change float, never counted before.'
-                : 'Anything worth noting about this count.'
+              : over
+                ? 'Anything else about the extra, e.g. loose coins that were not in an envelope.'
+                : short
+                  ? 'What explains the shortfall?'
+                  : 'Anything worth noting about this count.'
           }
           fullWidth
         />
@@ -1932,19 +1958,6 @@ function NewCountSheet({
 
         <TwoPersonBlock state={twoPerson} witnessesError={witnessesError} action="count" />
 
-        <SheetBlock
-          title="Manager sign-off"
-          sub="Pick the manager signing off this count. Their email lands on the audit row."
-        >
-          <ManagerPicker
-            managers={managers}
-            value={managerId}
-            onChange={(id) => {
-              setManagerId(id);
-            }}
-          />
-        </SheetBlock>
-
         {error ? (
           <p
             role="alert"
@@ -1963,6 +1976,205 @@ function NewCountSheet({
         ) : null}
       </div>
     </BottomSheet>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Extra cash — the envelope log
+//
+// Every cash payment goes into the safe in an envelope with the order
+// number and the customer's name on it. A surplus means an envelope (or
+// loose cash) that Lounge never recorded. The counter downloads the
+// list of what SHOULD be there, ticks each envelope off, and logs the
+// leftovers here: what the envelope says, how much was inside, and
+// which employee processed it. Saved on the count for review.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function ExtraCashBlock({
+  diffPence,
+  envelopes,
+  staffNames,
+  onAdd,
+  onUpdate,
+  onRemove,
+  envelopesPence,
+  envelopeCount,
+  envelopeSince,
+  onDownloadList,
+  isMobile,
+  disabled,
+  clues,
+}: {
+  diffPence: number;
+  envelopes: EnvelopeDraft[];
+  staffNames: StaffNameRow[];
+  onAdd: () => void;
+  onUpdate: (key: number, patch: Partial<EnvelopeDraft>) => void;
+  onRemove: (key: number) => void;
+  envelopesPence: number;
+  envelopeCount: number;
+  envelopeSince: string;
+  onDownloadList: () => void;
+  isMobile: boolean;
+  disabled: boolean;
+  clues: CashClue[];
+}) {
+  const remaining = diffPence - envelopesPence;
+  const explained = remaining === 0 && envelopes.length > 0;
+  const steps = [
+    `Take every envelope out of the safe.`,
+    `Download the envelope list: the ${formatNumber(envelopeCount)} cash payment${envelopeCount === 1 ? '' : 's'} recorded since cash was last taken out on ${formatLongDate(envelopeSince)}. Tick each envelope off against its order number and name.`,
+    `Any envelope left over was never recorded in Lounge. Log it below, exactly as written on it, with the employee who processed it.`,
+  ];
+  return (
+    <SheetBlock
+      title="Log where the extra came from"
+      sub={`There is ${formatPence(diffPence)} in the safe that Lounge has no record of.`}
+      icon={<Mail size={16} aria-hidden />}
+      aside={
+        <Button variant="secondary" size="sm" onClick={onDownloadList}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
+            <FileSpreadsheet size={14} aria-hidden /> Download envelope list
+          </span>
+        </Button>
+      }
+    >
+      <ol
+        style={{
+          margin: 0,
+          paddingLeft: theme.space[5],
+          display: 'flex',
+          flexDirection: 'column',
+          gap: theme.space[2],
+          fontSize: theme.type.size.sm,
+          color: theme.color.ink,
+          lineHeight: theme.type.leading.normal,
+        }}
+      >
+        {steps.map((s, i) => (
+          <li key={i}>{s}</li>
+        ))}
+      </ol>
+
+      {envelopes.length > 0 ? (
+        <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
+          {envelopes.map((e, idx) => (
+            <li
+              key={e.key}
+              style={{
+                padding: theme.space[4],
+                borderRadius: theme.radius.input,
+                background: theme.color.surface,
+                border: `1px solid ${theme.color.border}`,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: theme.space[3],
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: theme.space[3] }}>
+                <span
+                  style={{
+                    fontSize: 11,
+                    fontWeight: theme.type.weight.semibold,
+                    color: theme.color.inkMuted,
+                    textTransform: 'uppercase',
+                    letterSpacing: theme.type.tracking.wide,
+                  }}
+                >
+                  Envelope {idx + 1}
+                </span>
+                <Button variant="tertiary" size="sm" onClick={() => onRemove(e.key)} disabled={disabled}>
+                  Remove
+                </Button>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: theme.space[3] }}>
+                <Input
+                  label="Order number on the envelope"
+                  value={e.order_ref}
+                  onChange={(ev) => onUpdate(e.key, { order_ref: ev.target.value })}
+                  placeholder="e.g. LAP-01064"
+                  fullWidth
+                  disabled={disabled}
+                />
+                <Input
+                  label="Customer name on the envelope"
+                  value={e.customer_name}
+                  onChange={(ev) => onUpdate(e.key, { customer_name: ev.target.value })}
+                  placeholder="As written"
+                  fullWidth
+                  disabled={disabled}
+                />
+                <Input
+                  label="Amount inside (£)"
+                  numericFormat="currency"
+                  value={e.amountText}
+                  onChange={(ev) => onUpdate(e.key, { amountText: ev.target.value })}
+                  placeholder="e.g. 70.00"
+                  fullWidth
+                  disabled={disabled}
+                />
+                <DropdownSelect
+                  label="Employee who processed it"
+                  value={e.processed_by}
+                  onChange={(v) => onUpdate(e.key, { processed_by: v })}
+                  placeholder="Pick the employee"
+                  options={staffNames.map((s) => ({ value: s.account_id, label: s.name }))}
+                />
+              </div>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          gap: theme.space[3],
+          flexWrap: 'wrap',
+        }}
+      >
+        <span
+          style={{
+            fontSize: theme.type.size.sm,
+            fontWeight: theme.type.weight.semibold,
+            color: explained ? theme.color.accent : remaining < 0 ? theme.color.alert : theme.color.ink,
+            fontVariantNumeric: 'tabular-nums',
+          }}
+        >
+          {envelopes.length === 0
+            ? `Nothing logged yet. ${formatPence(diffPence)} to account for.`
+            : explained
+              ? `All ${formatPence(diffPence)} accounted for by ${formatNumber(envelopes.length)} envelope${envelopes.length === 1 ? '' : 's'}.`
+              : remaining < 0
+                ? `Envelopes add up to ${formatPence(envelopesPence)}, more than the ${formatPence(diffPence)} extra.`
+                : `${formatPence(envelopesPence)} logged · ${formatPence(remaining)} still to account for.`}
+        </span>
+        <Button variant={envelopes.length === 0 ? 'primary' : 'secondary'} size="sm" onClick={onAdd} disabled={disabled}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
+            <Plus size={14} aria-hidden /> {envelopes.length === 0 ? 'Log an envelope' : 'Log another envelope'}
+          </span>
+        </Button>
+      </div>
+
+      {clues.length > 0 ? (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
+          <span
+            style={{
+              fontSize: 11,
+              fontWeight: theme.type.weight.semibold,
+              color: theme.color.inkMuted,
+              textTransform: 'uppercase',
+              letterSpacing: theme.type.tracking.wide,
+            }}
+          >
+            Lounge also spotted
+          </span>
+          <ClueList clues={clues} />
+        </div>
+      ) : null}
+    </SheetBlock>
   );
 }
 
@@ -2043,239 +2255,6 @@ function SheetBlock({
   );
 }
 
-// Note-and-coin count grid. Pounds on the left (£50 down to £1), pence
-// on the right (50p down to 1p): six rows each, so the two columns sit
-// level and the sheet reads like the paper till sheet it replaces. One
-// column on a phone. Each row: denomination, how many, line value. The
-// running total sits underneath in the same large figure style as the
-// "Expected in safe" block above it, so the eye compares the two
-// directly. Notes and coins are still totalled separately underneath,
-// because "how much of this is coins" is the first thing the pence
-// clue needs.
-function DenominationGrid({
-  counts,
-  onChange,
-  isMobile,
-  disabled,
-  coinsPence,
-  totalPence,
-}: {
-  counts: DenominationCounts;
-  onChange: (next: DenominationCounts) => void;
-  isMobile: boolean;
-  disabled: boolean;
-  coinsPence: number;
-  totalPence: number;
-}) {
-  const pounds = DENOMINATIONS.filter((d) => d.pence >= 100);
-  const pence = DENOMINATIONS.filter((d) => d.pence < 100);
-  const poundsPence = pounds.reduce((s, d) => s + d.pence * (counts[d.pence] ?? 0), 0);
-  const notesPence = totalPence - coinsPence;
-  const setQty = (pence: number, qty: number) => {
-    const next = { ...counts };
-    if (qty > 0) next[pence] = qty;
-    else delete next[pence];
-    onChange(next);
-  };
-  const column = (label: string, items: typeof pounds, subtotal: number) => (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2], minWidth: 0 }}>
-      <div
-        style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'baseline',
-          gap: theme.space[3],
-          paddingBottom: theme.space[1],
-        }}
-      >
-        <span
-          style={{
-            fontSize: 11,
-            fontWeight: theme.type.weight.semibold,
-            color: theme.color.inkMuted,
-            textTransform: 'uppercase',
-            letterSpacing: theme.type.tracking.wide,
-          }}
-        >
-          {label}
-        </span>
-        <span
-          style={{
-            fontSize: theme.type.size.sm,
-            fontWeight: theme.type.weight.semibold,
-            color: subtotal > 0 ? theme.color.ink : theme.color.inkSubtle,
-            fontVariantNumeric: 'tabular-nums',
-          }}
-        >
-          {formatPence(subtotal)}
-        </span>
-      </div>
-      {items.map((d) => {
-        const qty = counts[d.pence] ?? 0;
-        return (
-          <div
-            key={d.pence}
-            style={{
-              display: 'grid',
-              gridTemplateColumns: '48px 1fr 88px',
-              alignItems: 'center',
-              gap: theme.space[3],
-            }}
-          >
-            <span
-              style={{
-                fontSize: theme.type.size.base,
-                fontWeight: theme.type.weight.semibold,
-                color: theme.color.ink,
-                fontVariantNumeric: 'tabular-nums',
-              }}
-            >
-              {d.label}
-            </span>
-            <QuantityField
-              ariaLabel={`How many ${d.label} ${d.kind === 'note' ? 'notes' : 'coins'}`}
-              value={qty}
-              onChange={(q) => setQty(d.pence, q)}
-              disabled={disabled}
-            />
-            <span
-              style={{
-                textAlign: 'right',
-                fontSize: theme.type.size.sm,
-                fontWeight: qty > 0 ? theme.type.weight.semibold : theme.type.weight.regular,
-                color: qty > 0 ? theme.color.ink : theme.color.inkSubtle,
-                fontVariantNumeric: 'tabular-nums',
-                whiteSpace: 'nowrap',
-              }}
-            >
-              {formatPence(d.pence * qty)}
-            </span>
-          </div>
-        );
-      })}
-    </div>
-  );
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[4] }}>
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr',
-          gap: isMobile ? theme.space[5] : theme.space[6],
-        }}
-      >
-        {column('Pounds', pounds, poundsPence)}
-        {column('Pence', pence, totalPence - poundsPence)}
-      </div>
-      <div
-        style={{
-          borderTop: `1px solid ${theme.color.border}`,
-          paddingTop: theme.space[4],
-          display: 'flex',
-          alignItems: 'flex-end',
-          justifyContent: 'space-between',
-          gap: theme.space[3],
-          flexWrap: 'wrap',
-        }}
-      >
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-          <span
-            style={{
-              fontSize: 11,
-              fontWeight: theme.type.weight.semibold,
-              color: theme.color.inkMuted,
-              textTransform: 'uppercase',
-              letterSpacing: theme.type.tracking.wide,
-            }}
-          >
-            Counted in safe
-          </span>
-          <span
-            style={{
-              fontSize: theme.type.size.sm,
-              color: theme.color.inkMuted,
-              fontVariantNumeric: 'tabular-nums',
-            }}
-          >
-            {totalPence > 0
-              ? `${formatPence(notesPence)} in notes, ${formatPence(coinsPence)} in coins.`
-              : 'Nothing entered yet.'}
-          </span>
-        </div>
-        <span
-          style={{
-            fontSize: theme.type.size.xxl,
-            fontWeight: theme.type.weight.semibold,
-            color: totalPence > 0 ? theme.color.ink : theme.color.inkSubtle,
-            fontVariantNumeric: 'tabular-nums',
-            letterSpacing: theme.type.tracking.tight,
-            lineHeight: theme.type.leading.tight,
-          }}
-        >
-          {formatPence(totalPence)}
-        </span>
-      </div>
-    </div>
-  );
-}
-
-// Whole-number quantity field. Same surface, radius, and focus ring as
-// the shared Input, at the 48px touch-target height so twelve of them
-// fit a tablet without scrolling.
-function QuantityField({
-  value,
-  onChange,
-  ariaLabel,
-  disabled,
-}: {
-  value: number;
-  onChange: (qty: number) => void;
-  ariaLabel: string;
-  disabled: boolean;
-}) {
-  const [focused, setFocused] = useState(false);
-  return (
-    <input
-      type="text"
-      inputMode="numeric"
-      pattern="[0-9]*"
-      aria-label={ariaLabel}
-      value={value > 0 ? String(value) : ''}
-      placeholder="0"
-      disabled={disabled}
-      onFocus={(e) => {
-        setFocused(true);
-        e.currentTarget.select();
-      }}
-      onBlur={() => setFocused(false)}
-      onChange={(e) => {
-        const digits = e.target.value.replace(/\D/g, '').slice(0, 5);
-        onChange(digits.length === 0 ? 0 : Number.parseInt(digits, 10));
-      }}
-      style={{
-        width: '100%',
-        height: theme.layout.minTouchTarget,
-        boxSizing: 'border-box',
-        border: 'none',
-        outline: 'none',
-        borderRadius: theme.radius.input,
-        background: theme.color.surface,
-        boxShadow: focused
-          ? `inset 0 0 0 1px ${theme.color.ink}`
-          : `inset 0 0 0 1px ${theme.color.border}`,
-        transition: `box-shadow ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
-        fontFamily: 'inherit',
-        fontSize: theme.type.size.base,
-        fontWeight: value > 0 ? theme.type.weight.semibold : theme.type.weight.regular,
-        color: theme.color.ink,
-        textAlign: 'center',
-        fontVariantNumeric: 'tabular-nums',
-        padding: `0 ${theme.space[3]}px`,
-      }}
-    />
-  );
-}
-
 // The plain-English verdict: matched, over, or short. Sits between the
 // count and the detective work so a passer-by reads "counted, expected,
 // difference" in one glance.
@@ -2284,17 +2263,21 @@ function DifferencePanel({
   actualPence,
   expectedPence,
   thresholdPence,
+  explainedPence = 0,
 }: {
   diff: number;
   actualPence: number;
   expectedPence: number;
   thresholdPence: number | null;
+  /** Surplus already accounted for by logged envelopes. */
+  explainedPence?: number;
 }) {
   const matched = diff === 0;
   const over = diff > 0;
-  const colour = matched ? theme.color.accent : over ? theme.color.warn : theme.color.alert;
-  const background = matched ? theme.color.accentBg : over ? '#FFF6E5' : '#FFEEEC';
-  const overThreshold = thresholdPence !== null && Math.abs(diff) >= thresholdPence;
+  const fullyExplained = over && explainedPence === diff;
+  const colour = matched || fullyExplained ? theme.color.accent : over ? theme.color.warn : theme.color.alert;
+  const background = matched || fullyExplained ? theme.color.accentBg : over ? '#FFF6E5' : '#FFEEEC';
+  const overThreshold = thresholdPence !== null && Math.abs(diff - (over ? explainedPence : 0)) >= thresholdPence;
   return (
     <div
       role="status"
@@ -2322,7 +2305,7 @@ function DifferencePanel({
           flexShrink: 0,
         }}
       >
-        {matched ? <CheckCircle2 size={18} aria-hidden /> : <AlertTriangle size={18} aria-hidden />}
+        {matched || fullyExplained ? <CheckCircle2 size={18} aria-hidden /> : <AlertTriangle size={18} aria-hidden />}
       </span>
       <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[1], minWidth: 0 }}>
         <p
@@ -2338,7 +2321,7 @@ function DifferencePanel({
         >
           {matched
             ? 'Matches what Lounge expected'
-            : `${formatPence(Math.abs(diff))} ${over ? 'more' : 'less'} than expected`}
+            : `${formatPence(Math.abs(diff))} ${over ? 'more' : 'less'} than expected${fullyExplained ? ', all accounted for' : ''}`}
         </p>
         <p
           style={{
@@ -2352,9 +2335,9 @@ function DifferencePanel({
           {matched
             ? `You counted ${formatPence(actualPence)}, exactly what the records say. Nothing to explain.`
             : over
-              ? `You counted ${formatPence(actualPence)}. The records say ${formatPence(expectedPence)}. There is more cash in the safe than Lounge knows about, so something went in without being recorded.`
+              ? `You counted ${formatPence(actualPence)}. The records say ${formatPence(expectedPence)}. There is more cash in the safe than Lounge knows about: an envelope went in without its payment being recorded.`
               : `You counted ${formatPence(actualPence)}. The records say ${formatPence(expectedPence)}. There is less cash in the safe than Lounge expects, so some recorded cash never reached it or left without being recorded.`}
-          {!matched && overThreshold ? ' A note is required before this can be signed.' : ''}
+          {!matched && !fullyExplained && overThreshold ? ' A note is required before this can be signed.' : ''}
         </p>
       </div>
     </div>
@@ -2540,8 +2523,8 @@ function PaymentChecklist({
   const done = lines.length > 0 && checked.size === lines.length;
   return (
     <SheetBlock
-      title="Check each payment against its receipt"
-      sub={`${formatNumber(lines.length)} cash payment${lines.length === 1 ? '' : 's'} recorded in this period. Tick each one off as you match it to a receipt or till slip. Download the list to check on paper.`}
+      title="Tick off each envelope"
+      sub={`${formatNumber(lines.length)} cash payment${lines.length === 1 ? '' : 's'} recorded since the last count, each one an envelope. Tick each off as you match it by order number and name. Download the full statement to check on paper.`}
       icon={<ListChecks size={16} aria-hidden />}
       aside={
         <div style={{ display: 'flex', gap: theme.space[2], flexWrap: 'wrap' }}>
@@ -2576,8 +2559,8 @@ function PaymentChecklist({
           }}
         >
           {done
-            ? `All ${formatNumber(lines.length)} checked, ${formatPence(total)} accounted for.`
-            : `${formatNumber(checked.size)} of ${formatNumber(lines.length)} checked · ${formatPence(remaining)} still to check`}
+            ? `All ${formatNumber(lines.length)} envelopes matched, ${formatPence(total)} accounted for.`
+            : `${formatNumber(checked.size)} of ${formatNumber(lines.length)} envelopes matched · ${formatPence(remaining)} still to match`}
         </span>
         <Button variant="secondary" size="sm" onClick={() => setExpanded((v) => !v)}>
           {expanded ? 'Hide the list' : 'Show the list'}
@@ -2636,7 +2619,7 @@ function PaymentChecklist({
                       fontVariantNumeric: 'tabular-nums',
                     }}
                   >
-                    {[formatDateTime(l.taken_at), l.appointment_ref, `by ${l.taken_by_name}`]
+                    {[l.appointment_ref, formatDateTime(l.taken_at), `by ${l.taken_by_name}`]
                       .filter((s): s is string => !!s)
                       .join(' · ')}
                   </span>
@@ -2658,53 +2641,6 @@ function PaymentChecklist({
         </ul>
       ) : null}
     </SheetBlock>
-  );
-}
-
-function ManagerPicker({
-  managers,
-  value,
-  onChange,
-}: {
-  managers: ManagerRow[];
-  value: string;
-  onChange: (id: string) => void;
-}) {
-  if (managers.length === 0) {
-    return (
-      <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.warn }}>
-        A count has to be signed off by a different manager. Add a second Manager-flagged staff member in Admin, Staff first.
-      </p>
-    );
-  }
-  return (
-    <select
-      value={value}
-      onChange={(e) => {
-        const m = managers.find((mgr) => mgr.account_id === e.target.value);
-        if (m) onChange(m.account_id);
-      }}
-      style={{
-        appearance: 'none',
-        height: theme.layout.inputHeight,
-        background: theme.color.surface,
-        borderRadius: theme.radius.input,
-        border: `1px solid ${theme.color.border}`,
-        padding: `0 ${theme.space[4]}px`,
-        fontFamily: 'inherit',
-        fontSize: theme.type.size.base,
-        color: theme.color.ink,
-      }}
-    >
-      <option value="" disabled>
-        Pick a manager
-      </option>
-      {managers.map((m) => (
-        <option key={m.account_id} value={m.account_id}>
-          {m.name} ({m.login_email})
-        </option>
-      ))}
-    </select>
   );
 }
 
@@ -2807,7 +2743,7 @@ function CountDetailsSheet({
             <span style={{ color: theme.color.ink, fontWeight: theme.type.weight.medium }}>
               {data.count.counted_by_name}
             </span>
-            {data.count.signed_off_by_name ? (
+            {data.count.signed_off_by_name && data.count.signed_off_by_name !== data.count.witness_name ? (
               <>
                 {' · '}
                 Signed by{' '}
@@ -2850,12 +2786,67 @@ function CountDetailsSheet({
               margin: 0,
             }}
           />
-          {data.denominations.length > 0 ? (
+          {data.unrecorded.length > 0 ? (
             <Section
-              title="How it was counted"
-              sub="The notes and coins entered at the safe. Stored with the count and never edited."
+              title={`Envelopes not recorded in Lounge (${formatNumber(data.unrecorded.length)})`}
+              sub="Found in the safe at this count with no matching payment. Logged exactly as written on the envelope, with the employee who processed it."
             >
-              <DenominationSummary rows={data.denominations} totalPence={data.count.actual_pence} />
+              <ul
+                style={{
+                  listStyle: 'none',
+                  margin: 0,
+                  padding: 0,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: theme.space[2],
+                }}
+              >
+                {data.unrecorded.map((u) => (
+                  <li
+                    key={u.id}
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: '1fr auto',
+                      gap: theme.space[3],
+                      padding: `${theme.space[2]}px ${theme.space[3]}px`,
+                      borderRadius: theme.radius.input,
+                      background: '#FFF6E5',
+                    }}
+                  >
+                    <div style={{ minWidth: 0 }}>
+                      <p
+                        style={{
+                          margin: 0,
+                          fontSize: theme.type.size.sm,
+                          fontWeight: theme.type.weight.semibold,
+                        }}
+                      >
+                        {[u.order_ref, u.customer_name].filter((x): x is string => !!x).join(' · ')}
+                      </p>
+                      <p
+                        style={{
+                          margin: `${theme.space[1]}px 0 0`,
+                          fontSize: theme.type.size.xs,
+                          color: theme.color.inkMuted,
+                        }}
+                      >
+                        {u.processed_by_name ? `Processed by ${u.processed_by_name}` : 'Processed by unknown'}
+                        {u.note ? ` · ${u.note}` : ''}
+                      </p>
+                    </div>
+                    <span
+                      style={{
+                        fontSize: theme.type.size.sm,
+                        fontWeight: theme.type.weight.semibold,
+                        color: theme.color.warn,
+                        fontVariantNumeric: 'tabular-nums',
+                      }}
+                    >
+                      +{formatPence(u.amount_pence)}
+                    </span>
+                  </li>
+                ))}
+              </ul>
             </Section>
           ) : null}
           <Section title={`Cash payments in this count (${formatNumber(data.lines.length)})`}>
@@ -3013,6 +3004,23 @@ function exportActivityCsv(position: CashPosition): void {
   }
 }
 
+// The envelope list: recorded cash payments since cash was last taken
+// out, one row per envelope that should be in the safe.
+function exportEnvelopeListCsv(position: CashPosition): void {
+  try {
+    const csv = buildEnvelopeListCsv(position);
+    downloadTextFile(csv, `envelopes_in_safe_${position.period_end.slice(0, 10)}.csv`, 'text/csv;charset=utf-8');
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    void logFailure({
+      source: 'cash.envelopes.csv',
+      severity: 'error',
+      message,
+      context: { period_end: position.period_end },
+    });
+  }
+}
+
 async function exportActivityPdf(position: CashPosition): Promise<void> {
   try {
     const blob = await buildCashActivityPdf(position, { name: 'Venneir', addressLine: null });
@@ -3026,73 +3034,6 @@ async function exportActivityPdf(position: CashPosition): Promise<void> {
       context: { period_end: position.period_end },
     });
   }
-}
-
-// Read-only note-and-coin breakdown for a past count. Only the
-// denominations that were present are listed, largest first, with the
-// counted total underneath so the reader can see it adds up.
-function DenominationSummary({
-  rows,
-  totalPence,
-}: {
-  rows: Array<{ denomination_pence: number; quantity: number }>;
-  totalPence: number | null;
-}) {
-  const byPence = new Map(rows.map((r) => [r.denomination_pence, r.quantity]));
-  const present = DENOMINATIONS.filter((d) => (byPence.get(d.pence) ?? 0) > 0);
-  const coins = present.filter((d) => d.kind === 'coin').reduce((s, d) => s + d.pence * (byPence.get(d.pence) ?? 0), 0);
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
-      <ul
-        style={{
-          listStyle: 'none',
-          margin: 0,
-          padding: 0,
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))',
-          gap: theme.space[2],
-        }}
-      >
-        {present.map((d) => {
-          const q = byPence.get(d.pence) ?? 0;
-          return (
-            <li
-              key={d.pence}
-              style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'baseline',
-                gap: theme.space[2],
-                padding: `${theme.space[2]}px ${theme.space[3]}px`,
-                borderRadius: theme.radius.input,
-                background: theme.color.bg,
-                fontVariantNumeric: 'tabular-nums',
-              }}
-            >
-              <span style={{ fontSize: theme.type.size.sm, color: theme.color.ink }}>
-                <span style={{ fontWeight: theme.type.weight.semibold }}>{d.label}</span>
-                <span style={{ color: theme.color.inkMuted }}> × {formatNumber(q)}</span>
-              </span>
-              <span style={{ fontSize: theme.type.size.sm, fontWeight: theme.type.weight.semibold, color: theme.color.ink }}>
-                {formatPence(d.pence * q)}
-              </span>
-            </li>
-          );
-        })}
-      </ul>
-      <p
-        style={{
-          margin: 0,
-          fontSize: theme.type.size.sm,
-          color: theme.color.inkMuted,
-          fontVariantNumeric: 'tabular-nums',
-        }}
-      >
-        {totalPence === null ? 'No total recorded.' : `${formatPence(totalPence)} counted`}
-        {coins > 0 ? `, of which ${formatPence(coins)} in coins.` : '.'}
-      </p>
-    </div>
-  );
 }
 
 async function resolveLocationId(): Promise<string> {

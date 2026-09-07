@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   buildActivityStatement,
   buildCashActivityCsv,
+  buildEnvelopeListCsv,
+  envelopeListSince,
   findCombinations,
   findDifferenceClues,
 } from './cashReconcile.ts';
@@ -280,5 +282,27 @@ describe('buildCashActivityCsv', () => {
       baseline_pence: 100,
     });
     expect(buildCashActivityCsv(p)).toContain('"Lloyds drop, slip #84"');
+  });
+});
+
+describe('envelope list', () => {
+  it('lists cash payments since the last time cash was taken out, oldest first', () => {
+    const { since, rows } = envelopeListSince(REAL);
+    expect(since).toBe('2026-07-03T17:55:04Z');
+    expect(rows.map((r) => r.order_ref)).toEqual(['LAP-p1', 'LAP-p2', 'LAP-p3', 'LAP-p4']);
+    expect(rows[0]?.customer_name).toBe('John Kerr');
+  });
+
+  it('falls back to the count window when nothing has been taken out', () => {
+    const p = position({ lines: [payment('p1', 5000, '2026-08-01T10:00:00Z')] });
+    expect(envelopeListSince(p).since).toBe(p.period_start);
+  });
+
+  it('builds a CSV with order number, customer, amount, and a blank Envelope found column', () => {
+    const csv = buildEnvelopeListCsv(REAL);
+    const lines = csv.replace(/^\uFEFF/, '').trim().split('\r\n');
+    expect(lines[0]).toBe('Order number,Customer,Amount (£),Date,Time,Taken by,Envelope found');
+    expect(lines[1]).toContain('LAP-p1,John Kerr,70.00');
+    expect(lines[lines.length - 1]).toContain('Total,,559.00');
   });
 });

@@ -982,16 +982,17 @@ function ensureNumber(v: number | undefined, key: string): number {
 //      every cash payment in that period as an immutable line row,
 //      records expected_pence at snapshot time. The counter is the
 //      caller. Returns the new count id.
-//   2. saveCashCountDenominations — stores how the cash was physically
-//      counted (how many of each note and coin). Optional only for the
-//      "I already have a total" path; the DB refuses to sign a count
-//      whose breakdown disagrees with the total.
-//   3. updateCashCountActual — counter enters the physical amount
+//   2. updateCashCountActual — counter enters the physical amount
 //      they observed in the safe. Variance is the generated column,
 //      so we just write actual_pence + notes. Allowed only while the
 //      count is pending.
-//   4. signCashCount — a different manager signs. Status flips to
-//      signed with both timestamps + accounts ids landed.
+//   3. saveCashCountUnrecorded — when there is more cash than expected,
+//      the envelopes that no recorded payment matched.
+//   4. signCashCount — the safe witness signs as the second person.
+//      Status flips to signed with both timestamps + accounts ids
+//      landed. The DB's counter/signer distinct check holds because
+//      the two-person trigger already refused a witness equal to the
+//      counter.
 //
 // Each step throws on validation failure with a meaningful message,
 // no silent fallback.
@@ -1111,75 +1112,58 @@ export async function createCashCount(input: CreateCashCountInput): Promise<{ co
   return { count_id, expected_pence, lines_count: keptPayments.length, kind };
 }
 
-// ── Denomination breakdown ─────────────────────────────────────────────────
+// ── Unrecorded envelopes ───────────────────────────────────────────────────
 //
-// UK circulating notes and coins, largest first. Mirrors the CHECK on
-// lng_cash_count_denominations.denomination_pence (migration
-// 20260907000010). Adding a denomination requires a migration AND an
-// entry here.
+// Every cash payment goes into the safe in an envelope marked with the
+// order number and the customer's name. When a count finds more cash
+// than Lounge expects, the counter matches every envelope to the
+// recorded payments and logs the leftovers here (migration
+// 20260907000014): what the envelope says, how much was in it, and which
+// employee processed it. Written while the count is pending, immutable
+// once signed, reviewed from the count's details.
 
-export interface Denomination {
-  pence: number;
-  label: string;
-  kind: 'note' | 'coin';
+export interface UnrecordedEnvelopeInput {
+  amount_pence: number;
+  order_ref: string | null;
+  customer_name: string | null;
+  processed_by: string | null;
+  note?: string | null;
 }
 
-export const DENOMINATIONS: readonly Denomination[] = [
-  { pence: 5000, label: '£50', kind: 'note' },
-  { pence: 2000, label: '£20', kind: 'note' },
-  { pence: 1000, label: '£10', kind: 'note' },
-  { pence: 500, label: '£5', kind: 'note' },
-  { pence: 200, label: '£2', kind: 'coin' },
-  { pence: 100, label: '£1', kind: 'coin' },
-  { pence: 50, label: '50p', kind: 'coin' },
-  { pence: 20, label: '20p', kind: 'coin' },
-  { pence: 10, label: '10p', kind: 'coin' },
-  { pence: 5, label: '5p', kind: 'coin' },
-  { pence: 2, label: '2p', kind: 'coin' },
-  { pence: 1, label: '1p', kind: 'coin' },
-];
-
-/** quantity of each denomination, keyed by pence. Missing = 0. */
-export type DenominationCounts = Record<number, number>;
-
-export function denominationTotalPence(counts: DenominationCounts): number {
-  let total = 0;
-  for (const d of DENOMINATIONS) {
-    const q = counts[d.pence] ?? 0;
-    if (!Number.isInteger(q) || q < 0) {
-      throw new Error(`Invalid quantity for ${d.label}: ${q}`);
-    }
-    total += d.pence * q;
-  }
-  return total;
+export interface CashCountUnrecordedRow {
+  id: string;
+  amount_pence: number;
+  order_ref: string | null;
+  customer_name: string | null;
+  processed_by_name: string | null;
+  note: string | null;
 }
 
-export interface CashCountDenominationRow {
-  denomination_pence: number;
-  quantity: number;
-}
-
-/** Persist the breakdown against a pending count. Rows with quantity 0
- *  are skipped so the stored record is only what was actually there.
- *  Throws if the breakdown does not add up to `actualPence`; the DB
- *  trigger enforces the same rule at sign-off. */
-export async function saveCashCountDenominations(
+export async function saveCashCountUnrecorded(
   countId: string,
-  counts: DenominationCounts,
-  actualPence: number,
+  envelopes: UnrecordedEnvelopeInput[],
 ): Promise<void> {
-  const total = denominationTotalPence(counts);
-  if (total !== actualPence) {
-    throw new Error(
-      `The note and coin breakdown adds up to ${total} pence but the counted total is ${actualPence} pence.`,
-    );
-  }
-  const rows = DENOMINATIONS
-    .filter((d) => (counts[d.pence] ?? 0) > 0)
-    .map((d) => ({ count_id: countId, denomination_pence: d.pence, quantity: counts[d.pence] }));
+  const rows = envelopes.map((e, i) => {
+    if (!Number.isInteger(e.amount_pence) || e.amount_pence <= 0) {
+      throw new Error(`Envelope ${i + 1}: enter the amount that was inside it.`);
+    }
+    const orderRef = e.order_ref?.trim() || null;
+    const customer = e.customer_name?.trim() || null;
+    if (!orderRef && !customer) {
+      throw new Error(`Envelope ${i + 1}: enter the order number or the customer's name written on it.`);
+    }
+    return {
+      count_id: countId,
+      amount_pence: e.amount_pence,
+      order_ref: orderRef,
+      customer_name: customer,
+      processed_by: e.processed_by || null,
+      note: e.note?.trim() || null,
+    };
+  });
   if (rows.length === 0) return;
-  const { error } = await supabase.from('lng_cash_count_denominations').insert(rows);
-  if (error) throw new Error(`Could not save the note and coin breakdown: ${error.message}`);
+  const { error } = await supabase.from('lng_cash_count_unrecorded').insert(rows);
+  if (error) throw new Error(`Could not log the envelopes: ${error.message}`);
 }
 
 // ── Record a cash withdrawal ───────────────────────────────────────────────
@@ -1264,7 +1248,7 @@ export async function signCashCount(input: {
   signer_account_id: string;
 }): Promise<void> {
   if (!input.signer_account_id) {
-    throw new Error('Pick the manager signing off this count.');
+    throw new Error('The safe witness must be recorded before the count can be signed.');
   }
 
   // Sanity: the row must exist.
@@ -1318,9 +1302,9 @@ export interface CashCountStatement {
   count: CashCountRow;
   lines: CashCountStatementLine[];
   withdrawals: CashCountStatementWithdrawal[];
-  /** How the cash was physically counted. Empty for counts made before
-   *  the breakdown existed, or entered as a plain total. */
-  denominations: CashCountDenominationRow[];
+  /** Envelopes found at the count that no recorded payment matched.
+   *  Empty when the count matched or came up short. */
+  unrecorded: CashCountUnrecordedRow[];
 }
 
 type RawStatementCount = RawCashCount;
@@ -1347,7 +1331,7 @@ export function useCashCountStatement(countId: string | null): StatementResult {
     setError(null);
     (async () => {
       try {
-        const [countRes, linesRes, withdrawalLinesRes, denominationsRes] = await Promise.all([
+        const [countRes, linesRes, withdrawalLinesRes, unrecordedRes] = await Promise.all([
           supabase
             .from('lng_cash_counts')
             .select(
@@ -1370,16 +1354,16 @@ export function useCashCountStatement(countId: string | null): StatementResult {
             .eq('count_id', countId)
             .order('taken_at', { ascending: true }),
           supabase
-            .from('lng_cash_count_denominations')
-            .select('denomination_pence, quantity')
+            .from('lng_cash_count_unrecorded')
+            .select('id, amount_pence, order_ref, customer_name, note, processed_by:accounts!processed_by ( first_name, last_name, name )')
             .eq('count_id', countId)
-            .order('denomination_pence', { ascending: false }),
+            .order('created_at', { ascending: true }),
         ]);
         if (cancelled) return;
         if (countRes.error) throw new Error(countRes.error.message);
         if (linesRes.error) throw new Error(linesRes.error.message);
         if (withdrawalLinesRes.error) throw new Error(withdrawalLinesRes.error.message);
-        if (denominationsRes.error) throw new Error(denominationsRes.error.message);
+        if (unrecordedRes.error) throw new Error(unrecordedRes.error.message);
         if (!countRes.data) throw new Error('Count not found');
         const [shaped] = shapeCashCounts([countRes.data as RawStatementCount]);
         if (!shaped) throw new Error('Count not found');
@@ -1412,12 +1396,26 @@ export function useCashCountStatement(countId: string | null): StatementResult {
           taken_by_name: w.taken_by_name_snapshot,
         }));
         if (cancelled) return;
-        const denominations = ((denominationsRes.data ?? []) as CashCountDenominationRow[]).map((d) => ({
-          denomination_pence: d.denomination_pence,
-          quantity: d.quantity,
+        const unrecorded: CashCountUnrecordedRow[] = ((unrecordedRes.data ?? []) as Array<{
+          id: string;
+          amount_pence: number;
+          order_ref: string | null;
+          customer_name: string | null;
+          note: string | null;
+          processed_by:
+            | { first_name: string | null; last_name: string | null; name: string | null }
+            | { first_name: string | null; last_name: string | null; name: string | null }[]
+            | null;
+        }>).map((u) => ({
+          id: u.id,
+          amount_pence: u.amount_pence,
+          order_ref: u.order_ref,
+          customer_name: u.customer_name,
+          processed_by_name: u.processed_by ? composePersonName(pickOne(u.processed_by)) : null,
+          note: u.note,
         }));
         if (cancelled) return;
-        setData({ count: shaped, lines, withdrawals, denominations });
+        setData({ count: shaped, lines, withdrawals, unrecorded });
         setLoading(false);
       } catch (e: unknown) {
         if (cancelled) return;

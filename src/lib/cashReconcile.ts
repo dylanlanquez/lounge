@@ -517,6 +517,62 @@ export function buildCashActivityCsv(position: CashPosition): string {
   return `\uFEFF${lines.join('\r\n')}\r\n`;
 }
 
+// ── Exports: envelope list ─────────────────────────────────────────────────
+//
+// Every cash payment goes into the safe in an envelope marked with the
+// order number and the customer's name. When the safe is banked the
+// envelopes go with the cash, so the envelopes physically in the safe
+// should be exactly the recorded cash payments since the last time cash
+// was taken out (or since the last count if nothing has been taken out
+// since). This list is what the counter matches each envelope against.
+
+export interface EnvelopeListRow {
+  payment_id: string;
+  order_ref: string | null;
+  customer_name: string;
+  amount_pence: number;
+  taken_at: string;
+  taken_by_name: string;
+  visit_id: string | null;
+}
+
+export function envelopeListSince(position: CashPosition): { since: string; rows: EnvelopeListRow[] } {
+  const lastOut = position.lines
+    .filter((l) => l.kind === 'withdrawal')
+    .map((l) => l.taken_at)
+    .sort()
+    .pop();
+  const since = lastOut ?? position.period_start;
+  const rows = position.lines
+    .filter((l): l is CashPositionPaymentLine => l.kind === 'payment' && l.taken_at > since)
+    .sort((a, b) => a.taken_at.localeCompare(b.taken_at))
+    .map((l) => ({
+      payment_id: l.payment_id,
+      order_ref: l.appointment_ref,
+      customer_name: l.patient_name,
+      amount_pence: l.amount_pence,
+      taken_at: l.taken_at,
+      taken_by_name: l.taken_by_name,
+      visit_id: l.visit_id,
+    }));
+  return { since, rows };
+}
+
+export function buildEnvelopeListCsv(position: CashPosition): string {
+  const { rows } = envelopeListSince(position);
+  const header = ['Order number', 'Customer', 'Amount (£)', 'Date', 'Time', 'Taken by', 'Envelope found'];
+  const lines: string[] = [header.map(csvField).join(',')];
+  for (const r of rows) {
+    lines.push(
+      [r.order_ref ?? '', r.customer_name, csvGbp(r.amount_pence), londonDate(r.taken_at), londonTime(r.taken_at), r.taken_by_name, '']
+        .map(csvField)
+        .join(','),
+    );
+  }
+  lines.push(['Total', '', csvGbp(rows.reduce((s, r) => s + r.amount_pence, 0)), '', '', '', ''].map(csvField).join(','));
+  return `\uFEFF${lines.join('\r\n')}\r\n`;
+}
+
 export function downloadTextFile(text: string, filename: string, mime: string): void {
   if (typeof document === 'undefined') {
     throw new Error('downloadTextFile called outside the browser');

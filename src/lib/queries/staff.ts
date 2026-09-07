@@ -45,6 +45,8 @@ export interface StaffRow {
   can_view_financials: boolean;
   can_count_cash: boolean;
   can_write_off: boolean;
+  // Read-only access to the Cash counts page (Safe viewer).
+  can_view_safe: boolean;
   // Two-person rule: may be recorded as the second person present when
   // the safe is opened. Grants nothing on its own.
   is_safe_witness: boolean;
@@ -123,6 +125,7 @@ interface RawJoinedRow {
   can_view_financials: boolean | null;
   can_count_cash: boolean | null;
   can_write_off: boolean | null;
+  can_view_safe?: boolean | null;
   is_safe_witness?: boolean | null;
   require_2fa: boolean | null;
   admin_page_access: string[] | null;
@@ -182,6 +185,7 @@ function mapRow(r: RawJoinedRow): StaffRow {
     can_view_financials: r.can_view_financials === true,
     can_count_cash: r.can_count_cash === true,
     can_write_off: r.can_write_off === true,
+    can_view_safe: r.can_view_safe === true,
     is_safe_witness: r.is_safe_witness === true,
     require_2fa: r.require_2fa === true,
     admin_page_access: Array.isArray(r.admin_page_access)
@@ -210,7 +214,7 @@ function mapRow(r: RawJoinedRow): StaffRow {
 }
 
 const STAFF_SELECT =
-  'id, account_id, is_admin, is_manager, is_customer_service, is_virtual_impression_clinician, clinician_self_serve, clinician_can_edit_own_hours, authorisation_code, can_view_reports, can_view_financials, can_count_cash, can_write_off, is_safe_witness, require_2fa, admin_page_access, marketing_walkthrough_enabled, role_id, status, hired_at, deactivated_at, invite_sent_at, invite_expires_at, invite_accepted_at, last_sign_in_at, account:accounts!account_id(id, first_name, last_name, name, login_email, location_id, location:locations!location_id(id, name, type, city)), role:lng_staff_roles!role_id(id, name)';
+  'id, account_id, is_admin, is_manager, is_customer_service, is_virtual_impression_clinician, clinician_self_serve, clinician_can_edit_own_hours, authorisation_code, can_view_reports, can_view_financials, can_count_cash, can_write_off, can_view_safe, is_safe_witness, require_2fa, admin_page_access, marketing_walkthrough_enabled, role_id, status, hired_at, deactivated_at, invite_sent_at, invite_expires_at, invite_accepted_at, last_sign_in_at, account:accounts!account_id(id, first_name, last_name, name, login_email, location_id, location:locations!location_id(id, name, type, city)), role:lng_staff_roles!role_id(id, name)';
 
 // Lists every staff member, active and inactive, sorted alphabetically
 // by display name. Inactive rows render with a "Deactivated" badge in
@@ -370,6 +374,35 @@ export async function setIsSafeWitness(staffMemberId: string, value: boolean): P
     .update({ is_safe_witness: value })
     .eq('id', staffMemberId);
   if (error) throw new Error(error.message);
+}
+
+// Toggles can_view_safe: read-only access to the Cash counts page and
+// its top-bar icon. Safe holders see the page without this.
+export async function setCanViewSafe(staffMemberId: string, value: boolean): Promise<void> {
+  const { error } = await supabase
+    .from('lng_staff_members')
+    .update({ can_view_safe: value })
+    .eq('id', staffMemberId);
+  if (error) throw new Error(error.message);
+}
+
+export interface StaffNameRow {
+  account_id: string;
+  name: string;
+}
+
+// Every active staff member, alphabetical. Used where a count needs to
+// say which employee processed an envelope.
+export async function listActiveStaffNames(): Promise<StaffNameRow[]> {
+  const { data, error } = await supabase
+    .from('lng_staff_members')
+    .select(STAFF_SELECT)
+    .eq('status', 'active');
+  if (error) throw new Error(error.message);
+  return ((data ?? []) as RawJoinedRow[])
+    .map(mapRow)
+    .map((s) => ({ account_id: s.account_id, name: s.display_name }))
+    .sort((a, b) => a.name.localeCompare(b.name));
 }
 
 export interface SafeWitnessRow {
@@ -1060,6 +1093,7 @@ export interface CurrentStaffMembership {
   can_view_financials: boolean;
   can_count_cash: boolean;
   can_write_off: boolean;
+  can_view_safe: boolean;
   require_2fa: boolean;
   admin_page_access: string[];
   // Per-staff marketing-content walkthrough gate (allowlist, default
@@ -1086,7 +1120,7 @@ export async function fetchCurrentStaffMembership(
   // entire auth gate. Two cheap round-trips, no schema-cache risk.
   const { data, error } = await supabase
     .from('lng_staff_members')
-    .select('id, is_admin, is_manager, is_customer_service, is_virtual_impression_clinician, clinician_can_edit_own_hours, can_view_reports, can_view_financials, can_count_cash, can_write_off, require_2fa, admin_page_access, marketing_walkthrough_enabled, role_id, status')
+    .select('id, is_admin, is_manager, is_customer_service, is_virtual_impression_clinician, clinician_can_edit_own_hours, can_view_reports, can_view_financials, can_count_cash, can_write_off, can_view_safe, require_2fa, admin_page_access, marketing_walkthrough_enabled, role_id, status')
     .eq('account_id', accountId)
     .maybeSingle();
   if (error) {
@@ -1128,6 +1162,7 @@ export async function fetchCurrentStaffMembership(
         can_view_financials: l.can_view_financials === true,
         can_count_cash: l.can_count_cash === true,
         can_write_off: l.can_write_off === true,
+        can_view_safe: false,
         require_2fa: l.require_2fa === true,
         admin_page_access: [],
         marketing_walkthrough_enabled: false,
@@ -1150,6 +1185,7 @@ export async function fetchCurrentStaffMembership(
     can_view_financials: boolean | null;
     can_count_cash: boolean | null;
     can_write_off: boolean | null;
+    can_view_safe: boolean | null;
     require_2fa: boolean | null;
     admin_page_access: unknown;
     marketing_walkthrough_enabled: boolean | null;
@@ -1184,6 +1220,7 @@ export async function fetchCurrentStaffMembership(
     can_view_financials: r.can_view_financials === true,
     can_count_cash: r.can_count_cash === true,
     can_write_off: r.can_write_off === true,
+    can_view_safe: r.can_view_safe === true,
     require_2fa: r.require_2fa === true,
     admin_page_access: Array.isArray(r.admin_page_access)
       ? r.admin_page_access.filter((k): k is string => typeof k === 'string')

@@ -47,6 +47,7 @@ import {
   sendPasswordReset,
   setAdminPageAccess,
   setCanCountCash,
+  setCanViewSafe,
   setCanWriteOff,
   setIsSafeWitness,
   setCanViewFinancials,
@@ -2942,7 +2943,7 @@ function StaffTab() {
   // toast.
   const togglePerm = (
     staffMemberId: string,
-    flag: 'reports' | 'financials' | 'cash' | 'writeoff' | 'witness',
+    flag: 'reports' | 'financials' | 'cash' | 'writeoff' | 'witness' | 'safe_view',
     next: boolean,
   ) => {
     const field =
@@ -2954,7 +2955,9 @@ function StaffTab() {
             ? 'can_count_cash'
             : flag === 'witness'
               ? 'is_safe_witness'
-              : 'can_write_off';
+              : flag === 'safe_view'
+                ? 'can_view_safe'
+                : 'can_write_off';
     const prev = !next;
     setManaging((cur) =>
       cur && cur.staff_member_id === staffMemberId ? { ...cur, [field]: next } : cur,
@@ -2969,7 +2972,9 @@ function StaffTab() {
             ? setCanCountCash(staffMemberId, next)
             : flag === 'witness'
               ? setIsSafeWitness(staffMemberId, next)
-              : setCanWriteOff(staffMemberId, next);
+              : flag === 'safe_view'
+                ? setCanViewSafe(staffMemberId, next)
+                : setCanWriteOff(staffMemberId, next);
     mutation
       .then(() => {
         staff.refresh();
@@ -3441,7 +3446,7 @@ function StaffTab() {
 
             <ManageSection
               title="Section access"
-              description="Top-level destinations outside the /admin tab. Reports defaults on; Financials, Safe holder, Safe witness, and Write off are super-admin grants only."
+              description="Top-level destinations outside the /admin tab. Reports defaults on; Financials, Safe holder, Safe viewer, Safe witness, and Write off are super-admin grants only."
             >
               <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
                 <PermissionRow
@@ -3460,11 +3465,19 @@ function StaffTab() {
                 />
                 <PermissionRow
                   title="Safe holder"
-                  description="Lets this person count the safe and take cash from it. Every count and withdrawal must be done on camera with a Safe witness present, and a count still needs a different manager to sign off. Super-admin-grant only."
+                  description="Lets this person count the safe and take cash from it. Every count and withdrawal must be done on camera with a Safe witness present, who signs the record as the second person. Super-admin-grant only."
                   checked={managing.can_count_cash}
                   disabled={!canEditFinancialPerms}
                   disabledReason={canEditFinancialPerms ? undefined : 'Only the super admin can grant Safe holder access.'}
                   onChange={(v) => togglePerm(managing.staff_member_id, 'cash', v)}
+                />
+                <PermissionRow
+                  title="Safe viewer"
+                  description="Sees the Cash counts page and its wallet icon read-only: the safe figure, activity, past counts, and exports. Cannot count or take cash. Super-admin-grant only."
+                  checked={managing.can_view_safe}
+                  disabled={!canEditFinancialPerms}
+                  disabledReason={canEditFinancialPerms ? undefined : 'Only the super admin can grant Safe viewer.'}
+                  onChange={(v) => togglePerm(managing.staff_member_id, 'safe_view', v)}
                 />
                 <PermissionRow
                   title="Safe witness"
