@@ -40,7 +40,10 @@
 // can fire this — it's invoked from the same surfaces that already
 // gate on signed-in status.
 
-import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.50.0';
+// npm: specifier, not esm.sh. esm.sh's cached denonext build of
+// 2.50.0 throws while evaluating its transitive 'ws' dependency, so
+// the worker never booted and every call returned WORKER_ERROR.
+import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2.50.0';
 import {
   EMPTY_BRAND,
   loadBrand,

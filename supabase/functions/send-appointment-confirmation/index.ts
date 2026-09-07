@@ -30,7 +30,16 @@
 // rescheduleAppointment (best-effort post-step) and the Schedule
 // sheet "Resend confirmation" button.
 
-import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.50.0';
+// npm: specifier, not esm.sh. esm.sh's cached denonext build of
+// supabase-js 2.50.0 resolves its transitive 'ws' dependency to a
+// module that throws on evaluation ('Cannot destructure property
+// URL' / node:url not found), so the worker died at boot and every
+// call returned WORKER_ERROR. The browser saw the gateway's 500,
+// whose CORS headers omit content-type, so the preflight failed and
+// supabase-js reported the generic 'Failed to send a request to the
+// Edge Function'. Same library version, resolved by Deno's own npm
+// resolver instead of a third-party CDN cache.
+import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2.50.0';
 import { iconSvg as _iconSvg } from '../_shared/emailIcons.ts';
 import { recordEmailMessage } from '../_shared/emailRecord.ts';
 import { getEmailSenderHeaders } from '../_shared/emailSender.ts';
