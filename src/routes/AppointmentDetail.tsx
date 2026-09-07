@@ -80,6 +80,8 @@ import {
 import type { AppointmentStatus } from '../components/AppointmentCard/AppointmentCard.tsx';
 import { humaniseEventTypeLabel } from '../lib/queries/patientProfile.ts';
 import {
+  CLINIC_TZ,
+  fmtTzAbbr,
   formatDateLongOrdinal,
   formatTime,
   formatTimeRange,
@@ -90,7 +92,7 @@ import { useAppointmentLivePhases } from '../lib/queries/appointmentLivePhases.t
 import { createMeetSpaceForAppointment, fetchMeetAttendance, useMeetHosts } from '../lib/queries/meetHosts.ts';
 import { humaniseCancelReason, logVirtualMeetingRejoin, markNoShow, markVirtualComplete, markVirtualMeetingJoined, NO_SHOW_REASONS, reverseNoShow } from '../lib/queries/visits.ts';
 import { useLaunchDate } from '../lib/queries/launchDate.ts';
-import { cancelAppointment, reverseCancellation } from '../lib/queries/cancelAppointment.ts';
+import { cancelAppointment, reverseCancellation, useCancellationRecord, type CancellationRecord } from '../lib/queries/cancelAppointment.ts';
 import { recordOwedToPatient } from '../lib/queries/owedToPatient.ts';
 import { RefundSheet } from '../components/RefundSheet/RefundSheet.tsx';
 import { supabase } from '../lib/supabase.ts';
@@ -383,6 +385,7 @@ function Loaded({
   const [resending, setResending] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [timelineTick, setTimelineTick] = useState(0);
+  const cancellation = useCancellationRecord(appt);
 
   // Meeting-join gating. Tapping Join / Rejoin from a tablet, phone
   // or from a Customer-Service-only account doesn't proceed; it
@@ -630,7 +633,7 @@ function Loaded({
   return (
     <>
       {isPreLaunch ? <PreLaunchBanner /> : null}
-      <Hero appt={appt} fullName={fullName} tone={tone} />
+      <Hero appt={appt} fullName={fullName} tone={tone} cancellation={cancellation} />
 
       {/* Two notes blocks, stacked so the floor team reads them in
           order. The customer's widget note (read-only, quiet) sits
@@ -801,6 +804,7 @@ function Loaded({
             // the widget edge functions) and passes free-text through
             // verbatim.
             text={humaniseCancelReason(appt.cancel_reason) ?? appt.cancel_reason}
+            meta={cancellation ? describeCancellation(cancellation, appt.start_at) : null}
           />
         ) : null}
         {appt.status === 'no_show' && appt.cancel_reason ? (
@@ -1040,10 +1044,12 @@ function Hero({
   appt,
   fullName,
   tone,
+  cancellation,
 }: {
   appt: AppointmentDetailRow;
   fullName: string;
   tone: StatusTone;
+  cancellation: CancellationRecord | null;
 }) {
   const navigate = useNavigate();
   const { account: currentAccount } = useCurrentAccount();
@@ -1200,6 +1206,9 @@ function Hero({
   // scroll. The button styles match the accent treatment the ribbon
   // already gives to the relative span so it reads as one element,
   // not a tacked-on control.
+  // A cancelled ribbon answers "when, and by whom" rather than
+  // repeating a truncated reason: the full reason has its own card
+  // just below.
   const relative: ReactNode | null =
     appt.status === 'rescheduled' && appt.reschedule_to_id ? (
       <RibbonNavLink
@@ -1207,6 +1216,8 @@ function Hero({
       >
         Open new booking
       </RibbonNavLink>
+    ) : appt.status === 'cancelled' && cancellation ? (
+      `Cancelled ${formatCancelledAt(cancellation.cancelled_at)}${cancellation.by_name ? ` by ${cancellation.by_name}` : ''}`
     ) : (
       ribbon.relative
     );
@@ -2558,10 +2569,13 @@ function ReasonCard({
   tone,
   label,
   text,
+  meta = null,
 }: {
   tone: 'cancelled' | 'no_show';
   label: string;
   text: string;
+  /** One quiet line under the reason: when, by whom, what was sent. */
+  meta?: string | null;
 }) {
   const accent = tone === 'cancelled' ? theme.color.alert : theme.color.warn;
   const iconBg =
@@ -2586,8 +2600,50 @@ function ReasonCard({
       >
         {text}
       </p>
+      {meta ? (
+        <p
+          style={{
+            margin: `${theme.space[3]}px 0 0`,
+            fontSize: theme.type.size.sm,
+            color: theme.color.inkMuted,
+            lineHeight: theme.type.leading.relaxed,
+          }}
+        >
+          {meta}
+        </p>
+      ) : null}
     </Card>
   );
+}
+
+// "28 Aug 2026, 14:48 BST"
+function formatCancelledAt(iso: string): string {
+  const stamp = new Intl.DateTimeFormat('en-GB', {
+    timeZone: CLINIC_TZ,
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(new Date(iso));
+  return `${stamp} ${fmtTzAbbr(iso)}`;
+}
+
+// "Cancelled on 28 Aug 2026, 14:48 BST by Karly Innes, 10 days before
+// the booked time. Cancellation email sent to x@y.com."
+function describeCancellation(rec: CancellationRecord, startAt: string): string {
+  const msAhead = new Date(startAt).getTime() - new Date(rec.cancelled_at).getTime();
+  const days = Math.round(msAhead / 86_400_000);
+  const lead =
+    Number.isFinite(days) && days >= 1
+      ? `, ${days} day${days === 1 ? '' : 's'} before the booked time`
+      : Number.isFinite(days) && days <= -1
+        ? `, ${-days} day${days === -1 ? '' : 's'} after the booked time`
+        : '';
+  const who = rec.by_name ? ` by ${rec.by_name}` : '';
+  const sent = rec.email_sent_to ? ` Cancellation email sent to ${rec.email_sent_to}.` : ' No cancellation email was sent.';
+  return `Cancelled on ${formatCancelledAt(rec.cancelled_at)}${who}${lead}.${sent}`;
 }
 
 function RescheduledTo({ apptId }: { apptId: string }) {

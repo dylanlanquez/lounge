@@ -1,4 +1,6 @@
+import { useEffect, useState } from 'react';
 import { supabase } from '../supabase.ts';
+import { logFailure } from '../failureLog.ts';
 import { sendAppointmentConfirmation } from './sendAppointmentConfirmation.ts';
 
 // Cancel a native (manual / native-source) Lounge appointment.
@@ -212,4 +214,87 @@ export async function reverseCancellation(input: {
   }
 
   return { ok: true, emailSent, emailReason };
+}
+
+// ── When was it cancelled, and by whom? ──────────────────────────────
+// lng_appointments only carries the reason and a status; the moment
+// and the actor live on the patient_events audit row written at
+// cancellation time. The detail page reads that row so the ribbon can
+// say "Cancelled 28 Aug, 14:48 BST by Karly Innes" instead of showing
+// a truncated reason with no date, which left Dylan asking "when was
+// this cancelled?" (7 Sep 2026).
+export interface CancellationRecord {
+  cancelled_at: string;
+  by_name: string | null;
+  email_sent_to: string | null;
+}
+
+export function useCancellationRecord(appt: {
+  id: string;
+  patient_id: string | null;
+  status: string;
+} | null): CancellationRecord | null {
+  const [record, setRecord] = useState<CancellationRecord | null>(null);
+  const id = appt?.id ?? null;
+  const patientId = appt?.patient_id ?? null;
+  const cancelled = appt?.status === 'cancelled';
+
+  useEffect(() => {
+    if (!id || !patientId || !cancelled) {
+      setRecord(null);
+      return;
+    }
+    let stale = false;
+    (async () => {
+      const { data, error } = await supabase
+        .from('patient_events')
+        .select('event_type, actor_account_id, created_at, payload')
+        .eq('patient_id', patientId)
+        .eq('payload->>appointment_id', id)
+        .in('event_type', ['appointment_cancelled', 'appointment_cancellation_sent'])
+        .order('created_at', { ascending: false });
+      if (stale) return;
+      if (error) {
+        await logFailure({
+          source: 'useCancellationRecord',
+          severity: 'warning',
+          message: error.message,
+          context: { appointmentId: id },
+        });
+        return;
+      }
+      const rows = (data ?? []) as Array<{
+        event_type: string;
+        actor_account_id: string | null;
+        created_at: string;
+        payload: Record<string, unknown> | null;
+      }>;
+      const cancelledRow = rows.find((r) => r.event_type === 'appointment_cancelled');
+      if (!cancelledRow) return;
+      const sentRow = rows.find((r) => r.event_type === 'appointment_cancellation_sent');
+      let byName: string | null = null;
+      if (cancelledRow.actor_account_id) {
+        const { data: actor } = await supabase
+          .from('accounts')
+          .select('first_name, last_name, name')
+          .eq('id', cancelledRow.actor_account_id)
+          .maybeSingle();
+        if (stale) return;
+        const a = actor as { first_name: string | null; last_name: string | null; name: string | null } | null;
+        const full = [a?.first_name, a?.last_name].filter(Boolean).join(' ').trim();
+        byName = full || a?.name || null;
+      }
+      const recipient = sentRow?.payload?.recipient;
+      setRecord({
+        cancelled_at: cancelledRow.created_at,
+        by_name: byName,
+        email_sent_to: typeof recipient === 'string' ? recipient : null,
+      });
+    })();
+    return () => {
+      stale = true;
+    };
+  }, [id, patientId, cancelled]);
+
+  return record;
 }
