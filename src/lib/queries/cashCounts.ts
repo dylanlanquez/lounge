@@ -1313,15 +1313,34 @@ export async function signCashCount(input: {
  *  (true when the withdrawal sits in the open period; false when its
  *  period was already closed by a signed count, in which case the
  *  reversal is for the record only). */
-export async function reverseCashWithdrawal(withdrawalId: string, reason: string): Promise<{ moves_balance: boolean }> {
+export interface ReverseWithdrawalResult {
+  moves_balance: boolean;
+  /** When the withdrawal sat inside a signed count, that count's
+   *  expected figure was restated by the reversed amount. */
+  restated_count_id: string | null;
+  count_expected_before: number | null;
+  count_expected_after: number | null;
+}
+
+export async function reverseCashWithdrawal(withdrawalId: string, reason: string): Promise<ReverseWithdrawalResult> {
   if (reason.trim().length === 0) throw new Error('Say why this withdrawal is being reversed.');
   const { data, error } = await supabase.rpc('lng_cash_reverse_withdrawal', {
     p_withdrawal_id: withdrawalId,
     p_reason: reason.trim(),
   });
   if (error) throw new Error(error.message);
-  const out = data as { moves_balance?: boolean } | null;
-  return { moves_balance: out?.moves_balance === true };
+  const out = data as {
+    moves_balance?: boolean;
+    restated_count_id?: string | null;
+    count_expected_before?: number | null;
+    count_expected_after?: number | null;
+  } | null;
+  return {
+    moves_balance: out?.moves_balance === true,
+    restated_count_id: out?.restated_count_id ?? null,
+    count_expected_before: out?.count_expected_before ?? null,
+    count_expected_after: out?.count_expected_after ?? null,
+  };
 }
 
 /** Void a signed count. The safe position re-anchors on the previous

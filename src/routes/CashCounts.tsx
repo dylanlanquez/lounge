@@ -251,6 +251,7 @@ export function CashCounts() {
                     label: line.note?.trim() || withdrawalReasonLabel(line.reason),
                     taken_at: line.taken_at,
                     moves_balance: true,
+                    right_now_pence: position.data!.expected_in_safe_pence,
                   })
                 }
               />
@@ -306,13 +307,15 @@ export function CashCounts() {
         onClose={() => setStatementCountId(null)}
         canCorrect={!!account.is_super_admin}
         reloadKey={reverseTarget === null && voidTarget === null ? 1 : 0}
-        onReverse={(w) =>
+        onReverse={(w, count) =>
           setReverseTarget({
             withdrawal_id: w.withdrawal_id,
             amount_pence: w.amount_pence,
             label: w.note?.trim() || withdrawalReasonLabel(w.reason),
             taken_at: w.taken_at,
             moves_balance: false,
+            count,
+            right_now_pence: position.data?.expected_in_safe_pence ?? 0,
           })
         }
         onVoid={(id, periodEnd) => setVoidTarget({ id, period_end: periodEnd })}
@@ -2832,7 +2835,10 @@ function CountDetailsSheet({
   canCorrect: boolean;
   /** Bumps when a correction sheet closes so the statement re-reads. */
   reloadKey: number;
-  onReverse: (w: CashCountStatement['withdrawals'][number]) => void;
+  onReverse: (
+    w: CashCountStatement['withdrawals'][number],
+    count: { period_end: string; expected_pence: number; actual_pence: number | null },
+  ) => void;
   onVoid: (countId: string, periodEnd: string) => void;
 }) {
   const { data, loading, error, refresh } = useCashCountStatement(countId);
@@ -3167,7 +3173,17 @@ function CountDetailsSheet({
                         −{formatPence(w.amount_pence)}
                       </span>
                       {canCorrect && !w.reversed_at ? (
-                        <Button variant="tertiary" size="sm" onClick={() => onReverse(w)}>
+                        <Button
+                          variant="tertiary"
+                          size="sm"
+                          onClick={() =>
+                            onReverse(w, {
+                              period_end: data.count.period_end,
+                              expected_pence: data.count.expected_pence,
+                              actual_pence: data.count.actual_pence,
+                            })
+                          }
+                        >
                           <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
                             <Undo2 size={12} aria-hidden /> Reverse
                           </span>
@@ -3255,9 +3271,14 @@ interface ReverseTarget {
   label: string;
   taken_at: string;
   /** True when the withdrawal is in the open period (the balance goes
-   *  back up); false when its period was closed by a signed count (the
-   *  record is corrected, the balance stays). */
+   *  back up); false when its period was closed by a signed count (that
+   *  count's expected is restated, the balance stays). */
   moves_balance: boolean;
+  /** The signed count the withdrawal belongs to, for the closed-period
+   *  case, so the sheet can state the before/after figures. */
+  count?: { period_end: string; expected_pence: number; actual_pence: number | null } | null;
+  /** Current Right now figure, quoted so the reader sees it unchanged. */
+  right_now_pence: number;
 }
 
 function ReverseWithdrawalSheet({
@@ -3303,13 +3324,7 @@ function ReverseWithdrawalSheet({
       onClose={() => !busy && onClose()}
       dismissable={!busy}
       title="Reverse this withdrawal"
-      description={
-        target
-          ? target.moves_balance
-            ? `${formatPence(target.amount_pence)} for "${target.label}" on ${formatLongDate(target.taken_at)}. The safe balance goes back up by ${formatPence(target.amount_pence)}. The withdrawal stays on the record, marked reversed with your reason.`
-            : `${formatPence(target.amount_pence)} for "${target.label}" on ${formatLongDate(target.taken_at)}. This sits inside a count that has already been signed, and that count recorded what was physically in the safe, so the balance does not change. The withdrawal is marked reversed with your reason, for the record.`
-          : ''
-      }
+      description={target ? `${formatPence(target.amount_pence)} for "${target.label}" on ${formatLongDate(target.taken_at)}. It stays on the record, marked reversed with your reason.` : ''}
       footer={
         <div style={{ display: 'flex', gap: theme.space[3], justifyContent: 'flex-end', flexWrap: 'wrap' }}>
           <Button variant="tertiary" onClick={onClose} disabled={busy}>
@@ -3322,6 +3337,7 @@ function ReverseWithdrawalSheet({
       }
     >
       <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[4] }}>
+        {target ? <ReversalEffect target={target} /> : null}
         <Input
           label="Why is it being reversed?"
           value={reason}
@@ -3337,6 +3353,92 @@ function ReverseWithdrawalSheet({
         ) : null}
       </div>
     </BottomSheet>
+  );
+}
+
+// What the reversal does to the numbers, stated before the button is
+// pressed. Two cases, both spelled out with the actual figures:
+//   open period  -> Right now goes up by the amount.
+//   closed period -> Right now stays (it starts from what was counted);
+//                    the count's expected and difference are restated.
+function ReversalEffect({ target }: { target: ReverseTarget }) {
+  const rows: Array<{ label: string; before: string; after: string; tone?: 'up' | 'same' }> = [];
+  if (target.moves_balance) {
+    rows.push({
+      label: 'Right now in the safe',
+      before: formatPence(target.right_now_pence),
+      after: formatPence(target.right_now_pence + target.amount_pence),
+      tone: 'up',
+    });
+  } else {
+    rows.push({
+      label: 'Right now in the safe',
+      before: formatPence(target.right_now_pence),
+      after: formatPence(target.right_now_pence),
+      tone: 'same',
+    });
+    if (target.count) {
+      const expectedAfter = target.count.expected_pence + target.amount_pence;
+      rows.push({
+        label: `Expected on the ${formatLongDate(target.count.period_end)} count`,
+        before: formatPence(target.count.expected_pence),
+        after: formatPence(expectedAfter),
+      });
+      if (target.count.actual_pence !== null) {
+        const diffBefore = target.count.actual_pence - target.count.expected_pence;
+        const diffAfter = target.count.actual_pence - expectedAfter;
+        const fmt = (d: number) => (d === 0 ? 'Matched' : `${formatPence(Math.abs(d))} ${d > 0 ? 'over' : 'short'}`);
+        rows.push({ label: 'Difference on that count', before: fmt(diffBefore), after: fmt(diffAfter) });
+      }
+    }
+  }
+  return (
+    <div
+      style={{
+        padding: theme.space[4],
+        borderRadius: theme.radius.input,
+        background: theme.color.bg,
+        border: `1px solid ${theme.color.border}`,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: theme.space[3],
+      }}
+    >
+      <span
+        style={{
+          fontSize: 11,
+          fontWeight: theme.type.weight.semibold,
+          color: theme.color.inkMuted,
+          textTransform: 'uppercase',
+          letterSpacing: theme.type.tracking.wide,
+        }}
+      >
+        What changes
+      </span>
+      {rows.map((r) => (
+        <div key={r.label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: theme.space[3], flexWrap: 'wrap' }}>
+          <span style={{ fontSize: theme.type.size.sm, color: theme.color.ink }}>{r.label}</span>
+          <span style={{ fontSize: theme.type.size.sm, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+            <span style={{ color: theme.color.inkMuted }}>{r.before}</span>
+            <span style={{ color: theme.color.inkSubtle }}> to </span>
+            <span
+              style={{
+                fontWeight: theme.type.weight.semibold,
+                color: r.tone === 'up' ? theme.color.accent : theme.color.ink,
+              }}
+            >
+              {r.after}
+            </span>
+            {r.tone === 'same' ? <span style={{ color: theme.color.inkMuted }}> (no change)</span> : null}
+          </span>
+        </div>
+      ))}
+      <p style={{ margin: 0, fontSize: theme.type.size.xs, color: theme.color.inkMuted, lineHeight: theme.type.leading.snug }}>
+        {target.moves_balance
+          ? 'The cash never left, so Lounge puts it back into the running balance.'
+          : `Right now starts from what was physically counted, so it does not move. The count was only "over" because this withdrawal was recorded when the cash was still in the safe; restating it fixes that. If the count itself was wrong, void the count and count again instead.`}
+      </p>
+    </div>
   );
 }
 
