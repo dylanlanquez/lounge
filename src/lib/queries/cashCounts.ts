@@ -12,6 +12,10 @@ import { properCase } from './appointments.ts';
 // moved on. Pairs with useRealtimeRefresh: realtime pushes live events
 // while the socket is up, this reconciles whatever was missed while the
 // tablet slept or the socket was down.
+// Note for every hook below: `loading` means the first load has not
+// finished. A refresh (realtime, focus, after an action) fetches in the
+// background and swaps the data in when it lands, so the page never
+// flashes back to its skeleton on every window focus.
 function useRefreshOnVisible(refresh: () => void): void {
   useEffect(() => {
     const onVisibility = () => {
@@ -186,7 +190,6 @@ export function useCashCounts(): CashCountsResult {
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
     setError(null);
     (async () => {
       try {
@@ -668,7 +671,6 @@ export function useCashPosition(): CashPositionResult {
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
     setError(null);
     (async () => {
       try {
@@ -958,7 +960,6 @@ export function useAnomalies(range: DateRange): AnomaliesResult {
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
     setError(null);
     const { fromIso, toIso } = dateRangeToUtcBounds(range);
     (async () => {
@@ -1482,7 +1483,6 @@ export function useSealedEnvelopes(): EnvelopesResult {
   const [tick, setTick] = useState(0);
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
     (async () => {
       try {
         const res = await supabase
@@ -1632,7 +1632,6 @@ export function useCashCountRota(locationId: string | null): RotaResult {
       return;
     }
     let cancelled = false;
-    setLoading(true);
     (async () => {
       try {
         const [d, c] = await Promise.all([
@@ -1851,7 +1850,6 @@ export function useCashCountStatement(countId: string | null): StatementResult {
       return;
     }
     let cancelled = false;
-    setLoading(true);
     setError(null);
     (async () => {
       try {

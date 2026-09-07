@@ -649,7 +649,7 @@ function RightNowCard({
               lineHeight: theme.type.leading.snug,
             }}
           >
-            cash taken since {last ? `the count on ${formatLongDate(last.period_end)}` : 'the start'}
+            cash taken since {last ? `the count on ${formatLongDateTime(last.period_end)}` : 'the start'}
             {position.payment_count > 0 ? (
               <span style={{ color: theme.color.inkMuted }}>
                 {' '}· {formatNumber(position.payment_count)} payment{position.payment_count === 1 ? '' : 's'}
@@ -5330,6 +5330,20 @@ function formatLongDate(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '—';
   return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+// "7 Sept 2026, 13:09 BST": the moment the run started, for the hero.
+function formatLongDateTime(iso: string): string {
+  const stamp = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/London',
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(new Date(iso));
+  return `${stamp} ${fmtTzAbbr(iso)}`;
 }
 
 function formatDateTime(iso: string): string {
