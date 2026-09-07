@@ -744,7 +744,7 @@ export function Schedule() {
             <SkeletonRows />
           ) : (
             <DayReloadingWrapper loading={day.loading}>
-              {day.data.length === 0 && freeTime?.open && (freeTime.windows.length > 0 || freeTime.downWindows.length > 0) ? (
+              {day.data.length === 0 && freeTime?.open && freeTime.windows.length > 0 ? (
             <ScheduleListView
               rows={[]}
               onPick={setSelected}

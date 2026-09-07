@@ -44,7 +44,6 @@ export interface ScheduleListViewProps {
 type Entry =
   | { kind: 'appt'; at: number; row: AppointmentRow }
   | { kind: 'free'; at: number; window: FreeWindow }
-  | { kind: 'down'; at: number; window: FreeWindow }
   | { kind: 'marker'; at: number; label: string; clockIso: string };
 
 export function ScheduleListView({
@@ -62,7 +61,10 @@ export function ScheduleListView({
     // Split a free stretch that crosses noon so each half sits under
     // its own Morning / Afternoon heading.
     const noon = londonWallClockToDate(dateIso, '12:00')?.getTime() ?? null;
-    const push = (kind: 'free' | 'down', w: FreeWindow) => {
+    // Down time (gaps already gone by) is deliberately not drawn here:
+    // it lives in the Down time sheet, by role. The list only shows
+    // what is still ahead to fill.
+    const push = (kind: 'free', w: FreeWindow) => {
       const s = new Date(w.start).getTime();
       const e = new Date(w.end).getTime();
       if (noon !== null && s < noon && e > noon) {
@@ -72,7 +74,6 @@ export function ScheduleListView({
         entries.push({ kind, at: s, window: w });
       }
     };
-    for (const w of freeTime.downWindows) push('down', w);
     for (const w of freeTime.windows) push('free', w);
     // Lunch marker, only while lunch is still ahead of the window we
     // are filling (today: ahead of now).
@@ -139,9 +140,9 @@ export function ScheduleListView({
   );
 }
 
-// Same instant: appointments first, then free or down time, markers last.
+// Same instant: appointments first, then free time, markers last.
 function rank(e: Entry): number {
-  return e.kind === 'appt' ? 0 : e.kind === 'marker' ? 2 : 1;
+  return e.kind === 'appt' ? 0 : e.kind === 'free' ? 1 : 2;
 }
 
 function Section({
@@ -166,7 +167,6 @@ function Section({
   isLast: boolean;
 }) {
   const freeMinutes = entries.reduce((sum, e) => (e.kind === 'free' ? sum + e.window.minutes : sum), 0);
-  const downMinutes = entries.reduce((sum, e) => (e.kind === 'down' ? sum + e.window.minutes : sum), 0);
   return (
     <div>
       <div
@@ -190,20 +190,18 @@ function Section({
         >
           {label}
         </p>
-        {freeMinutes > 0 || downMinutes > 0 ? (
+        {freeMinutes > 0 ? (
           <p
             style={{
               margin: 0,
               fontSize: theme.type.size.xs,
+              color: theme.color.accent,
               fontWeight: theme.type.weight.semibold,
               fontVariantNumeric: 'tabular-nums',
               whiteSpace: 'nowrap',
-              display: 'flex',
-              gap: theme.space[3],
             }}
           >
-            {downMinutes > 0 ? <span style={{ color: theme.color.inkSubtle }}>{formatMinutes(downMinutes)} down time</span> : null}
-            {freeMinutes > 0 ? <span style={{ color: theme.color.accent }}>{formatMinutes(freeMinutes)} free to fill</span> : null}
+            {formatMinutes(freeMinutes)} free to fill
           </p>
         ) : null}
       </div>
@@ -215,8 +213,6 @@ function Section({
               <ScheduleListRow row={e.row} onPick={() => onPick(e.row)} now={now} />
             ) : e.kind === 'free' ? (
               <FreeRow window={e.window} onBook={onBookAt ? () => onBookAt(e.window.start) : null} />
-            ) : e.kind === 'down' ? (
-              <DownRow window={e.window} />
             ) : (
               <TimeMarker clockIso={e.clockIso} label={e.label} />
             )}
@@ -232,73 +228,6 @@ function Section({
 
 function entryKey(e: Entry): string {
   return e.kind === 'appt' ? e.row.id : e.kind === 'marker' ? `marker-${e.label}-${e.clockIso}` : `${e.kind}-${e.window.start}`;
-}
-
-// A stretch that has already gone by with nothing booked. Drawn quiet
-// and flat, in the row's shape, so the day shows where it sat idle
-// without competing with the free time still ahead.
-function DownRow({ window: w }: { window: FreeWindow }) {
-  return (
-    <li>
-      <div
-        aria-label={`${formatMinutes(w.minutes)} down time, ${formatTime(w.start)} to ${formatTime(w.end)}`}
-        style={{
-          width: '100%',
-          minHeight: 84,
-          display: 'flex',
-          alignItems: 'center',
-          gap: theme.space[4],
-          padding: theme.space[4],
-          background: theme.color.bg,
-          border: `1px dashed ${theme.color.border}`,
-          borderRadius: 14,
-          boxSizing: 'border-box',
-        }}
-      >
-        <div style={{ width: 80, flexShrink: 0 }}>
-          <p
-            style={{
-              margin: 0,
-              fontSize: theme.type.size.base,
-              fontWeight: theme.type.weight.semibold,
-              fontVariantNumeric: 'tabular-nums',
-              color: theme.color.inkMuted,
-            }}
-          >
-            {formatTime(w.start)}
-          </p>
-          <p
-            style={{
-              margin: `${theme.space[1]}px 0 0`,
-              fontSize: theme.type.size.xs,
-              fontWeight: theme.type.weight.medium,
-              color: theme.color.inkSubtle,
-              letterSpacing: theme.type.tracking.wide,
-              fontVariantNumeric: 'tabular-nums',
-            }}
-          >
-            to {formatTime(w.end)}
-          </p>
-        </div>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <p
-            style={{
-              margin: 0,
-              fontSize: theme.type.size.base,
-              fontWeight: theme.type.weight.semibold,
-              color: theme.color.inkMuted,
-              fontVariantNumeric: 'tabular-nums',
-            }}
-          >
-            {formatMinutes(w.minutes)} down time
-          </p>
-          <p style={{ margin: `${theme.space[1]}px 0 0`, fontSize: theme.type.size.sm, color: theme.color.inkSubtle }}>
-            No patient was in.
-          </p>
-        </div>
-      </div>
-    </li>
-  );
 }
 
 // A stretch of opening hours with nothing booked. Same shape as an
