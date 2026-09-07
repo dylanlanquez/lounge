@@ -41,6 +41,7 @@ import { SourceGlyph } from '../components/AppointmentCard/AppointmentCard.tsx';
 import { ScheduleListRow, ScheduleListView } from '../components/ScheduleListView/ScheduleListView.tsx';
 import { BOTTOM_NAV_HEIGHT } from '../components/BottomNav/BottomNav.tsx';
 import { MarketingCampaignBanner } from '../components/MarketingCampaignBanner/MarketingCampaignBanner.tsx';
+import { CashCountDueBanner } from '../components/CashCountDueBanner/CashCountDueBanner.tsx';
 import { KIOSK_STATUS_BAR_HEIGHT } from '../components/KioskStatusBar/KioskStatusBar.tsx';
 import { theme } from '../theme/index.ts';
 import { useAuth } from '../lib/auth.tsx';
@@ -367,6 +368,7 @@ export function Schedule() {
       }}
     >
       <div style={{ maxWidth: theme.layout.pageMaxWidth, margin: '0 auto' }}>
+        <CashCountDueBanner />
         <MarketingCampaignBanner />
         {/* Header structure (top → bottom):
             Row 1: month label centred.

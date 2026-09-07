@@ -405,6 +405,20 @@ export async function listActiveStaffNames(): Promise<StaffNameRow[]> {
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
+// Active staff who may count the safe (can_count_cash), for the rota.
+export async function listSafeHolders(): Promise<StaffNameRow[]> {
+  const { data, error } = await supabase
+    .from('lng_staff_members')
+    .select(STAFF_SELECT)
+    .eq('can_count_cash', true)
+    .eq('status', 'active');
+  if (error) throw new Error(error.message);
+  return ((data ?? []) as RawJoinedRow[])
+    .map(mapRow)
+    .map((s) => ({ account_id: s.account_id, name: s.display_name }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
 export interface SafeWitnessRow {
   staff_member_id: string;
   account_id: string;

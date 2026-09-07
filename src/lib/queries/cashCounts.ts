@@ -1444,6 +1444,205 @@ export async function voidCashCount(countId: string, reason: string): Promise<vo
   if (error) throw new Error(error.message);
 }
 
+// ── Count rota ─────────────────────────────────────────────────────────────
+//
+// Super admin sets which weekdays a count is due and who is responsible,
+// with cover for dates the usual person is off. "Due" is derived by
+// lng_cash_count_due from the rota and the signed counts, so the
+// reminder on the responsible person's home screen cannot be dismissed
+// without signing a count.
+
+export interface CashCountRotaDay {
+  id: string;
+  weekday: number; // ISO 1 = Monday .. 7 = Sunday
+  assignee_account_id: string;
+  assignee_name: string;
+  enabled: boolean;
+}
+
+export interface CashCountRotaCover {
+  id: string;
+  cover_account_id: string;
+  cover_name: string;
+  from_date: string; // YYYY-MM-DD
+  to_date: string;
+  note: string | null;
+}
+
+export const WEEKDAY_LABELS: ReadonlyArray<{ weekday: number; short: string; long: string }> = [
+  { weekday: 1, short: 'Mon', long: 'Monday' },
+  { weekday: 2, short: 'Tue', long: 'Tuesday' },
+  { weekday: 3, short: 'Wed', long: 'Wednesday' },
+  { weekday: 4, short: 'Thu', long: 'Thursday' },
+  { weekday: 5, short: 'Fri', long: 'Friday' },
+  { weekday: 6, short: 'Sat', long: 'Saturday' },
+  { weekday: 7, short: 'Sun', long: 'Sunday' },
+];
+
+interface RotaResult {
+  days: CashCountRotaDay[] | null;
+  covers: CashCountRotaCover[] | null;
+  loading: boolean;
+  error: string | null;
+  refresh: () => void;
+}
+
+export function useCashCountRota(locationId: string | null): RotaResult {
+  const [days, setDays] = useState<CashCountRotaDay[] | null>(null);
+  const [covers, setCovers] = useState<CashCountRotaCover[] | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    if (!locationId) {
+      setDays([]);
+      setCovers([]);
+      setLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setLoading(true);
+    (async () => {
+      try {
+        const [d, c] = await Promise.all([
+          supabase
+            .from('lng_cash_count_rota')
+            .select('id, weekday, assignee_account_id, enabled, assignee:accounts!assignee_account_id ( first_name, last_name, name )')
+            .eq('location_id', locationId)
+            .order('weekday'),
+          supabase
+            .from('lng_cash_count_rota_covers')
+            .select('id, cover_account_id, from_date, to_date, note, cover:accounts!cover_account_id ( first_name, last_name, name )')
+            .eq('location_id', locationId)
+            .order('from_date', { ascending: false }),
+        ]);
+        if (cancelled) return;
+        if (d.error) throw new Error(`rota: ${d.error.message}`);
+        if (c.error) throw new Error(`rota covers: ${c.error.message}`);
+        type P = { first_name: string | null; last_name: string | null; name: string | null };
+        setDays(
+          ((d.data ?? []) as Array<{ id: string; weekday: number; assignee_account_id: string; enabled: boolean; assignee: P | P[] | null }>).map((r) => ({
+            id: r.id,
+            weekday: r.weekday,
+            assignee_account_id: r.assignee_account_id,
+            assignee_name: composePersonName(pickOne(r.assignee)),
+            enabled: r.enabled,
+          })),
+        );
+        setCovers(
+          ((c.data ?? []) as Array<{ id: string; cover_account_id: string; from_date: string; to_date: string; note: string | null; cover: P | P[] | null }>).map((r) => ({
+            id: r.id,
+            cover_account_id: r.cover_account_id,
+            cover_name: composePersonName(pickOne(r.cover)),
+            from_date: r.from_date,
+            to_date: r.to_date,
+            note: r.note,
+          })),
+        );
+        setError(null);
+        setLoading(false);
+      } catch (e) {
+        if (cancelled) return;
+        const message = e instanceof Error ? e.message : String(e);
+        setError(message);
+        setLoading(false);
+        await logFailure({ source: 'cash.rota', severity: 'error', message, context: { locationId } });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [locationId, tick]);
+  const refresh = useCallback(() => setTick((t) => t + 1), []);
+  useRealtimeRefresh([{ table: 'lng_cash_count_rota' }, { table: 'lng_cash_count_rota_covers' }], refresh);
+  return { days, covers, loading, error, refresh };
+}
+
+/** Replace the rota for a location: one row per chosen weekday, all
+ *  assigned to the same person. Weekdays not chosen are removed. */
+export async function saveCashCountRota(locationId: string, weekdays: number[], assigneeAccountId: string): Promise<void> {
+  if (!assigneeAccountId) throw new Error('Pick who is responsible for the count.');
+  const { data: meId } = await supabase.rpc('auth_account_id');
+  const del = await supabase.from('lng_cash_count_rota').delete().eq('location_id', locationId);
+  if (del.error) throw new Error(del.error.message);
+  if (weekdays.length === 0) return;
+  const rows = weekdays.map((weekday) => ({ location_id: locationId, weekday, assignee_account_id: assigneeAccountId, created_by: (meId as string | null) ?? null }));
+  const ins = await supabase.from('lng_cash_count_rota').insert(rows);
+  if (ins.error) throw new Error(ins.error.message);
+}
+
+export async function addCashCountCover(locationId: string, coverAccountId: string, fromDate: string, toDate: string, note: string | null): Promise<void> {
+  if (!coverAccountId) throw new Error('Pick who is covering.');
+  if (toDate < fromDate) throw new Error('The cover must end on or after the day it starts.');
+  const { data: meId } = await supabase.rpc('auth_account_id');
+  const { error } = await supabase.from('lng_cash_count_rota_covers').insert({
+    location_id: locationId,
+    cover_account_id: coverAccountId,
+    from_date: fromDate,
+    to_date: toDate,
+    note: note?.trim() || null,
+    created_by: (meId as string | null) ?? null,
+  });
+  if (error) throw new Error(error.message);
+}
+
+export async function removeCashCountCover(id: string): Promise<void> {
+  const { error } = await supabase.from('lng_cash_count_rota_covers').delete().eq('id', id);
+  if (error) throw new Error(error.message);
+}
+
+export interface CashCountDue {
+  due_date: string | null;
+  today: string | null;
+  overdue: boolean;
+  responsible_account_id: string | null;
+  responsible_name: string | null;
+  is_cover: boolean;
+  last_signed_date: string | null;
+}
+
+export function useCashCountDue(): { data: CashCountDue | null; refresh: () => void } {
+  const [data, setData] = useState<CashCountDue | null>(null);
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const { data: out, error } = await supabase.rpc('lng_cash_count_due');
+      if (cancelled) return;
+      if (error) {
+        await logFailure({ source: 'cash.due', severity: 'warning', message: error.message, context: {} });
+        return;
+      }
+      const o = (out ?? {}) as Partial<CashCountDue>;
+      setData({
+        due_date: o.due_date ?? null,
+        today: o.today ?? null,
+        overdue: o.overdue === true,
+        responsible_account_id: o.responsible_account_id ?? null,
+        responsible_name: o.responsible_name ?? null,
+        is_cover: o.is_cover === true,
+        last_signed_date: o.last_signed_date ?? null,
+      });
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [tick]);
+  const refresh = useCallback(() => setTick((t) => t + 1), []);
+  useRealtimeRefresh(
+    [{ table: 'lng_cash_counts' }, { table: 'lng_cash_count_rota' }, { table: 'lng_cash_count_rota_covers' }],
+    refresh,
+  );
+  useRefreshOnVisible(refresh);
+  return { data, refresh };
+}
+
+/** Permanently delete a voided count (super admin). */
+export async function deleteVoidedCashCount(countId: string): Promise<void> {
+  const { error } = await supabase.rpc('lng_cash_delete_voided_count', { p_count_id: countId });
+  if (error) throw new Error(error.message);
+}
+
 // ── Per-count statement read ───────────────────────────────────────────────
 
 export interface CashCountStatementLine {

@@ -21,6 +21,8 @@ import {
   Undo2,
   Wallet,
   Archive,
+  CalendarCheck,
+  Trash2,
 } from 'lucide-react';
 import {
   BottomSheet,
@@ -49,20 +51,28 @@ import {
   type CashCountStatement,
   type CashPositionPaymentLine,
   type CashPositionWithdrawalLine,
+  type CashCountRotaCover,
+  type CashCountRotaDay,
   type UnrecordedEnvelopeInput,
   type WithdrawalReason,
+  WEEKDAY_LABELS,
   WITHDRAWAL_REASONS,
+  addCashCountCover,
   createCashCount,
+  deleteVoidedCashCount,
   recordCashWithdrawal,
   reverseCashWithdrawal,
   saveCashCountUnrecorded,
   putBackWithdrawal,
+  removeCashCountCover,
   restoreCashCount,
+  saveCashCountRota,
   signCashCount,
   voidCashCount,
   writeOffCountDifference,
   updateCashCountActual,
   useAnomalyThresholds,
+  useCashCountRota,
   useCashCounts,
   useCashCountStatement,
   useCashPosition,
@@ -70,7 +80,7 @@ import {
 } from '../lib/queries/cashCounts.ts';
 import { formatNumber, formatPence } from '../lib/queries/carts.ts';
 import { sendManagerNotification } from '../lib/queries/managerNotifications.ts';
-import { listActiveStaffNames, listSafeWitnesses, type SafeWitnessRow, type StaffNameRow } from '../lib/queries/staff.ts';
+import { listActiveStaffNames, listSafeHolders, listSafeWitnesses, type SafeWitnessRow, type StaffNameRow } from '../lib/queries/staff.ts';
 import { buildCashActivityPdf, buildCashCountPdf, downloadCashCountPdf } from '../lib/cashCountPdf.ts';
 import {
   type CashClue,
@@ -126,6 +136,7 @@ export function CashCounts() {
   const [voidTarget, setVoidTarget] = useState<{ id: string; period_end: string; restore?: boolean } | null>(null);
   const [writeOffTarget, setWriteOffTarget] = useState<WriteOffTarget | null>(null);
   const [putBackTarget, setPutBackTarget] = useState<PutBackTarget | null>(null);
+  const rota = useCashCountRota(account?.location_id ?? null);
   // Two-person rule: the safe witnesses on record. Loaded once for the
   // page and shared by the Right-now card (so the rule is visible before
   // anyone opens the safe) and both sheets (which refuse to submit
@@ -275,6 +286,15 @@ export function CashCounts() {
               counts={counts.data.filter((c) => c.status !== 'disputed')}
               onOpen={(id) => setStatementCountId(id)}
             />
+            {account.is_super_admin ? (
+              <RotaCard
+                locationId={account.location_id}
+                days={rota.days}
+                covers={rota.covers}
+                error={rota.error}
+                onChanged={() => rota.refresh()}
+              />
+            ) : null}
             {account.is_super_admin
             && (counts.data.some((c) => c.status === 'disputed')
               || position.data.lines.some((l) => l.kind === 'withdrawal' && !!l.reversed_at)) ? (
@@ -284,6 +304,10 @@ export function CashCounts() {
                   (l): l is CashPositionWithdrawalLine => l.kind === 'withdrawal' && !!l.reversed_at,
                 )}
                 onOpen={(id) => setStatementCountId(id)}
+                onDeleted={() => {
+                  counts.refresh();
+                  position.refresh();
+                }}
                 onPutBack={(line) =>
                   setPutBackTarget({
                     withdrawal_id: line.withdrawal_id,
@@ -1470,6 +1494,7 @@ function ArchivedCountsCard({
   counts,
   reversed,
   onOpen,
+  onDeleted,
   onPutBack,
 }: {
   counts: CashCountRow[];
@@ -1477,9 +1502,29 @@ function ArchivedCountsCard({
    *  kept here. */
   reversed: CashPositionWithdrawalLine[];
   onOpen: (id: string) => void;
+  onDeleted: () => void;
   onPutBack: (line: CashPositionWithdrawalLine) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState<CashCountRow | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const doDelete = async () => {
+    if (!confirmDelete) return;
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      await deleteVoidedCashCount(confirmDelete.id);
+      setConfirmDelete(null);
+      onDeleted();
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      setDeleteError(message);
+      await logFailure({ source: 'cash.count.delete', severity: 'error', message, context: { count_id: confirmDelete.id } });
+    } finally {
+      setDeleting(false);
+    }
+  };
   const summary = [
     counts.length > 0 ? `${formatNumber(counts.length)} voided count${counts.length === 1 ? '' : 's'}` : null,
     reversed.length > 0 ? `${formatNumber(reversed.length)} reversed withdrawal${reversed.length === 1 ? '' : 's'}` : null,
@@ -1515,7 +1560,7 @@ function ArchivedCountsCard({
             Archive
           </p>
           <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkMuted, lineHeight: theme.type.leading.snug }}>
-            {summary}. Not part of the safe's figures and hidden from everyone else. Open a count to restore it if it was voided by mistake.
+            {summary}. Not part of the safe's figures and hidden from everyone else. Open a count to restore it if it was voided by mistake, or delete it for good.
           </p>
         </div>
         <Button variant="tertiary" size="sm" onClick={() => setExpanded((v) => !v)}>
@@ -1527,7 +1572,20 @@ function ArchivedCountsCard({
           {counts.length > 0 ? (
             <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
               {counts.map((c) => (
-                <CountRow key={c.id} count={c} isFirst={false} onOpen={() => onOpen(c.id)} />
+                <li key={c.id} style={{ display: 'flex', alignItems: 'stretch' }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
+                      <CountRow count={c} isFirst={false} onOpen={() => onOpen(c.id)} />
+                    </ul>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'flex-start', padding: `${theme.space[4]}px ${theme.space[5]}px ${theme.space[4]}px 0`, borderTop: `1px solid ${theme.color.border}` }}>
+                    <Button variant="tertiary" size="sm" onClick={() => setConfirmDelete(c)}>
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1], color: theme.color.alert }}>
+                        <Trash2 size={12} aria-hidden /> Delete for good
+                      </span>
+                    </Button>
+                  </div>
+                </li>
               ))}
             </ul>
           ) : null}
@@ -1591,6 +1649,308 @@ function ArchivedCountsCard({
           ) : null}
         </>
       ) : null}
+      <BottomSheet
+        open={confirmDelete !== null}
+        onClose={() => !deleting && setConfirmDelete(null)}
+        dismissable={!deleting}
+        title="Delete this count for good"
+        description={
+          confirmDelete
+            ? `The voided count from ${formatLongDate(confirmDelete.period_end)} (${confirmDelete.actual_pence === null ? 'no total' : `${formatPence(confirmDelete.actual_pence)} counted`}) is deleted permanently, along with its payment and withdrawal snapshot. The figures it recorded stay in the event log. This cannot be undone.`
+            : ''
+        }
+        footer={
+          <div style={{ display: 'flex', gap: theme.space[3], justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+            <Button variant="tertiary" onClick={() => setConfirmDelete(null)} disabled={deleting}>
+              Keep it
+            </Button>
+            <Button variant="primary" onClick={doDelete} loading={deleting}>
+              Delete for good
+            </Button>
+          </div>
+        }
+      >
+        {deleteError ? (
+          <p role="alert" style={{ margin: 0, padding: `${theme.space[2]}px ${theme.space[3]}px`, borderRadius: theme.radius.input, background: '#FFEEEC', color: theme.color.alert, fontSize: theme.type.size.sm }}>
+            {deleteError}
+          </p>
+        ) : (
+          <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>
+            Withdrawals and payments from that period are not affected; they belong to the safe, not to the count.
+          </p>
+        )}
+      </BottomSheet>
+    </Card>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Count rota — super admin only
+//
+// Which weekdays a count is due and who does it, with cover for dates
+// the usual person is off. The responsible person gets the reminder on
+// their home screen from the start of the due day until a count is
+// signed; a missed day stays up marked overdue.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function RotaCard({
+  locationId,
+  days,
+  covers,
+  error,
+  onChanged,
+}: {
+  locationId: string | null;
+  days: CashCountRotaDay[] | null;
+  covers: CashCountRotaCover[] | null;
+  error: string | null;
+  onChanged: () => void;
+}) {
+  const isMobile = useIsMobile(640);
+  const [holders, setHolders] = useState<StaffNameRow[]>([]);
+  const [weekdays, setWeekdays] = useState<number[]>([]);
+  const [assignee, setAssignee] = useState('');
+  const [dirty, setDirty] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [coverOpen, setCoverOpen] = useState(false);
+  const [coverWho, setCoverWho] = useState('');
+  const [coverFrom, setCoverFrom] = useState(localDateIso(new Date()));
+  const [coverTo, setCoverTo] = useState(localDateIso(new Date()));
+  const [coverNote, setCoverNote] = useState('');
+  const [fromOpen, setFromOpen] = useState(false);
+  const [toOpen, setToOpen] = useState(false);
+  const fromRef = useRef<HTMLButtonElement | null>(null);
+  const toRef = useRef<HTMLButtonElement | null>(null);
+
+  useEffect(() => {
+    listSafeHolders()
+      .then(setHolders)
+      .catch(async (e) => {
+        const message = e instanceof Error ? e.message : String(e);
+        setSaveError(`Could not load safe holders: ${message}`);
+        await logFailure({ source: 'cash.rota.holders', severity: 'error', message, context: {} });
+      });
+  }, []);
+  // Seed the editor from the saved rota until the user starts editing.
+  useEffect(() => {
+    if (!days || dirty) return;
+    setWeekdays(days.filter((d) => d.enabled).map((d) => d.weekday));
+    setAssignee(days[0]?.assignee_account_id ?? '');
+  }, [days, dirty]);
+
+  const toggleDay = (w: number) => {
+    setDirty(true);
+    setWeekdays((prev) => (prev.includes(w) ? prev.filter((x) => x !== w) : [...prev, w].sort((a, b) => a - b)));
+  };
+  const save = async () => {
+    if (!locationId) return;
+    setSaveError(null);
+    if (weekdays.length > 0 && !assignee) {
+      setSaveError('Pick who is responsible for the count.');
+      return;
+    }
+    setBusy(true);
+    try {
+      await saveCashCountRota(locationId, weekdays, assignee);
+      setDirty(false);
+      onChanged();
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      setSaveError(message);
+      await logFailure({ source: 'cash.rota.save', severity: 'error', message, context: { locationId } });
+    } finally {
+      setBusy(false);
+    }
+  };
+  const addCover = async () => {
+    if (!locationId) return;
+    setSaveError(null);
+    setBusy(true);
+    try {
+      await addCashCountCover(locationId, coverWho, coverFrom, coverTo, coverNote);
+      setCoverOpen(false);
+      setCoverWho('');
+      setCoverNote('');
+      onChanged();
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      setSaveError(message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const removeCover = async (id: string) => {
+    setBusy(true);
+    try {
+      await removeCashCountCover(id);
+      onChanged();
+    } catch (e) {
+      setSaveError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const assigneeName = holders.find((h) => h.account_id === assignee)?.name ?? null;
+  const summary =
+    weekdays.length === 0
+      ? 'No count is scheduled. Pick the days a count must happen.'
+      : `Every ${weekdays.map((w) => WEEKDAY_LABELS.find((l) => l.weekday === w)?.long ?? '').join(', ')}${assigneeName ? `, ${assigneeName} counts the safe` : ''}. They see a reminder on their home screen from the start of that day until the count is signed.`;
+  const today = localDateIso(new Date());
+  const activeCovers = (covers ?? []).filter((c) => c.to_date >= today);
+
+  return (
+    <Card padding="lg">
+      <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[5] }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: theme.space[3], flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[1], flex: 1, minWidth: 240 }}>
+            <p
+              style={{
+                margin: 0,
+                fontSize: theme.type.size.md,
+                fontWeight: theme.type.weight.semibold,
+                color: theme.color.ink,
+                letterSpacing: theme.type.tracking.tight,
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: theme.space[2],
+              }}
+            >
+              <CalendarCheck size={16} aria-hidden style={{ color: theme.color.accent }} />
+              Count rota
+            </p>
+            <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkMuted, lineHeight: theme.type.leading.snug }}>{summary}</p>
+          </div>
+          {dirty ? (
+            <Button variant="primary" size="sm" onClick={save} loading={busy}>
+              Save rota
+            </Button>
+          ) : null}
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
+          <span style={{ fontSize: 11, fontWeight: theme.type.weight.semibold, color: theme.color.inkMuted, textTransform: 'uppercase', letterSpacing: theme.type.tracking.wide }}>
+            Days a count is due
+          </span>
+          <div style={{ display: 'flex', gap: theme.space[2], flexWrap: 'wrap' }}>
+            {WEEKDAY_LABELS.map((d) => {
+              const on = weekdays.includes(d.weekday);
+              return (
+                <button
+                  key={d.weekday}
+                  type="button"
+                  aria-pressed={on}
+                  onClick={() => toggleDay(d.weekday)}
+                  style={{
+                    appearance: 'none',
+                    fontFamily: 'inherit',
+                    height: theme.layout.minTouchTarget,
+                    minWidth: isMobile ? 0 : 72,
+                    padding: `0 ${theme.space[4]}px`,
+                    borderRadius: theme.radius.pill,
+                    border: `1px solid ${on ? theme.color.accent : theme.color.border}`,
+                    background: on ? theme.color.accent : theme.color.surface,
+                    color: on ? theme.color.surface : theme.color.ink,
+                    fontSize: theme.type.size.sm,
+                    fontWeight: theme.type.weight.semibold,
+                    cursor: 'pointer',
+                    transition: `background ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+                  }}
+                >
+                  {isMobile ? d.short : d.long}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <DropdownSelect
+          label="Who counts the safe"
+          value={assignee}
+          onChange={(v) => {
+            setDirty(true);
+            setAssignee(v);
+          }}
+          placeholder="Pick a safe holder"
+          options={holders.map((h) => ({ value: h.account_id, label: h.name }))}
+        />
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3], paddingTop: theme.space[4], borderTop: `1px solid ${theme.color.border}` }}>
+          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: theme.space[3], flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 2, flex: 1, minWidth: 240 }}>
+              <span style={{ fontSize: theme.type.size.base, fontWeight: theme.type.weight.semibold, color: theme.color.ink }}>Cover</span>
+              <span style={{ fontSize: theme.type.size.sm, color: theme.color.inkMuted, lineHeight: theme.type.leading.snug }}>
+                When the usual person is off, name who covers and the dates. The reminder goes to them instead.
+              </span>
+            </div>
+            <Button variant={coverOpen ? 'tertiary' : 'secondary'} size="sm" onClick={() => setCoverOpen((v) => !v)}>
+              {coverOpen ? 'Not now' : 'Add cover'}
+            </Button>
+          </div>
+          {coverOpen ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
+              <DropdownSelect
+                label="Who is covering"
+                value={coverWho}
+                onChange={setCoverWho}
+                placeholder="Pick a safe holder"
+                options={holders.map((h) => ({ value: h.account_id, label: h.name }))}
+              />
+              <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: theme.space[3] }}>
+                <div>
+                  <FieldTrigger ref={fromRef} label="From" icon={<CalendarCheck size={16} aria-hidden />} value={formatLongDate(coverFrom)} placeholder="Pick a date" open={fromOpen} onClick={() => setFromOpen((v) => !v)} />
+                  <DatePicker open={fromOpen} onClose={() => setFromOpen(false)} value={coverFrom} onChange={(iso) => { setCoverFrom(iso); if (coverTo < iso) setCoverTo(iso); }} anchorRef={fromRef} title="Cover from" />
+                </div>
+                <div>
+                  <FieldTrigger ref={toRef} label="To" icon={<CalendarCheck size={16} aria-hidden />} value={formatLongDate(coverTo)} placeholder="Pick a date" open={toOpen} onClick={() => setToOpen((v) => !v)} />
+                  <DatePicker open={toOpen} onClose={() => setToOpen(false)} value={coverTo} onChange={setCoverTo} anchorRef={toRef} title="Cover until" minIso={coverFrom} />
+                </div>
+              </div>
+              <Input label="Note (optional)" value={coverNote} onChange={(e) => setCoverNote(e.target.value)} placeholder="e.g. Jade on holiday" fullWidth />
+              <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                <Button variant="primary" size="sm" onClick={addCover} loading={busy}>
+                  Save cover
+                </Button>
+              </div>
+            </div>
+          ) : null}
+          {activeCovers.length > 0 ? (
+            <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
+              {activeCovers.map((c) => (
+                <li
+                  key={c.id}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: theme.space[3],
+                    padding: `${theme.space[2]}px ${theme.space[3]}px`,
+                    borderRadius: theme.radius.input,
+                    background: theme.color.bg,
+                    flexWrap: 'wrap',
+                  }}
+                >
+                  <span style={{ fontSize: theme.type.size.sm, color: theme.color.ink }}>
+                    <span style={{ fontWeight: theme.type.weight.semibold }}>{c.cover_name}</span> covers {formatLongDate(c.from_date)}
+                    {c.to_date !== c.from_date ? ` to ${formatLongDate(c.to_date)}` : ''}
+                    {c.note ? <span style={{ color: theme.color.inkMuted }}> · {c.note}</span> : null}
+                  </span>
+                  <Button variant="tertiary" size="sm" onClick={() => removeCover(c.id)} disabled={busy}>
+                    Remove
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
+
+        {error || saveError ? (
+          <p role="alert" style={{ margin: 0, padding: `${theme.space[2]}px ${theme.space[3]}px`, borderRadius: theme.radius.input, background: '#FFEEEC', color: theme.color.alert, fontSize: theme.type.size.sm }}>
+            {saveError ?? error}
+          </p>
+        ) : null}
+      </div>
     </Card>
   );
 }
