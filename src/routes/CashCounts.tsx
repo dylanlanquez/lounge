@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, useId } from 'react';
 import type React from 'react';
 import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import {
@@ -263,7 +263,6 @@ export function CashCounts() {
               due={due.data}
               sealedOpenPence={sealedOpenPence}
               sealedOpenCount={sealedOpen.length}
-              onBank={() => setBankOpen(true)}
               onStart={() => {
                 setSheetKind('regular');
                 setSheetOpen(true);
@@ -271,7 +270,11 @@ export function CashCounts() {
               onTakeFromSafe={() => setTakeFromSafeOpen(true)}
             />
             {sealedOpen.length > 0 || (envelopes.data ?? []).length > 0 ? (
-              <ReadyToBankCard envelopes={envelopes.data ?? []} />
+              <ReadyToBankCard
+                envelopes={envelopes.data ?? []}
+                canAct={!!account.can_count_cash}
+                onBank={() => setBankOpen(true)}
+              />
             ) : null}
             {position.data.lines.length > 0 ? (
               <RecentActivityCard
@@ -483,36 +486,83 @@ export function CashCounts() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function EnvelopeGlyph({ width = 120, sealed = true }: { width?: number; sealed?: boolean }) {
-  const height = Math.round(width * 0.66);
+  // Gradient ids must be unique per instance: several envelopes render
+  // on one page and SVG ids are document-global.
+  const uid = useId().replace(/[^a-zA-Z0-9]/g, '');
+  const height = Math.round(width * 0.68);
+  const paper = `paper-${uid}`;
+  const flap = `flap-${uid}`;
+  const seal = `seal-${uid}`;
+  const glow = `glow-${uid}`;
+  const line = 'rgba(14, 20, 20, 0.12)';
   return (
-    <svg width={width} height={height} viewBox="0 0 120 80" aria-hidden focusable="false" style={{ display: 'block', flexShrink: 0 }}>
-      <rect x="2" y="10" width="116" height="68" rx="9" fill={theme.color.surface} stroke={theme.color.ink} strokeOpacity="0.16" strokeWidth="1.5" />
-      <path d="M2 19 L60 52 L118 19" fill="none" stroke={theme.color.ink} strokeOpacity="0.16" strokeWidth="1.5" />
-      <path d="M11 10 L60 44 L109 10 Z" fill={sealed ? theme.color.accentBg : theme.color.bg} stroke={theme.color.ink} strokeOpacity="0.16" strokeWidth="1.5" strokeLinejoin="round" />
+    <svg width={width} height={height} viewBox="0 0 160 108" aria-hidden focusable="false" style={{ display: 'block', flexShrink: 0, overflow: 'visible' }}>
+      <defs>
+        <linearGradient id={paper} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stopColor="#FFFFFF" />
+          <stop offset="1" stopColor="#F3F1EA" />
+        </linearGradient>
+        <linearGradient id={flap} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stopColor={sealed ? '#EEF6F0' : '#FBFAF7'} />
+          <stop offset="1" stopColor={sealed ? '#D8E9DD' : '#EFEDE6'} />
+        </linearGradient>
+        <radialGradient id={seal} cx="0.38" cy="0.32" r="0.8">
+          <stop offset="0" stopColor="#3E7A5D" />
+          <stop offset="0.55" stopColor={theme.color.accent} />
+          <stop offset="1" stopColor="#153627" />
+        </radialGradient>
+        <filter id={glow} x="-30%" y="-30%" width="160%" height="180%">
+          <feGaussianBlur stdDeviation="4" />
+        </filter>
+      </defs>
+
+      {/* Ground shadow */}
+      <ellipse cx="80" cy="104" rx="62" ry="5" fill="#0E1414" opacity="0.08" filter={`url(#${glow})`} />
+
+      {/* Paper body */}
+      <rect x="6" y="18" width="148" height="82" rx="7" fill={`url(#${paper})`} stroke={line} strokeWidth="1.25" />
+
+      {/* Side folds meeting at the centre, and the bottom fold laid over them */}
+      <path d="M6 24 L74 66 L6 96 Z" fill="#EDEBE3" opacity="0.9" />
+      <path d="M154 24 L86 66 L154 96 Z" fill="#EDEBE3" opacity="0.9" />
+      <path d="M7.5 99 L80 60 L152.5 99 Q152.5 99.5 147 99.5 L13 99.5 Q7.5 99.5 7.5 99 Z" fill="#F8F7F2" />
+      <path d="M7 98 L80 60 L153 98" fill="none" stroke={line} strokeWidth="1.25" strokeLinejoin="round" />
+
+      {/* Closed flap, folded down over the front */}
+      <path d="M6 21 Q6 18 9 18 L151 18 Q154 18 154 21 L84 73 Q80 76 76 73 Z" fill={`url(#${flap})`} stroke={line} strokeWidth="1.25" strokeLinejoin="round" />
+      {/* Crease highlight along the fold */}
+      <path d="M10 20 L80 72 L150 20" fill="none" stroke="#FFFFFF" strokeOpacity="0.8" strokeWidth="1" />
+
       {sealed ? (
         <>
-          <circle cx="60" cy="46" r="9" fill={theme.color.accent} />
-          <path d="M55.5 46.2 L58.6 49.2 L64.6 43.2" fill="none" stroke={theme.color.surface} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+          {/* Wax seal on the tip of the flap */}
+          <circle cx="80" cy="72" r="12.5" fill="#0E1414" opacity="0.12" filter={`url(#${glow})`} />
+          <circle cx="80" cy="70" r="11" fill={`url(#${seal})`} />
+          <circle cx="80" cy="70" r="7.5" fill="none" stroke="#FFFFFF" strokeOpacity="0.35" strokeWidth="1" />
+          <text x="80" y="74" textAnchor="middle" fontSize="10" fontWeight="700" fill="#FFFFFF" fillOpacity="0.92" fontFamily="inherit">
+            £
+          </text>
         </>
       ) : (
-        <circle cx="60" cy="46" r="9" fill="none" stroke={theme.color.ink} strokeOpacity="0.2" strokeWidth="1.5" strokeDasharray="3 3" />
+        <circle cx="80" cy="70" r="10" fill="none" stroke={line} strokeWidth="1.25" strokeDasharray="3 3" />
       )}
     </svg>
   );
 }
 
-// Three envelopes fanned behind one another: "there is a pile put aside".
+// A few envelopes leaning behind one another: "there is a pile put
+// aside". The front one is crisp; the ones behind sit back, lighter.
 function EnvelopeStack({ count, width = 200 }: { count: number; width?: number }) {
   const w = width;
-  const h = Math.round(w * 0.78);
+  const h = Math.round(w * 0.8);
   const layers = Math.min(3, Math.max(1, count));
   return (
     <div style={{ position: 'relative', width: w, height: h, flexShrink: 0 }} aria-hidden>
       {Array.from({ length: layers }).map((_, i) => {
         const fromBack = layers - 1 - i; // 0 = front
-        const rot = fromBack === 0 ? 0 : fromBack === 1 ? -7 : 7;
-        const dy = fromBack * 10;
-        const scale = 1 - fromBack * 0.06;
+        const rot = fromBack === 0 ? 0 : fromBack === 1 ? -6 : 6;
+        const dy = fromBack * 14;
+        const scale = 1 - fromBack * 0.05;
         return (
           <div
             key={i}
@@ -521,12 +571,11 @@ function EnvelopeStack({ count, width = 200 }: { count: number; width?: number }
               left: '50%',
               bottom: dy,
               transform: `translateX(-50%) rotate(${rot}deg) scale(${scale})`,
-              transformOrigin: '50% 90%',
-              opacity: 1 - fromBack * 0.25,
-              filter: fromBack === 0 ? `drop-shadow(0 8px 16px rgba(14, 20, 20, 0.10))` : 'none',
+              transformOrigin: '50% 92%',
+              opacity: 1 - fromBack * 0.18,
             }}
           >
-            <EnvelopeGlyph width={Math.round(w * 0.86)} />
+            <EnvelopeGlyph width={Math.round(w * 0.84)} />
           </div>
         );
       })}
@@ -554,7 +603,6 @@ function RightNowCard({
   sealedOpenCount,
   onStart,
   onTakeFromSafe,
-  onBank,
 }: {
   position: CashPosition;
   canCountCash: boolean;
@@ -564,7 +612,6 @@ function RightNowCard({
   sealedOpenCount: number;
   onStart: () => void;
   onTakeFromSafe: () => void;
-  onBank: () => void;
 }) {
   const isMobile = useIsMobile(700);
   const last = position.last_signed_count;
@@ -743,14 +790,6 @@ function RightNowCard({
                 : 'nothing sealed yet'}
             </span>
           </div>
-          {canCountCash && sealedOpenCount > 0 ? (
-            <Button variant="secondary" onClick={onBank}>
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
-                <Landmark size={14} aria-hidden />
-                Bank or collect
-              </span>
-            </Button>
-          ) : null}
         </div>
       </div>
     </Card>
@@ -3246,7 +3285,15 @@ function CashOutcomeBlock({
 // Ready to bank — sealed envelopes in the safe, and where past ones went
 // ─────────────────────────────────────────────────────────────────────────────
 
-function ReadyToBankCard({ envelopes }: { envelopes: SealedEnvelope[] }) {
+function ReadyToBankCard({
+  envelopes,
+  canAct,
+  onBank,
+}: {
+  envelopes: SealedEnvelope[];
+  canAct: boolean;
+  onBank: () => void;
+}) {
   const open = envelopes.filter((e) => !e.banked_at);
   const gone = envelopes.filter((e) => e.banked_at);
   const openPence = open.reduce((s, e) => s + e.amount_pence, 0);
@@ -3280,6 +3327,13 @@ function ReadyToBankCard({ envelopes }: { envelopes: SealedEnvelope[] }) {
             {open.length > 0 ? `${formatPence(openPence)} in ${formatNumber(open.length)} envelope${open.length === 1 ? '' : 's'}` : 'None in the safe'}
           </span>
         </div>
+        {canAct && open.length > 0 ? (
+          <Button variant="primary" onClick={onBank}>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
+              <Landmark size={14} aria-hidden /> Bank or collect
+            </span>
+          </Button>
+        ) : null}
       </div>
 
       {open.length > 0 ? (
@@ -5357,3 +5411,4 @@ function formatDateTime(iso: string): string {
   }).format(new Date(iso));
   return `${stamp} ${fmtTzAbbr(iso)}`;
 }
+
