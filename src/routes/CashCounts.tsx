@@ -271,11 +271,7 @@ export function CashCounts() {
               onTakeFromSafe={() => setTakeFromSafeOpen(true)}
             />
             {sealedOpen.length > 0 || (envelopes.data ?? []).length > 0 ? (
-              <ReadyToBankCard
-                envelopes={envelopes.data ?? []}
-                canAct={!!account.can_count_cash}
-                onBank={() => setBankOpen(true)}
-              />
+              <ReadyToBankCard envelopes={envelopes.data ?? []} />
             ) : null}
             {position.data.lines.length > 0 ? (
               <RecentActivityCard
@@ -3250,15 +3246,7 @@ function CashOutcomeBlock({
 // Ready to bank — sealed envelopes in the safe, and where past ones went
 // ─────────────────────────────────────────────────────────────────────────────
 
-function ReadyToBankCard({
-  envelopes,
-  canAct,
-  onBank,
-}: {
-  envelopes: SealedEnvelope[];
-  canAct: boolean;
-  onBank: () => void;
-}) {
+function ReadyToBankCard({ envelopes }: { envelopes: SealedEnvelope[] }) {
   const open = envelopes.filter((e) => !e.banked_at);
   const gone = envelopes.filter((e) => e.banked_at);
   const openPence = open.reduce((s, e) => s + e.amount_pence, 0);
@@ -3292,13 +3280,6 @@ function ReadyToBankCard({
             {open.length > 0 ? `${formatPence(openPence)} in ${formatNumber(open.length)} envelope${open.length === 1 ? '' : 's'}` : 'None in the safe'}
           </span>
         </div>
-        {canAct && open.length > 0 ? (
-          <Button variant="primary" onClick={onBank}>
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
-              <Landmark size={14} aria-hidden /> Bank or collect
-            </span>
-          </Button>
-        ) : null}
       </div>
 
       {open.length > 0 ? (
@@ -3435,7 +3416,7 @@ function BankEnvelopesSheet({
   onDone: () => void;
 }) {
   const [picked, setPicked] = useState<Set<string>>(new Set());
-  const [how, setHow] = useState<'banked' | 'collected'>('banked');
+  const [how, setHow] = useState<'banked' | 'collected' | null>(null);
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -3449,7 +3430,7 @@ function BankEnvelopesSheet({
   useEffect(() => {
     if (!open) return;
     setPicked(new Set(envelopes.map((e) => e.id)));
-    setHow('banked');
+    setHow(null);
     setNote('');
     setError(null);
     setDateIso(localDateIso(new Date()));
@@ -3463,6 +3444,10 @@ function BankEnvelopesSheet({
     setError(null);
     if (picked.size === 0) {
       setError('Pick at least one envelope.');
+      return;
+    }
+    if (how === null) {
+      setError('Say where the cash is going: into the bank, or collected by someone.');
       return;
     }
     if (how === 'collected' && note.trim().length === 0) {
@@ -3479,7 +3464,7 @@ function BankEnvelopesSheet({
     try {
       await bankCashEnvelopes({
         envelope_ids: Array.from(picked),
-        how,
+        how: how!,
         note: note.trim() || null,
         witness_id: twoPerson.witnessId!,
         taken_at: takenAt ? new Date(takenAt).toISOString() : null,
@@ -3507,7 +3492,7 @@ function BankEnvelopesSheet({
             Cancel
           </Button>
           <Button variant="primary" onClick={submit} loading={busy}>
-            {how === 'collected' ? 'Record collection' : 'Record bank deposit'} {total > 0 ? formatPence(total) : ''}
+            {how === 'collected' ? 'Record collection' : how === 'banked' ? 'Record bank deposit' : 'Record'} {total > 0 ? formatPence(total) : ''}
           </Button>
         </div>
       }
