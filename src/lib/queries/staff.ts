@@ -361,7 +361,7 @@ export async function setCanWriteOff(staffMemberId: string, value: boolean): Pro
 
 // Toggles is_safe_witness. A safe witness is the second person who must
 // be physically present, on camera, whenever the safe is counted or
-// cash is taken from it (migration 20260907000003). The flag grants no
+// cash is taken from it (migration 20260907000012). The flag grants no
 // action of its own: the database refuses any count or withdrawal
 // whose witness is not an active safe witness.
 export async function setIsSafeWitness(staffMemberId: string, value: boolean): Promise<void> {

@@ -1115,7 +1115,7 @@ export async function createCashCount(input: CreateCashCountInput): Promise<{ co
 //
 // UK circulating notes and coins, largest first. Mirrors the CHECK on
 // lng_cash_count_denominations.denomination_pence (migration
-// 20260907000001). Adding a denomination requires a migration AND an
+// 20260907000010). Adding a denomination requires a migration AND an
 // entry here.
 
 export interface Denomination {

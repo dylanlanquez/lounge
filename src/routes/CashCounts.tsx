@@ -1015,7 +1015,7 @@ function TakeFromSafeSheet({
 // acted, who was present, and that the camera was on. Both sheets refuse
 // to submit until the witness is picked and both confirmations are
 // ticked, and the database refuses the row regardless (migration
-// 20260907000003), so the rule holds even if the UI is bypassed.
+// 20260907000012), so the rule holds even if the UI is bypassed.
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface TwoPersonState {

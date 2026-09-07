@@ -146,7 +146,7 @@ on conflict (account_id) do update
    set is_safe_witness = true;
 
 -- ── Safe position: carry the witness on withdrawal lines ─────────────
--- Same function as 20260907000002 with the witness name parts added to
+-- Same function as 20260907000011 with the witness name parts added to
 -- withdrawal lines and to the anchor count, so the Activity card and
 -- the count history can say who was present.
 create or replace function public.lng_cash_safe_position(
