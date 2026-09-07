@@ -588,7 +588,9 @@ export function Schedule() {
               gap: theme.space[2],
               flexShrink: 0,
               flexWrap: 'wrap',
-              justifyContent: isMobile ? 'space-between' : 'flex-end',
+              // Mobile: the pills sit left to right and wrap as a row,
+              // rather than being spread across the width with odd gaps.
+              justifyContent: 'flex-end',
             }}
           >
             {/* Type filter only earns its place once there's a list to

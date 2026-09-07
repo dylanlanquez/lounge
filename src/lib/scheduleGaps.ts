@@ -363,6 +363,8 @@ export interface ResourceUsageInput {
   /** Names of the staff assigned to the role (empty for a room). */
   staffNames: string[];
   units: number;
+  /** Other pool ids whose phases count as this resource's. */
+  aliases?: string[];
 }
 
 export interface ResourceUsage extends ResourceUsageInput {
@@ -383,7 +385,9 @@ export function computeResourceUsage(input: {
   const { rows, dateIso, hours, now, isToday, isPast, pools } = input;
   const out: ResourceUsage[] = [];
   for (const pool of pools) {
-    const named = rows.some((r) => BLOCKING.has(r.status) && (r.phases ?? []).some((p) => (p.pool_ids ?? []).includes(pool.id)));
+    const ids = new Set([pool.id, ...(pool.aliases ?? [])]);
+    const mine = (p: GapRowPhase) => (p.pool_ids ?? []).some((id) => ids.has(id));
+    const named = rows.some((r) => BLOCKING.has(r.status) && (r.phases ?? []).some(mine));
     const day = computeDayFreeTime({
       rows,
       dateIso,
@@ -391,7 +395,7 @@ export function computeResourceUsage(input: {
       now,
       isToday,
       isPast,
-      busyPhase: (p) => (p.pool_ids ?? []).includes(pool.id),
+      busyPhase: mine,
       countUnphased: false,
     });
     if (!day.usage) continue;

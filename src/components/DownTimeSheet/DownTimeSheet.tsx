@@ -16,6 +16,16 @@ import {
 } from '../../lib/scheduleGaps.ts';
 import { formatTimeNoZone } from '../../lib/dateFormat.ts';
 
+// Reception's work is booked under the "Miscellaneous" pool in Admin,
+// Booking types (every Book-in phase names it), while the people are
+// assigned to "Reception". Dylan, 7 Sep 2026: "dont include misc". So
+// Miscellaneous is folded into Reception here and not listed on its
+// own. If the Book-in phases are ever re-pointed at Reception in
+// Admin, this alias becomes a no-op.
+const POOL_ALIASES: Record<string, string[]> = { reception: ['miscellaneous'] };
+const HIDDEN_POOLS = new Set(Object.values(POOL_ALIASES).flat());
+const ROLE_ORDER = ['reception', 'impression-clinician', 'virtual-impression-clinician'];
+
 // Down time, by who is needed.
 //
 // One booking needs different people at different moments: reception
@@ -49,20 +59,26 @@ export function DownTimeSheet({ open, onClose, rows, dateIso, dayLabel, hours, n
 
   const resources: ResourceUsage[] = useMemo(() => {
     const nameById = new Map(staff.data.map((s) => [s.staff_member_id, s.display_name] as const));
+    const order = (p: { id: string; kind: string; display_name: string }) => {
+      const i = ROLE_ORDER.indexOf(p.id);
+      return i >= 0 ? i : p.kind === 'staff_role' ? 50 : 100;
+    };
     const inputs = [...pools.data]
-      .sort((a, b) => (a.kind === b.kind ? a.display_name.localeCompare(b.display_name) : a.kind === 'staff_role' ? -1 : 1))
+      .filter((p) => !HIDDEN_POOLS.has(p.id))
+      .sort((a, b) => order(a) - order(b) || a.display_name.localeCompare(b.display_name))
       .map((p) => ({
         id: p.id,
         name: p.display_name,
         kind: p.kind,
         units: p.units,
         staffNames: (assignments.byPoolId[p.id] ?? []).map((id) => nameById.get(id)).filter((n): n is string => !!n).sort(),
+        aliases: POOL_ALIASES[p.id] ?? [],
       }));
     return computeResourceUsage({ rows, dateIso, hours, now, isToday, isPast, pools: inputs });
   }, [pools.data, assignments.byPoolId, staff.data, rows, dateIso, hours, now, isToday, isPast]);
 
-  const tense = isPast ? 'was' : isToday ? 'is' : 'will be';
   const closed = !overall.open;
+  const span = closed ? '' : `${clock12(overall.opensAt!)} to ${clock12(overall.closesAt!)}`;
 
   return (
     <BottomSheet
@@ -72,16 +88,18 @@ export function DownTimeSheet({ open, onClose, rows, dateIso, dayLabel, hours, n
       description={
         closed
           ? `The clinic is closed on ${dayLabel}.`
-          : `How ${dayLabel} ${tense} used, ${formatTimeNoZone(overall.opensAt!)} to ${formatTimeNoZone(overall.closesAt!)}. Busy means a booking needs them in that phase; a repair or manufacture phase leaves the desk free.`
+          : `${dayLabel}, open ${span}. Each bar is the day for one person or room: when a booking needs them, when nobody does.`
       }
     >
       {closed ? null : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[5] }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[6] }}>
+          <Legend />
           <ResourceBlock
             name="Patients in"
             detail="Any patient in the building or on a call"
             usage={overall.usage!}
             unused={false}
+            isPast={isPast}
             showLab
           />
           <div style={{ height: 1, background: theme.color.border }} aria-hidden />
@@ -105,10 +123,10 @@ export function DownTimeSheet({ open, onClose, rows, dateIso, dayLabel, hours, n
                 }
                 usage={r.usage}
                 unused={r.unused}
+                isPast={isPast}
               />
             ))
           )}
-          <Legend />
         </div>
       )}
     </BottomSheet>
@@ -120,64 +138,117 @@ function ResourceBlock({
   detail,
   usage,
   unused,
+  isPast,
   showLab = false,
 }: {
   name: string;
   detail: string;
   usage: DayUsage;
   unused: boolean;
+  isPast: boolean;
   /** Lab and manufacture time only means something for the day as a
    *  whole; for a role it is just "the phases that are not mine". */
   showLab?: boolean;
 }) {
   return (
-    <section aria-label={name} style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
-      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: theme.space[3], flexWrap: 'wrap' }}>
+    <section aria-label={name} style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: theme.space[3], flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
-          <span style={{ fontSize: theme.type.size.base, fontWeight: theme.type.weight.semibold, color: theme.color.ink }}>{name}</span>
-          <span style={{ fontSize: theme.type.size.xs, color: theme.color.inkMuted }}>{detail}</span>
+          <span style={{ fontSize: theme.type.size.md, fontWeight: theme.type.weight.semibold, color: theme.color.ink, letterSpacing: theme.type.tracking.tight }}>
+            {name}
+          </span>
+          <span style={{ fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>{detail}</span>
         </div>
-        <Figures usage={usage} unused={unused} showLab={showLab} />
+        <Figures usage={usage} unused={unused} isPast={isPast} />
       </div>
       <UsageBar usage={usage} />
+      {showLab && usage.labMinutes > 0 ? (
+        <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>
+          Repairs and manufacturing {isPast ? 'ran' : 'run'} for {formatMinutes(usage.labMinutes)} alongside. That time needs nobody at the desk.
+        </p>
+      ) : null}
     </section>
   );
 }
 
-function Figures({ usage, unused, showLab }: { usage: DayUsage; unused: boolean; showLab: boolean }) {
+// Three chips, each with the same swatch the bar uses, so the numbers
+// and the colours read as one thing.
+function Figures({ usage, unused, isPast }: { usage: DayUsage; unused: boolean; isPast: boolean }) {
   if (unused) {
-    return <span style={{ fontSize: theme.type.size.sm, color: theme.color.inkSubtle }}>No booking needs this</span>;
+    return (
+      <span style={{ fontSize: theme.type.size.sm, color: theme.color.inkSubtle, paddingTop: 2 }}>
+        {isPast ? 'Not needed that day' : 'Not needed'}
+      </span>
+    );
   }
-  const parts: Array<{ label: string; minutes: number; colour: string }> = [
-    { label: 'busy', minutes: usage.bookedMinutes, colour: theme.color.ink },
-    { label: 'down', minutes: usage.downMinutes, colour: theme.color.inkMuted },
-    { label: 'free to fill', minutes: usage.freeMinutes, colour: theme.color.accent },
-  ].filter((p) => p.minutes > 0);
+  const all: Array<{ kind: UsageKind; minutes: number }> = [
+    { kind: 'booked', minutes: usage.bookedMinutes },
+    { kind: 'down', minutes: usage.downMinutes },
+    { kind: 'free', minutes: usage.freeMinutes },
+  ];
+  const parts = all.filter((p) => p.minutes > 0);
   return (
-    <span style={{ display: 'inline-flex', gap: theme.space[3], fontSize: theme.type.size.sm, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+    <span style={{ display: 'inline-flex', gap: theme.space[2], flexWrap: 'wrap' }}>
       {parts.map((p) => (
-        <span key={p.label} style={{ color: p.colour, fontWeight: theme.type.weight.semibold }}>
-          {formatMinutes(p.minutes)} <span style={{ fontWeight: theme.type.weight.regular }}>{p.label}</span>
+        <span
+          key={p.kind}
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: theme.space[2],
+            padding: `${theme.space[1]}px ${theme.space[3]}px`,
+            borderRadius: theme.radius.pill,
+            background: theme.color.bg,
+            border: `1px solid ${theme.color.border}`,
+            fontSize: theme.type.size.sm,
+            color: theme.color.ink,
+            fontVariantNumeric: 'tabular-nums',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          <Swatch kind={p.kind} />
+          <span style={{ fontWeight: theme.type.weight.semibold }}>{formatMinutes(p.minutes)}</span>
+          <span style={{ color: theme.color.inkMuted }}>{labelFor(p.kind).toLowerCase()}</span>
         </span>
       ))}
-      {showLab && usage.labMinutes > 0 ? (
-        <span style={{ color: theme.color.inkSubtle }}>
-          {formatMinutes(usage.labMinutes)} <span>lab alongside</span>
-        </span>
-      ) : null}
     </span>
   );
+}
+
+function Swatch({ kind }: { kind: UsageKind }) {
+  return <span aria-hidden style={{ width: 12, height: 12, borderRadius: 3, border: `1px solid ${theme.color.border}`, flexShrink: 0, ...styleFor(kind) }} />;
 }
 
 // The opening hours as one bar, opening on the left, closing on the
 // right. Each segment is sized by its minutes. A thin ink tick marks
 // now on today's view.
 export function UsageBar({ usage }: { usage: DayUsage }) {
+  const first = usage.segments[0];
+  const last = usage.segments[usage.segments.length - 1];
+  const lunch = usage.segments.find((x) => x.kind === 'lunch');
+  const lunchLeft = lunch && first ? ((new Date(lunch.start).getTime() - new Date(first.start).getTime()) / (usage.openMinutes * 60_000)) * 100 : null;
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[1] }}>
+      <UsageTrack usage={usage} />
+      {first && last ? (
+        <div style={{ position: 'relative', height: 16, fontSize: theme.type.size.xs, color: theme.color.inkSubtle, fontVariantNumeric: 'tabular-nums' }} aria-hidden>
+          <span style={{ position: 'absolute', left: 0 }}>{clock12(first.start)}</span>
+          {lunchLeft !== null && lunchLeft > 12 && lunchLeft < 88 ? (
+            <span style={{ position: 'absolute', left: `${lunchLeft}%`, transform: 'translateX(-50%)' }}>lunch</span>
+          ) : null}
+          <span style={{ position: 'absolute', right: 0 }}>{clock12(last.end)}</span>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function UsageTrack({ usage }: { usage: DayUsage }) {
   return (
     <div
       role="img"
       aria-label={`${formatMinutes(usage.bookedMinutes)} busy, ${formatMinutes(usage.downMinutes)} down, ${formatMinutes(usage.freeMinutes)} free to fill, ${formatMinutes(usage.lunchMinutes)} lunch`}
-      style={{ position: 'relative', display: 'flex', height: 14, borderRadius: theme.radius.pill, overflow: 'hidden', background: theme.color.bg, border: `1px solid ${theme.color.border}` }}
+      style={{ position: 'relative', display: 'flex', height: 18, borderRadius: 6, overflow: 'hidden', background: theme.color.bg, border: `1px solid ${theme.color.border}` }}
     >
       {usage.segments.map((seg, i) => (
         <div
@@ -231,15 +302,30 @@ function labelFor(kind: UsageKind): string {
 }
 
 function Legend() {
-  const items: UsageKind[] = ['booked', 'down', 'free', 'lunch'];
+  const items: Array<{ kind: UsageKind; hint: string }> = [
+    { kind: 'booked', hint: 'a booking needs them' },
+    { kind: 'down', hint: 'nobody needed them' },
+    { kind: 'free', hint: 'still open to book' },
+    { kind: 'lunch', hint: '' },
+  ];
   return (
-    <div style={{ display: 'flex', gap: theme.space[4], flexWrap: 'wrap' }} aria-hidden>
-      {items.map((k) => (
-        <span key={k} style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2], fontSize: theme.type.size.xs, color: theme.color.inkMuted }}>
-          <span style={{ width: 14, height: 10, borderRadius: 3, border: `1px solid ${theme.color.border}`, ...styleFor(k) }} />
-          {labelFor(k)}
+    <div style={{ display: 'flex', gap: theme.space[5], flexWrap: 'wrap' }} aria-hidden>
+      {items.map((it) => (
+        <span key={it.kind} style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2], fontSize: theme.type.size.sm, color: theme.color.ink }}>
+          <Swatch kind={it.kind} />
+          <span style={{ fontWeight: theme.type.weight.semibold }}>{labelFor(it.kind)}</span>
+          {it.hint ? <span style={{ color: theme.color.inkMuted }}>{it.hint}</span> : null}
         </span>
       ))}
     </div>
   );
+}
+
+// "9am", "12:30pm", "5pm": the short clock the schedule rows use.
+function clock12(iso: string): string {
+  const parts = new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(new Date(iso));
+  const h = Number(parts.find((p) => p.type === 'hour')?.value ?? '0') % 24;
+  const m = Number(parts.find((p) => p.type === 'minute')?.value ?? '0');
+  const hh = h % 12 === 0 ? 12 : h % 12;
+  return `${hh}${m === 0 ? '' : `:${String(m).padStart(2, '0')}`}${h < 12 ? 'am' : 'pm'}`;
 }
