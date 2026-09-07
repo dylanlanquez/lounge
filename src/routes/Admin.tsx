@@ -1,4 +1,5 @@
 import { type CSSProperties, Fragment, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useBookingTypeConfigs, bookingTypeRowLabel, type BookingTypeConfigRow } from '../lib/queries/bookingTypes.ts';
 import { Navigate, useNavigate, useParams } from 'react-router-dom';
 import { AlertTriangle, ArchiveRestore, ArrowDown, ArrowUp, BarChart3, Briefcase, CalendarCheck, CalendarClock, Check, ChevronUp, Clock, CreditCard, FileSignature, FlaskConical, GripVertical, Image as ImageIcon, KeyRound, Layers, Mail, Package, Pencil, Plus, RefreshCw, Rocket, RotateCcw, Settings, Link2, PackageCheck, ShieldAlert, ShieldCheck, ShoppingBag, Trash2, UserPlus, Users, Video, Wallet, X } from 'lucide-react';
 import {
@@ -6618,7 +6619,7 @@ const PRICING_MODEL_OPTIONS: Array<{ value: PricingModel; label: string }> = [
 ];
 
 const SERVICE_TYPE_OPTIONS: Array<{ value: string; label: string }> = [
-  { value: '', label: 'Any appointment' },
+  { value: '', label: 'Not booked directly' },
   { value: 'denture_repair', label: 'Denture repair' },
   { value: 'same_day_appliance', label: 'Same-day appliance' },
   { value: 'click_in_veneers', label: 'Click-in veneers' },
@@ -6647,6 +6648,81 @@ function chipStyle(active: boolean): CSSProperties {
     fontFamily: 'inherit',
     transition: `border-color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}, background ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
   };
+}
+
+// The product key (and repair type) that ties a catalogue product to a
+// booking type. Picked from the booking types on record for the chosen
+// appointment type, with "every booking of this type" as the default.
+// Falls back to a typed field only when no keys exist yet for that
+// type, so a new key can still be introduced here.
+function BookingTypeKeyPicker({
+  serviceType,
+  serviceLabel,
+  rows,
+  repairVariant,
+  productKey,
+  onRepairVariant,
+  onProductKey,
+}: {
+  serviceType: string;
+  serviceLabel: string;
+  rows: BookingTypeConfigRow[];
+  repairVariant: string;
+  productKey: string;
+  onRepairVariant: (v: string) => void;
+  onProductKey: (v: string) => void;
+}) {
+  const keys = Array.from(
+    new Set(rows.filter((r) => r.service_type === serviceType && r.product_key).map((r) => r.product_key as string)),
+  ).sort();
+  const variants = Array.from(
+    new Set(rows.filter((r) => r.service_type === serviceType && r.repair_variant).map((r) => r.repair_variant as string)),
+  ).sort();
+  const labelFor = (k: string) => {
+    const row =
+      rows.find((r) => r.service_type === serviceType && r.product_key === k && !r.arch && !r.repair_variant)
+      ?? rows.find((r) => r.service_type === serviceType && r.product_key === k);
+    return row ? `${bookingTypeRowLabel(row)} (${k})` : k;
+  };
+  const isDenture = serviceType === 'denture_repair';
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
+      <div style={{ display: 'grid', gridTemplateColumns: isDenture ? '1fr 1fr' : 'minmax(0, 420px)', gap: theme.space[3] }}>
+        {isDenture ? (
+          variants.length > 0 ? (
+            <DropdownSelect
+              label="Repair type"
+              value={variants.includes(repairVariant) || repairVariant === '' ? repairVariant : ''}
+              onChange={(v) => onRepairVariant(v)}
+              options={[{ value: '', label: 'Every denture repair' }, ...variants.map((v) => ({ value: v, label: v }))]}
+            />
+          ) : (
+            <Input label="Repair type" value={repairVariant} onChange={(e) => onRepairVariant(e.target.value)} placeholder="e.g. Snapped denture" />
+          )
+        ) : null}
+        {keys.length > 0 ? (
+          <DropdownSelect
+            label="Which product on that booking"
+            value={keys.includes(productKey) || productKey === '' ? productKey : ''}
+            onChange={(v) => onProductKey(v)}
+            options={[{ value: '', label: `Every ${serviceLabel} booking` }, ...keys.map((k) => ({ value: k, label: labelFor(k) }))]}
+          />
+        ) : (
+          <Input
+            label="Product key on that booking"
+            value={productKey}
+            onChange={(e) => onProductKey(e.target.value)}
+            placeholder="e.g. retainer, night_guard"
+          />
+        )}
+      </div>
+      <p style={{ margin: 0, fontSize: theme.type.size.xs, color: theme.color.inkSubtle, lineHeight: theme.type.leading.snug }}>
+        {keys.length > 0
+          ? `These are the ${serviceLabel} booking types set up in Admin, Booking types. Pick the one this product is sold as, or leave it on every booking of this type.`
+          : `No product keys exist yet for ${serviceLabel} in Admin, Booking types. Leave blank to match every ${serviceLabel} booking, or type the key exactly as the booking type will use it.`}
+      </p>
+    </div>
+  );
 }
 
 function ServiceSection({ title, hint, children }: { title: string; hint?: string; children: ReactNode }) {
@@ -6778,6 +6854,11 @@ function ServiceForm({
   onSave: (draft: CatalogueDraft, waiverSectionKeys: string[]) => Promise<void>;
   onCancel: () => void;
 }) {
+  // Booking types on record, so the product key is picked from what
+  // actually exists rather than typed. Keyed by (service_type,
+  // product_key), the same axes the widget uses to find this catalogue
+  // row when it prices a booking.
+  const bookingTypes = useBookingTypeConfigs();
   const [draft, setDraft] = useState<CatalogueDraft>(initial);
   const [busy, setBusy] = useState(false);
   const [imgBusy, setImgBusy] = useState(false);
@@ -7107,8 +7188,11 @@ function ServiceForm({
           )}
         </ServiceSection>
 
-        {/* 3. When to suggest */}
-        <ServiceSection title="When to suggest" hint="Auto-suggest this service when the patient's booking matches the appointment type below">
+        {/* 3. Booking type link */}
+        <ServiceSection
+          title="Booking type"
+          hint="The booking this product belongs to. When a patient books it, online or in the app, this is the product that gets priced and added to their visit. Choose Not booked directly for anything sold only at the till."
+        >
           <div style={{ display: 'flex', gap: theme.space[2], flexWrap: 'wrap' }}>
             {SERVICE_TYPE_OPTIONS.map((opt) => (
               <button
@@ -7124,35 +7208,16 @@ function ServiceForm({
               </button>
             ))}
           </div>
-          {draft.service_type === 'denture_repair' ? (
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: theme.space[3] }}>
-              <Input
-                label="Repair type"
-                value={draft.repair_variant}
-                onChange={(e) => set('repair_variant', e.target.value)}
-                placeholder="e.g. Snapped denture"
-              />
-              <Input
-                label="Sub-type tag (optional)"
-                value={draft.product_key}
-                onChange={(e) => set('product_key', e.target.value)}
-                placeholder="e.g. partial"
-              />
-            </div>
-          ) : draft.service_type ? (
-            <div style={{ maxWidth: 320 }}>
-              <Input
-                label="Sub-type tag (optional)"
-                value={draft.product_key}
-                onChange={(e) => set('product_key', e.target.value)}
-                placeholder="e.g. retainer, night_guard"
-              />
-            </div>
-          ) : null}
-          {draft.product_key && draft.service_type ? (
-            <p style={{ margin: 0, fontSize: theme.type.size.xs, color: theme.color.inkSubtle }}>
-              Narrows matching further. Leave blank to match all {SERVICE_TYPE_LABELS[draft.service_type] ?? 'bookings of this type'}.
-            </p>
+          {draft.service_type ? (
+            <BookingTypeKeyPicker
+              serviceType={draft.service_type}
+              serviceLabel={SERVICE_TYPE_LABELS[draft.service_type] ?? 'this type'}
+              rows={bookingTypes.data}
+              repairVariant={draft.repair_variant}
+              productKey={draft.product_key}
+              onRepairVariant={(v) => set('repair_variant', v)}
+              onProductKey={(v) => set('product_key', v)}
+            />
           ) : null}
         </ServiceSection>
 
