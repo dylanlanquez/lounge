@@ -2915,23 +2915,6 @@ function CountDetailsSheet({
       }
       footer={
         <div style={{ display: 'flex', gap: theme.space[3], justifyContent: 'flex-end', flexWrap: 'wrap' }}>
-          {canCorrect && data && data.count.status === 'signed' && data.count.variance_pence !== 0 && data.count.actual_pence !== null ? (
-            <Button
-              variant="secondary"
-              onClick={() =>
-                onWriteOff({
-                  count_id: data.count.id,
-                  period_end: data.count.period_end,
-                  expected_pence: data.count.expected_pence,
-                  actual_pence: data.count.actual_pence!,
-                })
-              }
-            >
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
-                <CheckCircle2 size={14} aria-hidden /> Write off the difference
-              </span>
-            </Button>
-          ) : null}
           {canCorrect && data && data.count.status === 'signed' ? (
             <Button variant="tertiary" onClick={() => onVoid(data.count.id, data.count.period_end)}>
               <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2], color: theme.color.alert }}>
@@ -2988,25 +2971,18 @@ function CountDetailsSheet({
               }
             />
           </div>
-          {data.count.written_off_pence !== null && data.count.written_off_pence !== 0 ? (
-            <p
-              style={{
-                margin: 0,
-                padding: `${theme.space[2]}px ${theme.space[3]}px`,
-                borderRadius: theme.radius.input,
-                background: theme.color.bg,
-                fontSize: theme.type.size.sm,
-                color: theme.color.ink,
-                lineHeight: theme.type.leading.snug,
-                fontVariantNumeric: 'tabular-nums',
-              }}
-            >
-              Was {formatPence(Math.abs(data.count.written_off_pence))} {data.count.written_off_pence > 0 ? 'over' : 'short'}, written off
-              {data.count.written_off_by_name ? ` by ${data.count.written_off_by_name}` : ''}
-              {data.count.written_off_at ? ` on ${formatLongDate(data.count.written_off_at)}` : ''}
-              {data.count.write_off_reason ? `: ${data.count.write_off_reason}` : '.'}
-            </p>
-          ) : null}
+          <CountDifferencePanel
+            statement={data}
+            canCorrect={canCorrect}
+            onWriteOff={() =>
+              onWriteOff({
+                count_id: data.count.id,
+                period_end: data.count.period_end,
+                expected_pence: data.count.expected_pence,
+                actual_pence: data.count.actual_pence ?? 0,
+              })
+            }
+          />
           <p style={{ margin: 0, fontSize: theme.type.size.xs, color: theme.color.inkMuted }}>
             Counted by{' '}
             <span style={{ color: theme.color.ink, fontWeight: theme.type.weight.medium }}>
@@ -3510,6 +3486,150 @@ function ReversalEffect({ target }: { target: ReverseTarget }) {
           ? 'The cash never left, so Lounge puts it back into the running balance.'
           : `Right now starts from what was physically counted, so it does not move. The count was only "over" because this withdrawal was recorded when the cash was still in the safe; restating it fixes that. If the count itself was wrong, void the count and count again instead.`}
       </p>
+    </div>
+  );
+}
+
+// The difference on a past count, explained in place: what was counted,
+// what was expected and how that figure was arrived at (reversals
+// restate it), what the difference means, what has already been logged
+// against it, and how to settle it. The write-off action lives here,
+// next to the explanation, never as a bare footer button.
+function CountDifferencePanel({
+  statement,
+  canCorrect,
+  onWriteOff,
+}: {
+  statement: CashCountStatement;
+  canCorrect: boolean;
+  onWriteOff: () => void;
+}) {
+  const c = statement.count;
+  if (c.actual_pence === null || c.kind === 'legacy_baseline') return null;
+  const diff = c.variance_pence;
+  const over = diff > 0;
+  const writtenOff = c.written_off_pence !== null && c.written_off_pence !== 0;
+  const reversedInCount = statement.withdrawals.filter((w) => w.reversed_at);
+  const reversedPence = reversedInCount.reduce((s, w) => s + w.amount_pence, 0);
+  const originalExpected = c.expected_pence - reversedPence - (writtenOff ? c.written_off_pence! : 0);
+  const envelopesPence = statement.unrecorded.reduce((s, u) => s + u.amount_pence, 0);
+
+  const settled = diff === 0;
+  const colour = settled ? theme.color.accent : over ? theme.color.warn : theme.color.alert;
+  const background = settled ? theme.color.accentBg : over ? '#FFF6E5' : '#FFEEEC';
+
+  const title = settled
+    ? writtenOff
+      ? `Settled: was ${formatPence(Math.abs(c.written_off_pence!))} ${c.written_off_pence! > 0 ? 'over' : 'short'}, written off`
+      : 'Matched what Lounge expected'
+    : `${formatPence(Math.abs(diff))} ${over ? 'more' : 'less'} than expected`;
+
+  // How the expected figure got to where it is.
+  const expectedStory: string[] = [];
+  if (reversedInCount.length > 0) {
+    expectedStory.push(
+      `Expected was ${formatPence(originalExpected)} when the count was signed. ${formatNumber(reversedInCount.length)} withdrawal${
+        reversedInCount.length === 1 ? '' : 's'
+      } in this period ${reversedInCount.length === 1 ? 'was' : 'were'} reversed afterwards (${formatPence(reversedPence)} put back), so expected is now ${formatPence(
+        writtenOff ? originalExpected + reversedPence : c.expected_pence,
+      )}.`,
+    );
+  }
+
+  return (
+    <div
+      style={{
+        padding: theme.space[5],
+        borderRadius: theme.radius.input,
+        background,
+        border: `1px solid ${theme.color.border}`,
+        display: 'flex',
+        gap: theme.space[4],
+        alignItems: 'flex-start',
+      }}
+    >
+      <span
+        aria-hidden
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          width: 36,
+          height: 36,
+          borderRadius: theme.radius.pill,
+          background: theme.color.surface,
+          color: colour,
+          flexShrink: 0,
+        }}
+      >
+        {settled ? <CheckCircle2 size={18} aria-hidden /> : <AlertTriangle size={18} aria-hidden />}
+      </span>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3], minWidth: 0, flex: 1 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[1] }}>
+          <p
+            style={{
+              margin: 0,
+              fontSize: theme.type.size.lg,
+              fontWeight: theme.type.weight.semibold,
+              color: colour,
+              letterSpacing: theme.type.tracking.tight,
+              lineHeight: theme.type.leading.tight,
+              fontVariantNumeric: 'tabular-nums',
+            }}
+          >
+            {title}
+          </p>
+          <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.ink, lineHeight: theme.type.leading.normal, fontVariantNumeric: 'tabular-nums' }}>
+            {c.counted_by_name} counted {formatPence(c.actual_pence)}.{' '}
+            {settled && writtenOff
+              ? `Lounge expected ${formatPence(c.actual_pence - c.written_off_pence!)}. ${c.written_off_by_name ?? 'The super admin'} accepted the ${formatPence(Math.abs(c.written_off_pence!))} ${
+                  c.written_off_pence! > 0 ? 'extra' : 'shortfall'
+                }${c.written_off_at ? ` on ${formatLongDate(c.written_off_at)}` : ''}${c.write_off_reason ? `: "${c.write_off_reason}"` : '.'}`
+              : settled
+                ? 'Lounge expected exactly that. Nothing to explain.'
+                : over
+                  ? `Lounge expected ${formatPence(c.expected_pence)}. There is ${formatPence(diff)} in the safe that Lounge has no record of.`
+                  : `Lounge expected ${formatPence(c.expected_pence)}. ${formatPence(Math.abs(diff))} of recorded cash is not in the safe.`}
+          </p>
+          {expectedStory.map((line) => (
+            <p key={line} style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkMuted, lineHeight: theme.type.leading.normal, fontVariantNumeric: 'tabular-nums' }}>
+              {line}
+            </p>
+          ))}
+          {!settled && statement.unrecorded.length > 0 ? (
+            <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkMuted, lineHeight: theme.type.leading.normal, fontVariantNumeric: 'tabular-nums' }}>
+              {formatNumber(statement.unrecorded.length)} envelope{statement.unrecorded.length === 1 ? '' : 's'} logged at the count ({formatPence(envelopesPence)}) explain{statement.unrecorded.length === 1 ? 's' : ''} part of it; see below.
+            </p>
+          ) : null}
+        </div>
+
+        {!settled ? (
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              gap: theme.space[3],
+              flexWrap: 'wrap',
+              paddingTop: theme.space[3],
+              borderTop: `1px solid ${theme.color.border}`,
+            }}
+          >
+            <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.ink, lineHeight: theme.type.leading.normal, flex: '1 1 320px' }}>
+              {canCorrect
+                ? 'If a withdrawal below was a mistake, reverse it. Once what remains is explained, write it off with a note: the count reads as matched and Right now stays at the counted total.'
+                : 'Only the super admin can reverse a withdrawal or write off a difference.'}
+            </p>
+            {canCorrect ? (
+              <Button variant="primary" size="sm" onClick={onWriteOff}>
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
+                  <CheckCircle2 size={14} aria-hidden /> Write off {formatPence(Math.abs(diff))}
+                </span>
+              </Button>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
     </div>
   );
 }
