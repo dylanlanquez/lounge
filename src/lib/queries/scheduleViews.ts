@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import { supabase } from '../supabase.ts';
-import type { AppointmentRow } from './appointments.ts';
+import { type AppointmentRow, effectiveAppointmentStatus } from './appointments.ts';
+import type { VisitEndReason } from './visits.ts';
 import { formatDateIso } from '../calendarMonth.ts';
 import { useRealtimeRefresh } from '../useRealtimeRefresh.ts';
 import { useStaleQueryLoading } from '../useStaleQueryLoading.ts';
@@ -46,6 +47,12 @@ interface RawRow {
   meet_host_id?: string | null;
   clinician_staff_member_id?: string | null;
   walk_in_id?: string | null;
+  // The linked visit's outcome. One appointment has at most one visit;
+  // PostgREST returns the reverse embed as an array.
+  visit?:
+    | { status: string; visit_end_reason: VisitEndReason | null }
+    | { status: string; visit_end_reason: VisitEndReason | null }[]
+    | null;
   deposit_pence?: number | null;
   deposit_currency?: string | null;
   deposit_provider?: 'paypal' | 'stripe' | null;
@@ -79,6 +86,9 @@ interface RawRow {
 // case so legacy rows still display.
 const PHASE_SELECT =
   'phases:lng_appointment_phases ( phase_index, label, patient_required, start_at, end_at, status, pool_ids )';
+// The visit's real outcome, so a walk-out or an unsuitable case never
+// renders as Complete. Same rule as the lng_ledger view.
+const VISIT_SELECT = 'visit:lng_visits!lng_visits_appointment_id_fkey ( status, visit_end_reason )';
 
 const SELECT_WITH_INTAKE = `
   id, patient_id, location_id, start_at, end_at, status, source, event_type_label,
@@ -87,7 +97,8 @@ const SELECT_WITH_INTAKE = `
   deposit_pence, deposit_currency, deposit_provider, deposit_status, paid_in_full_at_booking,
   patient:patients ( first_name, last_name, email, phone ),
   staff:accounts!lng_appointments_staff_account_id_fkey ( first_name, last_name ),
-  ${PHASE_SELECT}
+  ${PHASE_SELECT},
+  ${VISIT_SELECT}
 `;
 const SELECT_NO_INTAKE = `
   id, patient_id, location_id, start_at, end_at, status, source, event_type_label,
@@ -95,7 +106,8 @@ const SELECT_NO_INTAKE = `
   staff_account_id, notes, meet_host_id, clinician_staff_member_id, walk_in_id,
   patient:patients ( first_name, last_name, email, phone ),
   staff:accounts!lng_appointments_staff_account_id_fkey ( first_name, last_name ),
-  ${PHASE_SELECT}
+  ${PHASE_SELECT},
+  ${VISIT_SELECT}
 `;
 
 function mapRows(rows: unknown[]): AppointmentRow[] {
@@ -103,13 +115,15 @@ function mapRows(rows: unknown[]): AppointmentRow[] {
     const raw = r as RawRow;
     const patient = Array.isArray(raw.patient) ? raw.patient[0] : raw.patient;
     const staff = Array.isArray(raw.staff) ? raw.staff[0] : raw.staff;
+    const visit = Array.isArray(raw.visit) ? raw.visit[0] : raw.visit;
     return {
       id: raw.id,
       patient_id: raw.patient_id,
       location_id: raw.location_id,
       start_at: raw.start_at,
       end_at: raw.end_at,
-      status: raw.status,
+      status: effectiveAppointmentStatus(raw.status, visit?.status ?? null),
+      visit_end_reason: visit?.visit_end_reason ?? null,
       source: raw.source,
       event_type_label: raw.event_type_label,
       service_type: raw.service_type ?? null,

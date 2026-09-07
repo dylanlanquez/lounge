@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isAppointmentDimmed } from './appointments.ts';
+import { effectiveAppointmentStatus, humaniseStatus, isAppointmentDimmed } from './appointments.ts';
 import type { AppointmentStatus } from '../../components/AppointmentCard/AppointmentCard.tsx';
 
 const now = new Date('2026-04-28T11:00:00Z');
@@ -13,6 +13,8 @@ describe('isAppointmentDimmed', () => {
     expect(isAppointmentDimmed(row('complete', future), now)).toBe(true);
     expect(isAppointmentDimmed(row('cancelled', future), now)).toBe(true);
     expect(isAppointmentDimmed(row('rescheduled', future), now)).toBe(true);
+    expect(isAppointmentDimmed(row('ended_early', future), now)).toBe(true);
+    expect(isAppointmentDimmed(row('unsuitable', future), now)).toBe(true);
   });
 
   it('keeps active arrived rows at full strength even past end_at', () => {
@@ -43,5 +45,24 @@ describe('isAppointmentDimmed', () => {
   it('accepts a number (epoch ms) as well as Date for now', () => {
     expect(isAppointmentDimmed(row('booked', past), now.getTime())).toBe(true);
     expect(isAppointmentDimmed(row('booked', future), now.getTime())).toBe(false);
+  });
+});
+
+describe('effectiveAppointmentStatus', () => {
+  it('shows the visit outcome over a complete appointment', () => {
+    expect(effectiveAppointmentStatus('complete', 'ended_early')).toBe('ended_early');
+    expect(effectiveAppointmentStatus('complete', 'unsuitable')).toBe('unsuitable');
+    expect(effectiveAppointmentStatus('complete', 'complete')).toBe('complete');
+  });
+
+  it('keeps the appointment status while the visit is still open or absent', () => {
+    expect(effectiveAppointmentStatus('arrived', 'arrived')).toBe('arrived');
+    expect(effectiveAppointmentStatus('booked', null)).toBe('booked');
+    expect(effectiveAppointmentStatus('cancelled', undefined)).toBe('cancelled');
+  });
+
+  it('labels the outcomes in plain English', () => {
+    expect(humaniseStatus('ended_early')).toBe('Ended early');
+    expect(humaniseStatus('unsuitable')).toBe('Unsuitable');
   });
 });

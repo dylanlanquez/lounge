@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
+import { effectiveAppointmentStatus } from './appointments.ts';
+import type { VisitEndReason } from './visits.ts';
 import { supabase } from '../supabase.ts';
 import { logFailure } from '../failureLog.ts';
 import { useRealtimeRefresh } from '../useRealtimeRefresh.ts';
@@ -31,6 +33,8 @@ import type { AppointmentStatus } from '../../components/AppointmentCard/Appoint
 export interface AppointmentDetailRow {
   id: string;
   status: AppointmentStatus;
+  /** Why the visit ended early, when it did. */
+  visit_end_reason: VisitEndReason | null;
   source: AppointmentSource;
   start_at: string;
   end_at: string;
@@ -390,12 +394,12 @@ export function useAppointmentDetail(appointmentId: string | undefined | null): 
           appt.walk_in_id
             ? supabase
                 .from('lng_visits')
-                .select('id, opened_at')
+                .select('id, opened_at, status, visit_end_reason')
                 .eq('walk_in_id', appt.walk_in_id)
                 .maybeSingle()
             : supabase
                 .from('lng_visits')
-                .select('id, opened_at')
+                .select('id, opened_at, status, visit_end_reason')
                 .eq('appointment_id', appt.id)
                 .maybeSingle(),
           appt.meet_host_id
@@ -479,9 +483,11 @@ export function useAppointmentDetail(appointmentId: string | undefined | null): 
             lwo_ref: null,
           };
 
+        const visitRow = (visitRes.data as { id: string; opened_at: string; status?: string; visit_end_reason?: VisitEndReason | null } | null) ?? null;
         const row: AppointmentDetailRow = {
           id: appt.id,
-          status: appt.status,
+          status: effectiveAppointmentStatus(appt.status, visitRow?.status ?? null),
+          visit_end_reason: visitRow?.visit_end_reason ?? null,
           source: appt.source,
           start_at: appt.start_at,
           end_at: appt.end_at,

@@ -75,6 +75,7 @@ import {
   formatAppointmentSummary,
   patientFullDisplayName,
   properCase,
+  humaniseVisitEndReason,
 } from '../lib/queries/appointments.ts';
 import type { AppointmentStatus } from '../components/AppointmentCard/AppointmentCard.tsx';
 import { humaniseEventTypeLabel } from '../lib/queries/patientProfile.ts';
@@ -1031,6 +1032,8 @@ const STATUS_TONE: Record<AppointmentStatus, StatusTone> = {
   no_show: 'no_show',
   cancelled: 'cancelled',
   rescheduled: 'cancelled',
+  ended_early: 'unsuitable',
+  unsuitable: 'unsuitable',
 };
 
 function Hero({
@@ -1483,6 +1486,26 @@ function buildApptRibbon(
         tone: 'accent',
       };
     }
+    case 'ended_early':
+    case 'unsuitable': {
+      // The visit closed without the work being done. The reason is
+      // the visit's end reason, in plain English; the full note lives
+      // on the visit page.
+      const why = humaniseVisitEndReason(appt.visit_end_reason);
+      return {
+        icon: <AlertTriangle size={16} aria-hidden />,
+        timeLine: bookedForLine,
+        relative: (
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            <AlertTriangle size={13} aria-hidden />
+            {appt.status === 'unsuitable'
+              ? `Unsuitable${why && why !== 'Unsuitable' ? `: ${why}` : ''}`
+              : `Visit ended early${why ? `: ${why}` : ''}`}
+          </span>
+        ),
+        tone: 'warn',
+      };
+    }
     case 'no_show': {
       // Dylan's rule: the time the patient was *supposed* to be in
       // for stays visible across every status, so the receptionist
@@ -1578,6 +1601,10 @@ function humaniseAppointmentStatus(status: AppointmentStatus): string {
       return 'Cancelled';
     case 'rescheduled':
       return 'Rescheduled';
+    case 'ended_early':
+      return 'Ended early';
+    case 'unsuitable':
+      return 'Unsuitable';
     default:
       return status;
   }

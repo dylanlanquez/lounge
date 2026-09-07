@@ -2077,7 +2077,9 @@ function statusToTone(s: AppointmentRow['status']) {
         ? 'complete'
         : s === 'no_show'
           ? 'no_show'
-          : 'cancelled';
+          : s === 'ended_early' || s === 'unsuitable'
+            ? 'unsuitable'
+            : 'cancelled';
 }
 
 // Compact day + start-time string for the appointment popup

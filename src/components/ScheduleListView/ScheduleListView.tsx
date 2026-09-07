@@ -337,6 +337,9 @@ function statusToTone(s: AppointmentRow['status']) {
       return 'no_show' as const;
     case 'rescheduled':
       return 'cancelled' as const;
+    case 'ended_early':
+    case 'unsuitable':
+      return 'unsuitable' as const;
     default:
       return 'neutral' as const;
   }

@@ -1428,6 +1428,13 @@ export async function writeOffCountDifference(countId: string, reason: string): 
   return { written_off_pence: out?.written_off_pence ?? 0 };
 }
 
+/** Restore a count that was voided by mistake. */
+export async function restoreCashCount(countId: string, reason: string): Promise<void> {
+  if (reason.trim().length === 0) throw new Error('Say why this count is being restored.');
+  const { error } = await supabase.rpc('lng_cash_restore_count', { p_count_id: countId, p_reason: reason.trim() });
+  if (error) throw new Error(error.message);
+}
+
 /** Void a signed count. The safe position re-anchors on the previous
  *  signed count and everything in the voided window flows back into
  *  the open period. */

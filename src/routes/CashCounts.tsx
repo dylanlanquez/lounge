@@ -56,6 +56,7 @@ import {
   reverseCashWithdrawal,
   saveCashCountUnrecorded,
   putBackWithdrawal,
+  restoreCashCount,
   signCashCount,
   voidCashCount,
   writeOffCountDifference,
@@ -121,7 +122,7 @@ export function CashCounts() {
   // activity card (open period, moves the balance) or from a past
   // count's details (closed period, record only).
   const [reverseTarget, setReverseTarget] = useState<ReverseTarget | null>(null);
-  const [voidTarget, setVoidTarget] = useState<{ id: string; period_end: string } | null>(null);
+  const [voidTarget, setVoidTarget] = useState<{ id: string; period_end: string; restore?: boolean } | null>(null);
   const [writeOffTarget, setWriteOffTarget] = useState<WriteOffTarget | null>(null);
   const [putBackTarget, setPutBackTarget] = useState<PutBackTarget | null>(null);
   // Two-person rule: the safe witnesses on record. Loaded once for the
@@ -331,7 +332,7 @@ export function CashCounts() {
             right_now_pence: position.data?.expected_in_safe_pence ?? 0,
           })
         }
-        onVoid={(id, periodEnd) => setVoidTarget({ id, period_end: periodEnd })}
+        onVoid={(id, periodEnd, restore) => setVoidTarget({ id, period_end: periodEnd, restore })}
         onWriteOff={(t) => setWriteOffTarget(t)}
         onPutBack={(w, count) =>
           setPutBackTarget({
@@ -2923,7 +2924,7 @@ function CountDetailsSheet({
     w: CashCountStatement['withdrawals'][number],
     count: { period_end: string; expected_pence: number; actual_pence: number | null },
   ) => void;
-  onVoid: (countId: string, periodEnd: string) => void;
+  onVoid: (countId: string, periodEnd: string, restore?: boolean) => void;
   onWriteOff: (target: WriteOffTarget) => void;
   onPutBack: (
     w: CashCountStatement['withdrawals'][number],
@@ -2968,6 +2969,13 @@ function CountDetailsSheet({
       }
       footer={
         <div style={{ display: 'flex', gap: theme.space[3], justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+          {canCorrect && data && data.count.status === 'disputed' ? (
+            <Button variant="secondary" onClick={() => onVoid(data.count.id, data.count.period_end, true)}>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
+                <Undo2 size={14} aria-hidden /> Restore this count
+              </span>
+            </Button>
+          ) : null}
           {canCorrect && data && data.count.status === 'signed' ? (
             <Button variant="tertiary" onClick={() => onVoid(data.count.id, data.count.period_end)}>
               <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2], color: theme.color.alert }}>
@@ -3997,13 +4005,14 @@ function VoidCountSheet({
   onClose,
   onDone,
 }: {
-  target: { id: string; period_end: string } | null;
+  target: { id: string; period_end: string; restore?: boolean } | null;
   onClose: () => void;
   onDone: () => void;
 }) {
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const restore = target?.restore === true;
   useEffect(() => {
     if (target) {
       setReason('');
@@ -4014,12 +4023,13 @@ function VoidCountSheet({
     if (!target) return;
     setError(null);
     if (reason.trim().length === 0) {
-      setError('Say why this count is being voided. It goes on the record.');
+      setError(restore ? 'Say why this count is being restored. It goes on the record.' : 'Say why this count is being voided. It goes on the record.');
       return;
     }
     setBusy(true);
     try {
-      await voidCashCount(target.id, reason);
+      if (restore) await restoreCashCount(target.id, reason);
+      else await voidCashCount(target.id, reason);
       onDone();
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
@@ -4034,10 +4044,12 @@ function VoidCountSheet({
       open={target !== null}
       onClose={() => !busy && onClose()}
       dismissable={!busy}
-      title="Void this count"
+      title={restore ? 'Restore this count' : 'Void this count'}
       description={
         target
-          ? `The count from ${formatLongDate(target.period_end)} is marked voided and stops being the starting point. Lounge goes back to the count before it, and every payment and withdrawal since then counts towards the safe again. Only do this if the count was a mistake.`
+          ? restore
+            ? `The count from ${formatLongDate(target.period_end)} goes back to signed and becomes the starting point again, exactly as it was before it was voided.`
+            : `The count from ${formatLongDate(target.period_end)} is marked voided and stops being the starting point. Lounge goes back to the count before it, and every payment and withdrawal since then counts towards the safe again. Only do this if the count was a mistake.`
           : ''
       }
       footer={
@@ -4046,17 +4058,17 @@ function VoidCountSheet({
             Cancel
           </Button>
           <Button variant="primary" onClick={submit} loading={busy}>
-            Void count
+            {restore ? 'Restore count' : 'Void count'}
           </Button>
         </div>
       }
     >
       <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[4] }}>
         <Input
-          label="Why is it being voided?"
+          label={restore ? 'Why is it being restored?' : 'Why is it being voided?'}
           value={reason}
           onChange={(e) => setReason(e.target.value)}
-          placeholder="e.g. Signed before the last envelope was counted."
+          placeholder={restore ? 'e.g. Voided by accident.' : 'e.g. Signed before the last envelope was counted.'}
           autoFocus
           fullWidth
         />

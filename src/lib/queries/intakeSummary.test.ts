@@ -9,6 +9,7 @@ const makeRow = (intake: AppointmentRow['intake']): AppointmentRow => ({
   start_at: '2026-04-28T09:00:00Z',
   end_at: '2026-04-28T10:00:00Z',
   status: 'booked',
+  visit_end_reason: null,
   source: 'calendly',
   event_type_label: 'Denture Repairs',
   service_type: null,

@@ -69,7 +69,26 @@ export type AppointmentStatus =
   | 'complete'
   | 'no_show'
   | 'cancelled'
-  | 'rescheduled';
+  | 'rescheduled'
+  // Visit outcomes. An appointment row stays 'complete' in
+  // lng_appointments once the visit closes, but the VISIT records how
+  // it actually ended. The schedule reads the visit's outcome (same
+  // rule as the lng_ledger view) so a walk-out or an unsuitable case
+  // never shows as a clean Complete.
+  | 'ended_early'
+  | 'unsuitable';
+
+// Statuses that mean the row is done with, one way or another. Drives
+// the muted treatment and the outcome line under the name.
+export function isTerminalAppointmentStatus(status: AppointmentStatus): boolean {
+  return (
+    status === 'complete'
+    || status === 'cancelled'
+    || status === 'rescheduled'
+    || status === 'ended_early'
+    || status === 'unsuitable'
+  );
+}
 
 const STATUS_TO_TONE: Record<AppointmentStatus, StatusTone> = {
   booked: 'neutral',
@@ -79,6 +98,8 @@ const STATUS_TO_TONE: Record<AppointmentStatus, StatusTone> = {
   no_show: 'no_show',
   cancelled: 'cancelled',
   rescheduled: 'cancelled',
+  ended_early: 'unsuitable',
+  unsuitable: 'unsuitable',
 };
 
 const BAR_COLOR: Record<AppointmentStatus, string> = {
@@ -89,6 +110,8 @@ const BAR_COLOR: Record<AppointmentStatus, string> = {
   no_show: theme.color.alert,
   cancelled: theme.color.inkSubtle,
   rescheduled: theme.color.inkSubtle,
+  ended_early: theme.color.warn,
+  unsuitable: theme.color.warn,
 };
 
 const FILL_COLOR: Record<AppointmentStatus, string> = {
@@ -99,6 +122,8 @@ const FILL_COLOR: Record<AppointmentStatus, string> = {
   no_show: theme.color.surface,
   cancelled: theme.color.surface,
   rescheduled: theme.color.surface,
+  ended_early: theme.color.surface,
+  unsuitable: theme.color.surface,
 };
 
 export function AppointmentCard({
@@ -182,7 +207,7 @@ export function AppointmentCard({
           display: 'flex',
           flexDirection: 'column',
           gap: 2,
-          color: status === 'complete' || status === 'cancelled' || status === 'rescheduled' ? theme.color.inkMuted : theme.color.ink,
+          color: isTerminalAppointmentStatus(status) ? theme.color.inkMuted : theme.color.ink,
         }}
       >
         <p
@@ -211,7 +236,7 @@ export function AppointmentCard({
             />
           ) : null}
         </p>
-        {status === 'cancelled' || status === 'rescheduled' || status === 'complete' ? (
+        {isTerminalAppointmentStatus(status) ? (
           <p
             style={{
               margin: 0,
@@ -232,9 +257,19 @@ export function AppointmentCard({
               ? <Ban size={10} aria-hidden style={{ flexShrink: 0 }} />
               : status === 'complete'
                 ? <CheckCircle2 size={10} aria-hidden style={{ flexShrink: 0 }} />
-                : <RotateCcw size={10} aria-hidden style={{ flexShrink: 0 }} />
+                : status === 'rescheduled'
+                  ? <RotateCcw size={10} aria-hidden style={{ flexShrink: 0 }} />
+                  : <AlertTriangle size={10} aria-hidden style={{ flexShrink: 0 }} />
             }
-            {status === 'cancelled' ? 'Cancelled' : status === 'complete' ? 'Complete' : 'Rescheduled'}
+            {status === 'cancelled'
+              ? 'Cancelled'
+              : status === 'complete'
+                ? 'Complete'
+                : status === 'rescheduled'
+                  ? 'Rescheduled'
+                  : status === 'ended_early'
+                    ? 'Ended early'
+                    : 'Unsuitable'}
           </p>
         ) : (
           <p

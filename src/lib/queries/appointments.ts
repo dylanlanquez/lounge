@@ -1,4 +1,5 @@
 import type { AppointmentStatus } from '../../components/AppointmentCard/AppointmentCard.tsx';
+import type { VisitEndReason } from './visits.ts';
 
 export interface IntakeAnswer {
   question: string;
@@ -39,7 +40,12 @@ export interface AppointmentRow {
   location_id: string;
   start_at: string;
   end_at: string;
+  /** Effective status: the visit's outcome once it has one (complete,
+   *  ended early, unsuitable), otherwise the appointment's own status.
+   *  See effectiveAppointmentStatus. */
   status: AppointmentStatus;
+  /** Why the visit ended early, when it did. */
+  visit_end_reason: VisitEndReason | null;
   source: AppointmentSource;
   event_type_label: string | null;
   /** Catalogue axis pins populated by native widget bookings.
@@ -167,7 +173,13 @@ export function isAppointmentDimmed(
   now: Date | number
 ): boolean {
   if (row.status === 'arrived' || row.status === 'joined') return false;
-  if (row.status === 'complete' || row.status === 'cancelled' || row.status === 'rescheduled') {
+  if (
+    row.status === 'complete'
+    || row.status === 'cancelled'
+    || row.status === 'rescheduled'
+    || row.status === 'ended_early'
+    || row.status === 'unsuitable'
+  ) {
     return true;
   }
   const t = typeof now === 'number' ? now : now.getTime();
@@ -233,8 +245,44 @@ export function humaniseStatus(status: AppointmentRow['status']): string {
       return 'Cancelled';
     case 'rescheduled':
       return 'Rescheduled';
+    case 'ended_early':
+      return 'Ended early';
+    case 'unsuitable':
+      return 'Unsuitable';
     default:
       return status;
+  }
+}
+
+// The status a row should SHOW. lng_appointments.status flips to
+// 'complete' whenever the visit closes, however it closed; the visit
+// row carries the real outcome. Same rule as the lng_ledger view, so
+// the Schedule, the appointment detail, and the Ledger never disagree.
+export function effectiveAppointmentStatus(
+  appointmentStatus: AppointmentStatus,
+  visitStatus: string | null | undefined,
+): AppointmentStatus {
+  if (visitStatus === 'complete' || visitStatus === 'ended_early' || visitStatus === 'unsuitable') {
+    return visitStatus;
+  }
+  return appointmentStatus;
+}
+
+// Plain-English reason a visit ended early, for the status line.
+export function humaniseVisitEndReason(reason: VisitEndReason | null | undefined): string | null {
+  switch (reason) {
+    case 'unsuitable':
+      return 'Unsuitable';
+    case 'patient_declined':
+      return 'Patient declined';
+    case 'patient_walked_out':
+      return 'Patient walked out';
+    case 'wrong_booking':
+      return 'Wrong booking';
+    case 'other':
+      return 'Other reason';
+    default:
+      return null;
   }
 }
 
