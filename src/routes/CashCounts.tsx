@@ -23,7 +23,7 @@ import {
   Archive,
   CalendarCheck,
   Landmark,
-  Lock,
+
   Trash2,
 } from 'lucide-react';
 import {
@@ -239,8 +239,7 @@ export function CashCounts() {
               lineHeight: theme.type.leading.snug,
             }}
           >
-            Every cash payment goes into the safe in an envelope. A count checks the safe
-            against Lounge's records. Two people, on camera, every time.
+            Count the safe, seal the cash, bank it when it has mounted up. Two people, on camera, every time.
           </p>
         </header>
 
@@ -264,6 +263,7 @@ export function CashCounts() {
               due={due.data}
               sealedOpenPence={sealedOpenPence}
               sealedOpenCount={sealedOpen.length}
+              onBank={() => setBankOpen(true)}
               onStart={() => {
                 setSheetKind('regular');
                 setSheetOpen(true);
@@ -478,79 +478,76 @@ export function CashCounts() {
 // Right-now card — the headline answer to "should I count tonight?"
 // ─────────────────────────────────────────────────────────────────────────────
 
-// One half of the safe total: sealed or loose. Same tile, two tones,
-// so the pair reads as one statement.
-function SafeSplitTile({
-  icon,
-  label,
-  amountPence,
-  sub,
-  tone,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  amountPence: number;
-  sub: string;
-  tone: 'sealed' | 'loose';
-}) {
+// ─────────────────────────────────────────────────────────────────────────────
+// Illustrations
+//
+// Drawn inline so they take the theme's colours and scale crisply on
+// the iPad. An envelope with a sealed flap and a small seal; a stack
+// of them for "put aside in the safe". No emoji, no images.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function EnvelopeGlyph({ width = 120, sealed = true }: { width?: number; sealed?: boolean }) {
+  const height = Math.round(width * 0.66);
   return (
-    <div
-      style={{
-        display: 'flex',
-        gap: theme.space[3],
-        alignItems: 'flex-start',
-        padding: theme.space[4],
-        borderRadius: theme.radius.input,
-        background: tone === 'sealed' ? theme.color.accentBg : theme.color.bg,
-        border: `1px solid ${theme.color.border}`,
-        minWidth: 0,
-      }}
-    >
-      <span
-        aria-hidden
-        style={{
-          display: 'inline-flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          width: 36,
-          height: 36,
-          borderRadius: theme.radius.pill,
-          background: theme.color.surface,
-          color: tone === 'sealed' ? theme.color.accent : theme.color.ink,
-          flexShrink: 0,
-        }}
-      >
-        {icon}
-      </span>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
-        <span
-          style={{
-            fontSize: 11,
-            fontWeight: theme.type.weight.semibold,
-            color: theme.color.inkMuted,
-            textTransform: 'uppercase',
-            letterSpacing: theme.type.tracking.wide,
-          }}
-        >
-          {label}
-        </span>
-        <span
-          style={{
-            fontSize: theme.type.size.lg,
-            fontWeight: theme.type.weight.semibold,
-            color: theme.color.ink,
-            fontVariantNumeric: 'tabular-nums',
-            letterSpacing: theme.type.tracking.tight,
-            lineHeight: theme.type.leading.tight,
-          }}
-        >
-          {formatPence(amountPence)}
-        </span>
-        <span style={{ fontSize: theme.type.size.xs, color: theme.color.inkMuted, lineHeight: theme.type.leading.snug }}>{sub}</span>
-      </div>
+    <svg width={width} height={height} viewBox="0 0 120 80" aria-hidden focusable="false" style={{ display: 'block', flexShrink: 0 }}>
+      <rect x="2" y="10" width="116" height="68" rx="9" fill={theme.color.surface} stroke={theme.color.ink} strokeOpacity="0.16" strokeWidth="1.5" />
+      <path d="M2 19 L60 52 L118 19" fill="none" stroke={theme.color.ink} strokeOpacity="0.16" strokeWidth="1.5" />
+      <path d="M11 10 L60 44 L109 10 Z" fill={sealed ? theme.color.accentBg : theme.color.bg} stroke={theme.color.ink} strokeOpacity="0.16" strokeWidth="1.5" strokeLinejoin="round" />
+      {sealed ? (
+        <>
+          <circle cx="60" cy="46" r="9" fill={theme.color.accent} />
+          <path d="M55.5 46.2 L58.6 49.2 L64.6 43.2" fill="none" stroke={theme.color.surface} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+        </>
+      ) : (
+        <circle cx="60" cy="46" r="9" fill="none" stroke={theme.color.ink} strokeOpacity="0.2" strokeWidth="1.5" strokeDasharray="3 3" />
+      )}
+    </svg>
+  );
+}
+
+// Three envelopes fanned behind one another: "there is a pile put aside".
+function EnvelopeStack({ count, width = 200 }: { count: number; width?: number }) {
+  const w = width;
+  const h = Math.round(w * 0.78);
+  const layers = Math.min(3, Math.max(1, count));
+  return (
+    <div style={{ position: 'relative', width: w, height: h, flexShrink: 0 }} aria-hidden>
+      {Array.from({ length: layers }).map((_, i) => {
+        const fromBack = layers - 1 - i; // 0 = front
+        const rot = fromBack === 0 ? 0 : fromBack === 1 ? -7 : 7;
+        const dy = fromBack * 10;
+        const scale = 1 - fromBack * 0.06;
+        return (
+          <div
+            key={i}
+            style={{
+              position: 'absolute',
+              left: '50%',
+              bottom: dy,
+              transform: `translateX(-50%) rotate(${rot}deg) scale(${scale})`,
+              transformOrigin: '50% 90%',
+              opacity: 1 - fromBack * 0.25,
+              filter: fromBack === 0 ? `drop-shadow(0 8px 16px rgba(14, 20, 20, 0.10))` : 'none',
+            }}
+          >
+            <EnvelopeGlyph width={Math.round(w * 0.86)} />
+          </div>
+        );
+      })}
     </div>
   );
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Right now — the hero
+//
+// Reads top to bottom for someone who has never seen it:
+//   THIS RUN         £0.00   since the count on Fri 7 Sept
+//   [Count cash now] [Take from safe]
+// and, to the right, what is put aside in the safe: a stack of sealed
+// envelopes with the amount and how many. One quiet line underneath
+// says when the next count is and who does it. Nothing else.
+// ─────────────────────────────────────────────────────────────────────────────
 
 function RightNowCard({
   position,
@@ -561,234 +558,205 @@ function RightNowCard({
   sealedOpenCount,
   onStart,
   onTakeFromSafe,
+  onBank,
 }: {
   position: CashPosition;
   canCountCash: boolean;
   witnesses: SafeWitnessRow[] | null;
   due: CashCountDue | null;
-  /** Counted cash sealed in envelopes and still in the safe. */
   sealedOpenPence: number;
   sealedOpenCount: number;
   onStart: () => void;
   onTakeFromSafe: () => void;
+  onBank: () => void;
 }) {
+  const isMobile = useIsMobile(700);
   const last = position.last_signed_count;
+  const loosePence = Math.max(0, position.expected_in_safe_pence - sealedOpenPence);
   const hasActivity =
     position.payment_count > 0 || position.withdrawal_count > 0 || position.expected_in_safe_pence > 0;
-  const hasCashInSafe = position.expected_in_safe_pence > 0;
+  const witnessNames = witnesses && witnesses.length > 0 ? joinNames(witnesses.map((w) => w.name)) : null;
+
+  // One line, only what the reader must know next.
+  const nextLine = due?.due_date
+    ? due.overdue
+      ? `Count overdue since ${formatLongDate(due.due_date)}${due.responsible_name ? ` · ${due.responsible_name}` : ''}`
+      : `Count due today${due.responsible_name ? ` · ${due.responsible_name}` : ''}`
+    : due?.next_due_date
+      ? `Next count ${formatLongDate(due.next_due_date)}${due.next_responsible_name ? ` · ${due.next_responsible_name}` : ''}${witnessNames ? ` · with ${witnessNames} present` : ''}`
+      : witnessNames
+        ? `Every count and withdrawal needs ${witnessNames} present, on camera`
+        : null;
+  const nextTone = due?.due_date ? (due.overdue ? theme.color.alert : theme.color.accent) : theme.color.inkMuted;
 
   return (
     <Card padding="lg">
       <div
         style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: theme.space[3],
-          marginBottom: theme.space[3],
-        }}
-      >
-        <span
-          aria-hidden
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            width: 36,
-            height: 36,
-            borderRadius: theme.radius.pill,
-            background: theme.color.accentBg,
-            color: theme.color.accent,
-            border: `1px solid ${theme.color.border}`,
-            flexShrink: 0,
-          }}
-        >
-          <Wallet size={16} aria-hidden />
-        </span>
-        <span
-          style={{
-            fontSize: 11,
-            fontWeight: theme.type.weight.semibold,
-            color: theme.color.inkMuted,
-            textTransform: 'uppercase',
-            letterSpacing: theme.type.tracking.wide,
-          }}
-        >
-          Right now
-        </span>
-      </div>
-
-      <p
-        style={{
-          margin: 0,
-          fontSize: theme.type.size.display,
-          fontWeight: theme.type.weight.semibold,
-          letterSpacing: theme.type.tracking.tight,
-          color: theme.color.ink,
-          fontVariantNumeric: 'tabular-nums',
-          lineHeight: theme.type.leading.tight,
-        }}
-      >
-        {formatPence(position.expected_in_safe_pence)}
-      </p>
-      <p
-        style={{
-          margin: `${theme.space[2]}px 0 0`,
-          fontSize: theme.type.size.md,
-          color: theme.color.ink,
-          maxWidth: 640,
-          lineHeight: theme.type.leading.snug,
-        }}
-      >
-        {hasActivity ? (
-          <>
-            should be in the safe.{' '}
-            <span style={{ color: theme.color.inkMuted }}>
-              {sealedOpenCount > 0 ? 'Sealed envelopes plus everything taken since.' : `Opening ${formatPence(position.baseline_pence)}${last ? ` from the count on ${formatLongDate(last.period_end)}` : ''}, plus everything since.`}
-              {position.refund_count > 0
-                ? ` ${formatNumber(position.refund_count)} cash refund${position.refund_count === 1 ? '' : 's'} went out.`
-                : ''}
-              {position.refunded_sale_count > 0
-                ? ` ${formatNumber(position.refunded_sale_count)} refunded sale${position.refunded_sale_count === 1 ? '' : 's'} cancelled out and left the safe unchanged.`
-                : ''}
-            </span>
-          </>
-        ) : (
-          <span style={{ color: theme.color.inkMuted }}>
-            {last
-              ? `No cash activity since the last count on ${formatLongDate(last.period_end)}. Nothing to count yet.`
-              : 'No cash activity yet. Cash counts kick in once the first cash payment is taken or you seed a starting balance.'}
-          </span>
-        )}
-      </p>
-
-      {/* The safe total, split into what is sealed and what is loose.
-          Two level tiles so the eye reads "this much is sealed and
-          waiting, this much has come in since" in one glance. */}
-      <div
-        style={{
-          marginTop: theme.space[5],
           display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
-          gap: theme.space[3],
+          gridTemplateColumns: isMobile ? '1fr' : 'minmax(0, 1fr) minmax(280px, 320px)',
+          gap: isMobile ? theme.space[6] : theme.space[8],
+          alignItems: 'stretch',
         }}
       >
-        <SafeSplitTile
-          icon={<Lock size={16} aria-hidden />}
-          label="Sealed, ready to bank"
-          amountPence={sealedOpenPence}
-          sub={
-            sealedOpenCount > 0
-              ? `${formatNumber(sealedOpenCount)} signed envelope${sealedOpenCount === 1 ? '' : 's'} in the safe${last ? `, from the count on ${formatLongDate(last.period_end)}` : ''}.`
-              : 'No envelopes waiting. Counted cash is sealed at the end of a count.'
-          }
-          tone="sealed"
-        />
-        <SafeSplitTile
-          icon={<Wallet size={16} aria-hidden />}
-          label={last ? `Loose, since ${formatLongDate(last.period_end)}` : 'Loose'}
-          amountPence={Math.max(0, position.expected_in_safe_pence - sealedOpenPence)}
-          sub={
-            position.payment_count > 0 || position.withdrawal_count > 0
-              ? `${formatNumber(position.payment_count)} cash payment${position.payment_count === 1 ? '' : 's'} in${
-                  position.withdrawal_count > 0 ? `, ${formatNumber(position.withdrawal_count)} taken out` : ''
-                }. Counted and sealed at the next count.`
-              : 'Nothing taken since. This grows with each cash payment until the next count.'
-          }
-          tone="loose"
-        />
-      </div>
+        {/* Left: this run */}
+        <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[3], marginBottom: theme.space[4] }}>
+            <span
+              aria-hidden
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                width: 36,
+                height: 36,
+                borderRadius: theme.radius.pill,
+                background: theme.color.accentBg,
+                color: theme.color.accent,
+                border: `1px solid ${theme.color.border}`,
+                flexShrink: 0,
+              }}
+            >
+              <Wallet size={16} aria-hidden />
+            </span>
+            <span
+              style={{
+                fontSize: 11,
+                fontWeight: theme.type.weight.semibold,
+                color: theme.color.inkMuted,
+                textTransform: 'uppercase',
+                letterSpacing: theme.type.tracking.wide,
+              }}
+            >
+              This run
+            </span>
+          </div>
 
-      {last ? (
-        <p
-          style={{
-            margin: `${theme.space[3]}px 0 0`,
-            fontSize: theme.type.size.sm,
-            color: theme.color.inkMuted,
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: theme.space[2],
-          }}
-        >
-          <FileSignature size={12} aria-hidden />
-          Last count {formatLongDate(last.period_end)}
-          {last.actual_pence != null ? ` · ${formatPence(last.actual_pence)} counted` : ''}
-          {last.witness_name ? ` · witnessed by ${last.witness_name}` : ''}
-        </p>
-      ) : null}
+          <p
+            style={{
+              margin: 0,
+              fontSize: isMobile ? theme.type.size.display : theme.type.size.hero,
+              fontWeight: theme.type.weight.semibold,
+              letterSpacing: theme.type.tracking.tight,
+              color: theme.color.ink,
+              fontVariantNumeric: 'tabular-nums',
+              lineHeight: theme.type.leading.tight,
+            }}
+          >
+            {formatPence(loosePence)}
+          </p>
+          <p
+            style={{
+              margin: `${theme.space[2]}px 0 0`,
+              fontSize: theme.type.size.md,
+              color: theme.color.ink,
+              lineHeight: theme.type.leading.snug,
+            }}
+          >
+            cash taken since {last ? `the count on ${formatLongDate(last.period_end)}` : 'the start'}
+            {position.payment_count > 0 ? (
+              <span style={{ color: theme.color.inkMuted }}>
+                {' '}· {formatNumber(position.payment_count)} payment{position.payment_count === 1 ? '' : 's'}
+                {position.withdrawal_count > 0 ? `, ${formatNumber(position.withdrawal_count)} taken out` : ''}
+              </span>
+            ) : null}
+          </p>
 
-      {/* The two-person rule, stated before anyone reaches for the
-          safe. Names the witness on record so there is no ambiguity
-          about who has to be in the room. */}
-      <p
-        style={{
-          margin: `${theme.space[2]}px 0 0`,
-          fontSize: theme.type.size.sm,
-          color: theme.color.inkMuted,
-          display: 'flex',
-          alignItems: 'center',
-          gap: theme.space[2],
-        }}
-      >
-        <ShieldCheck size={12} aria-hidden style={{ flexShrink: 0 }} />
-        {witnesses === null
-          ? 'Two people, on camera: a safe holder acts, the safe witness is present.'
-          : witnesses.length === 0
-            ? 'Two people, on camera: no safe witness is set up yet. Add one in Admin, Staff.'
-            : `Two people, on camera: a safe holder acts, with ${joinNames(witnesses.map((w) => w.name))} present.`}
-      </p>
+          {nextLine ? (
+            <p
+              style={{
+                margin: `${theme.space[3]}px 0 0`,
+                fontSize: theme.type.size.sm,
+                color: nextTone,
+                fontWeight: due?.due_date ? theme.type.weight.medium : theme.type.weight.regular,
+                display: 'flex',
+                alignItems: 'center',
+                gap: theme.space[2],
+              }}
+            >
+              <CalendarCheck size={12} aria-hidden style={{ flexShrink: 0 }} />
+              {nextLine}
+            </p>
+          ) : null}
 
-      {due ? (
-        <p
-          style={{
-            margin: `${theme.space[2]}px 0 0`,
-            fontSize: theme.type.size.sm,
-            color: due.due_date ? (due.overdue ? theme.color.alert : theme.color.accent) : theme.color.inkMuted,
-            fontWeight: due.due_date ? theme.type.weight.medium : theme.type.weight.regular,
-            display: 'flex',
-            alignItems: 'center',
-            gap: theme.space[2],
-          }}
-        >
-          <CalendarCheck size={12} aria-hidden style={{ flexShrink: 0 }} />
-          {due.due_date
-            ? due.overdue
-              ? `Count overdue since ${formatLongDate(due.due_date)}${due.responsible_name ? `, ${due.responsible_name}` : ''}.`
-              : `Count due today${due.responsible_name ? `, ${due.responsible_name}` : ''}.`
-            : due.today_is_rota_day && due.done_today
-              ? `Today's count is done.${due.next_due_date ? ` Next count ${formatLongDate(due.next_due_date)}${due.next_responsible_name ? `, ${due.next_responsible_name}` : ''}.` : ''}`
-              : due.next_due_date
-                ? `Next count ${formatLongDate(due.next_due_date)}${due.next_responsible_name ? `, ${due.next_responsible_name}${due.next_is_cover ? ' covering' : ''}` : ''}.`
-                : 'No count rota set. Counts happen when a safe holder chooses.'}
-        </p>
-      ) : null}
+          {canCountCash ? (
+            <div style={{ marginTop: 'auto', paddingTop: theme.space[5], display: 'flex', gap: theme.space[3], flexWrap: 'wrap' }}>
+              {hasActivity ? (
+                <Button variant="primary" onClick={onStart}>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
+                    <Plus size={14} aria-hidden />
+                    Count cash now
+                  </span>
+                </Button>
+              ) : null}
+              {position.expected_in_safe_pence > 0 ? (
+                <Button variant="secondary" onClick={onTakeFromSafe}>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
+                    <ArrowDownToLine size={14} aria-hidden />
+                    Take from safe
+                  </span>
+                </Button>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
 
-      {canCountCash ? (
+        {/* Right: put aside in the safe */}
         <div
           style={{
-            marginTop: theme.space[5],
             display: 'flex',
-            gap: theme.space[3],
-            flexWrap: 'wrap',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: theme.space[4],
+            padding: theme.space[5],
+            borderRadius: theme.radius.card,
+            background: theme.color.bg,
+            border: `1px solid ${theme.color.border}`,
+            textAlign: 'center',
           }}
         >
-          {hasActivity ? (
-            <Button variant="primary" onClick={onStart}>
+          <span
+            style={{
+              fontSize: 11,
+              fontWeight: theme.type.weight.semibold,
+              color: theme.color.inkMuted,
+              textTransform: 'uppercase',
+              letterSpacing: theme.type.tracking.wide,
+            }}
+          >
+            Put aside in the safe
+          </span>
+          {sealedOpenCount > 0 ? <EnvelopeStack count={sealedOpenCount} width={190} /> : <EnvelopeGlyph width={150} sealed={false} />}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+            <span
+              style={{
+                fontSize: theme.type.size.xl,
+                fontWeight: theme.type.weight.semibold,
+                color: sealedOpenCount > 0 ? theme.color.ink : theme.color.inkSubtle,
+                fontVariantNumeric: 'tabular-nums',
+                letterSpacing: theme.type.tracking.tight,
+                lineHeight: theme.type.leading.tight,
+              }}
+            >
+              {formatPence(sealedOpenPence)}
+            </span>
+            <span style={{ fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>
+              {sealedOpenCount > 0
+                ? `sealed in ${formatNumber(sealedOpenCount)} envelope${sealedOpenCount === 1 ? '' : 's'}`
+                : 'nothing sealed yet'}
+            </span>
+          </div>
+          {canCountCash && sealedOpenCount > 0 ? (
+            <Button variant="secondary" onClick={onBank}>
               <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
-                <Plus size={14} aria-hidden />
-                Count cash now
-              </span>
-            </Button>
-          ) : null}
-          {hasCashInSafe ? (
-            <Button variant="secondary" onClick={onTakeFromSafe}>
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
-                <ArrowDownToLine size={14} aria-hidden />
-                Take from safe
+                <Landmark size={14} aria-hidden />
+                Bank or collect
               </span>
             </Button>
           ) : null}
         </div>
-      ) : null}
+      </div>
     </Card>
   );
 }
@@ -3295,19 +3263,20 @@ function ReadyToBankCard({
   const gone = envelopes.filter((e) => e.banked_at);
   const openPence = open.reduce((s, e) => s + e.amount_pence, 0);
   const [showGone, setShowGone] = useState(false);
+  if (open.length === 0 && gone.length === 0) return null;
   return (
     <Card padding="lg">
       <div
         style={{
           display: 'flex',
-          alignItems: 'flex-start',
+          alignItems: 'center',
           justifyContent: 'space-between',
           gap: theme.space[3],
-          marginBottom: theme.space[4],
+          marginBottom: open.length > 0 ? theme.space[4] : 0,
           flexWrap: 'wrap',
         }}
       >
-        <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[1], flex: '1 1 320px', minWidth: 0, maxWidth: 560 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
           <span
             style={{
               fontSize: 11,
@@ -3317,12 +3286,10 @@ function ReadyToBankCard({
               letterSpacing: theme.type.tracking.wide,
             }}
           >
-            Ready to bank
+            Sealed envelopes
           </span>
-          <span style={{ fontSize: theme.type.size.sm, color: theme.color.inkMuted, lineHeight: theme.type.leading.snug }}>
-            {open.length > 0
-              ? `${formatNumber(open.length)} sealed envelope${open.length === 1 ? '' : 's'} in the safe, ${formatPence(openPence)} in total. Each one is signed and sealed; they go out together whenever they are banked or collected.`
-              : 'Nothing sealed at the moment. Counted cash can be sealed at the end of a count.'}
+          <span style={{ fontSize: theme.type.size.md, fontWeight: theme.type.weight.semibold, color: theme.color.ink, fontVariantNumeric: 'tabular-nums' }}>
+            {open.length > 0 ? `${formatPence(openPence)} in ${formatNumber(open.length)} envelope${open.length === 1 ? '' : 's'}` : 'None in the safe'}
           </span>
         </div>
         {canAct && open.length > 0 ? (
@@ -3340,40 +3307,53 @@ function ReadyToBankCard({
             listStyle: 'none',
             margin: 0,
             padding: 0,
-            border: `1px solid ${theme.color.border}`,
-            borderRadius: theme.radius.input,
-            overflow: 'hidden',
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fill, minmax(210px, 1fr))',
+            gap: theme.space[3],
           }}
         >
-          {open.map((e, idx) => (
-            <EnvelopeRow key={e.id} envelope={e} first={idx === 0} />
+          {open.map((e) => (
+            <EnvelopeCard key={e.id} envelope={e} />
           ))}
         </ul>
       ) : null}
 
       {gone.length > 0 ? (
-        <div style={{ marginTop: theme.space[4], paddingTop: theme.space[3], borderTop: `1px solid ${theme.color.border}` }}>
+        <div style={{ marginTop: open.length > 0 ? theme.space[4] : theme.space[3], paddingTop: theme.space[3], borderTop: `1px solid ${theme.color.border}` }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: theme.space[3] }}>
             <span style={{ fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>
-              {formatNumber(gone.length)} envelope{gone.length === 1 ? '' : 's'} banked or collected before.
+              {formatNumber(gone.length)} envelope{gone.length === 1 ? '' : 's'} already banked or collected
             </span>
             <Button variant="tertiary" size="sm" onClick={() => setShowGone((v) => !v)}>
               {showGone ? 'Hide' : 'Show'}
             </Button>
           </div>
           {showGone ? (
-            <ul
-              style={{
-                listStyle: 'none',
-                margin: `${theme.space[3]}px 0 0`,
-                padding: 0,
-                border: `1px solid ${theme.color.border}`,
-                borderRadius: theme.radius.input,
-                overflow: 'hidden',
-              }}
-            >
-              {gone.map((e, idx) => (
-                <EnvelopeRow key={e.id} envelope={e} first={idx === 0} />
+            <ul style={{ listStyle: 'none', margin: `${theme.space[3]}px 0 0`, padding: 0, display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
+              {gone.map((e) => (
+                <li
+                  key={e.id}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: theme.space[3],
+                    padding: `${theme.space[2]}px ${theme.space[3]}px`,
+                    borderRadius: theme.radius.input,
+                    background: theme.color.bg,
+                  }}
+                >
+                  <Landmark size={14} aria-hidden style={{ color: theme.color.inkMuted, flexShrink: 0 }} />
+                  <span style={{ flex: 1, minWidth: 0, fontSize: theme.type.size.sm, color: theme.color.ink }}>
+                    <span style={{ fontWeight: theme.type.weight.semibold }}>{e.label?.trim() || 'Envelope'}</span>
+                    <span style={{ color: theme.color.inkMuted }}>
+                      {' '}· {e.banked_how === 'collected' ? 'collected' : 'banked'} {e.banked_at ? formatLongDate(e.banked_at) : ''}
+                      {e.banked_by_name ? ` by ${e.banked_by_name}` : ''}
+                    </span>
+                  </span>
+                  <span style={{ fontSize: theme.type.size.sm, fontWeight: theme.type.weight.semibold, color: theme.color.inkMuted, fontVariantNumeric: 'tabular-nums' }}>
+                    {formatPence(e.amount_pence)}
+                  </span>
+                </li>
               ))}
             </ul>
           ) : null}
@@ -3383,60 +3363,52 @@ function ReadyToBankCard({
   );
 }
 
-function EnvelopeRow({ envelope: e, first }: { envelope: SealedEnvelope; first: boolean }) {
-  const gone = !!e.banked_at;
-  const sub = [
-    `sealed ${formatDateTime(e.sealed_at)} by ${e.sealed_by_name}`,
-    e.witness_name ? `witnessed by ${e.witness_name}` : null,
-    e.note,
-    gone && e.banked_at ? `${e.banked_how === 'collected' ? 'collected' : 'banked'} ${formatDateTime(e.banked_at)}${e.banked_by_name ? ` by ${e.banked_by_name}` : ''}` : null,
-  ]
-    .filter((x): x is string => !!x)
-    .join(' · ');
+// One sealed envelope, drawn as one: the illustration, what is written
+// on it, the amount, and who sealed it.
+function EnvelopeCard({ envelope: e }: { envelope: SealedEnvelope }) {
+  const sealedLine = `${formatLongDate(e.sealed_at)} · ${e.sealed_by_name}${e.witness_name ? ` & ${e.witness_name}` : ''}`;
   return (
     <li
       style={{
-        borderTop: first ? 'none' : `1px solid ${theme.color.border}`,
-        padding: `${theme.space[3]}px ${theme.space[4]}px`,
         display: 'flex',
+        flexDirection: 'column',
         alignItems: 'center',
         gap: theme.space[3],
-        opacity: gone ? 0.6 : 1,
+        padding: theme.space[5],
+        borderRadius: theme.radius.card,
+        background: theme.color.bg,
+        border: `1px solid ${theme.color.border}`,
+        textAlign: 'center',
+        minWidth: 0,
       }}
     >
-      <span
-        aria-hidden
-        style={{
-          display: 'inline-flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          width: 32,
-          height: 32,
-          borderRadius: theme.radius.pill,
-          background: gone ? theme.color.bg : theme.color.accentBg,
-          color: gone ? theme.color.inkMuted : theme.color.accent,
-          flexShrink: 0,
-        }}
-      >
-        {gone ? <Landmark size={14} aria-hidden /> : <Lock size={14} aria-hidden />}
-      </span>
-      <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
-        <span style={{ fontSize: theme.type.size.sm, fontWeight: theme.type.weight.semibold, color: theme.color.ink }}>
+      <EnvelopeGlyph width={132} />
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0, width: '100%' }}>
+        <span
+          style={{
+            fontSize: theme.type.size.lg,
+            fontWeight: theme.type.weight.semibold,
+            color: theme.color.ink,
+            fontVariantNumeric: 'tabular-nums',
+            letterSpacing: theme.type.tracking.tight,
+          }}
+        >
+          {formatPence(e.amount_pence)}
+        </span>
+        <span
+          style={{
+            fontSize: theme.type.size.sm,
+            fontWeight: theme.type.weight.medium,
+            color: theme.color.ink,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          }}
+        >
           {e.label?.trim() || 'Sealed envelope'}
         </span>
-        <span style={{ fontSize: theme.type.size.xs, color: theme.color.inkMuted, lineHeight: theme.type.leading.snug }}>{sub}</span>
+        <span style={{ fontSize: theme.type.size.xs, color: theme.color.inkMuted, lineHeight: theme.type.leading.snug }}>{sealedLine}</span>
       </div>
-      <span
-        style={{
-          fontSize: theme.type.size.base,
-          fontWeight: theme.type.weight.semibold,
-          color: theme.color.ink,
-          fontVariantNumeric: 'tabular-nums',
-          whiteSpace: 'nowrap',
-        }}
-      >
-        {formatPence(e.amount_pence)}
-      </span>
     </li>
   );
 }
