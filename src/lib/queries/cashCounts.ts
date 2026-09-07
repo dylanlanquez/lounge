@@ -83,7 +83,7 @@ export interface CashCountRow {
   counted_at: string;
   signed_off_by_name: string | null;
   signed_off_at: string | null;
-  /** Two-person rule (migration 20260907000003): the safe witness who
+  /** Two-person rule (migration 20260907000012): the safe witness who
    *  was present and whether it was done on camera. Null on counts
    *  that predate the rule. */
   witness_name: string | null;
@@ -226,7 +226,7 @@ export function useCashCounts(): CashCountsResult {
 //     recordCashWithdrawal)
 //
 // The maths lives in ONE place: the lng_cash_safe_position() database
-// function (migrations 20260708000003 + 20260907000002). It is
+// function (migrations 20260708000003 + 20260907000011). It is
 // SECURITY DEFINER with a single authorization check, so every device
 // and every permitted account gets the identical figure regardless of
 // its per-table RLS grants. This module only reshapes the payload for
@@ -1009,7 +1009,7 @@ export interface CreateCashCountInput {
   kind?: 'regular' | 'legacy_baseline';
   /** Two-person rule: the safe witness who is physically present, and
    *  confirmation that the count is happening on camera. The database
-   *  refuses the insert without both (migration 20260907000003). */
+   *  refuses the insert without both (migration 20260907000012). */
   witness_id: string;
   on_camera: boolean;
 }
