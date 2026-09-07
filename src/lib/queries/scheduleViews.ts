@@ -77,6 +77,7 @@ interface RawRow {
         pool_ids: string[] | null;
       }[]
     | null;
+  call_sessions?: { is_host: boolean; joined_at: string | null; left_at: string | null }[] | null;
 }
 
 // Embedded phase select reused by both column-list variants. PostgREST
@@ -86,6 +87,10 @@ interface RawRow {
 // case so legacy rows still display.
 const PHASE_SELECT =
   'phases:lng_appointment_phases ( phase_index, label, patient_required, start_at, end_at, status, pool_ids )';
+// Who was actually on the video call, and when. The host rows are the
+// clinician's real time on the call; the Down time sheet measures the
+// virtual impression clinician from these rather than the booked slot.
+const CALL_SELECT = 'call_sessions:lng_meet_attendance ( is_host, joined_at, left_at )';
 // The visit's real outcome, so a walk-out or an unsuitable case never
 // renders as Complete. Same rule as the lng_ledger view.
 const VISIT_SELECT = 'visit:lng_visits!lng_visits_appointment_id_fkey ( status, visit_end_reason )';
@@ -98,6 +103,7 @@ const SELECT_WITH_INTAKE = `
   patient:patients ( first_name, last_name, email, phone ),
   staff:accounts!lng_appointments_staff_account_id_fkey ( first_name, last_name ),
   ${PHASE_SELECT},
+  ${CALL_SELECT},
   ${VISIT_SELECT}
 `;
 const SELECT_NO_INTAKE = `
@@ -107,6 +113,7 @@ const SELECT_NO_INTAKE = `
   patient:patients ( first_name, last_name, email, phone ),
   staff:accounts!lng_appointments_staff_account_id_fkey ( first_name, last_name ),
   ${PHASE_SELECT},
+  ${CALL_SELECT},
   ${VISIT_SELECT}
 `;
 
@@ -149,6 +156,9 @@ function mapRows(rows: unknown[]): AppointmentRow[] {
       patient_phone: patient?.phone ?? null,
       staff_first_name: staff?.first_name ?? null,
       staff_last_name: staff?.last_name ?? null,
+      call_sessions: (raw.call_sessions ?? [])
+        .filter((c) => c.is_host && c.joined_at && c.left_at)
+        .map((c) => ({ start_at: c.joined_at!, end_at: c.left_at! })),
       phases: (raw.phases ?? [])
         .map((p) => ({
           phase_index: p.phase_index,

@@ -10,6 +10,7 @@ import {
   type GapRow,
   type ResourceUsage,
   type UsageKind,
+  VIDEO_CALL_POOL,
   computeDayFreeTime,
   computeResourceUsage,
   formatMinutes,
@@ -115,11 +116,11 @@ export function DownTimeSheet({ open, onClose, rows, dateIso, dayLabel, hours, n
                 key={r.id}
                 name={r.name}
                 detail={
-                  r.kind === 'staff_role'
+                  (r.kind === 'staff_role'
                     ? r.staffNames.length > 0
                       ? r.staffNames.join(', ')
                       : 'No staff assigned'
-                    : `${r.units} ${r.units === 1 ? 'room' : 'rooms'}`
+                    : `${r.units} ${r.units === 1 ? 'room' : 'rooms'}`) + (r.id === VIDEO_CALL_POOL ? ' · measured from time on the call' : '')
                 }
                 usage={r.usage}
                 unused={r.unused}

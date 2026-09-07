@@ -54,6 +54,9 @@ export interface DayFreeTime {
  *  is 5 to 10 minutes, so 15 minutes is the smallest useful stretch. */
 export const MIN_FREE_MINUTES = 15;
 
+/** The pool every Video call phase names (Admin, Booking types). */
+export const VIDEO_CALL_POOL = 'virtual-impression-clinician';
+
 /** Statuses that hold their slot. Cancelled, rescheduled and no-show
  *  rows free the time up again. */
 const BLOCKING = new Set(['booked', 'arrived', 'joined', 'in_progress', 'complete', 'ended_early', 'unsuitable']);
@@ -70,6 +73,13 @@ export interface GapRow {
   end_at: string;
   status: string;
   phases?: GapRowPhase[];
+  /** Video call bookings: the clinician's actual sessions on the call.
+   *  When present they replace the booked Video call phase, so the
+   *  virtual impression clinician is measured from time really spent
+   *  on the call (Dylan, 7 Sep 2026), including waiting on a no-show.
+   *  A past video call with no sessions cost nobody any time. */
+  call_sessions?: { start_at: string; end_at: string }[];
+  join_url?: string | null;
 }
 
 export type UsageKind = 'booked' | 'lunch' | 'down' | 'free';
@@ -156,8 +166,24 @@ export function computeDayFreeTime(input: {
   const busy: Array<[number, number]> = [];
   const lab: Array<[number, number]> = [];
   for (const r of rows) {
-    if (!BLOCKING.has(r.status)) continue;
     const phases = (r.phases ?? []).filter((p) => validSpan(p.start_at, p.end_at));
+    const sessions = (r.call_sessions ?? []).filter((c) => validSpan(c.start_at, c.end_at));
+    const isCall = !!r.join_url || phases.some((p) => (p.pool_ids ?? []).includes(VIDEO_CALL_POOL));
+
+    if (isCall && sessions.length > 0) {
+      // The call happened (or is happening): real time, whatever the
+      // booking's status ended up as. A no-show still had the clinician
+      // waiting on the call.
+      const callPhase = phases.find((p) => (p.pool_ids ?? []).includes(VIDEO_CALL_POOL)) ?? phases[0];
+      const counts = callPhase ? busyPhase(callPhase) : busyPhase({ patient_required: true, start_at: r.start_at, end_at: r.end_at, pool_ids: [VIDEO_CALL_POOL] });
+      if (counts) for (const c of sessions) busy.push([ms(c.start_at), ms(c.end_at)]);
+      continue;
+    }
+    if (!BLOCKING.has(r.status)) continue;
+    if (isCall && ms(r.end_at) < now.getTime()) {
+      // A past video call nobody joined: no time was spent.
+      continue;
+    }
     if (phases.length === 0) {
       if (countUnphased && validSpan(r.start_at, r.end_at)) busy.push([ms(r.start_at), ms(r.end_at)]);
       continue;
@@ -387,7 +413,9 @@ export function computeResourceUsage(input: {
   for (const pool of pools) {
     const ids = new Set([pool.id, ...(pool.aliases ?? [])]);
     const mine = (p: GapRowPhase) => (p.pool_ids ?? []).some((id) => ids.has(id));
-    const named = rows.some((r) => BLOCKING.has(r.status) && (r.phases ?? []).some(mine));
+    const named = rows.some(
+      (r) => (BLOCKING.has(r.status) || (r.call_sessions ?? []).length > 0) && (r.phases ?? []).some(mine),
+    );
     const day = computeDayFreeTime({
       rows,
       dateIso,

@@ -280,6 +280,11 @@ export function Schedule() {
     [clinicSettings.loading, dayHours, day.data, selectedDate, now, todayIso],
   );
 
+  // Pills on the day toolbar. Three or more do not fit with labels on a
+  // phone, so they compress to icons (each keeps its aria-label).
+  const pillCount = (day.data.length > 0 ? 1 : 0) + (freeTime?.open ? 1 : 0) + (selectedDate === todayIso ? 0 : 1) + (isCsOnly ? 0 : 1);
+  const compactPills = isMobile && pillCount >= 3;
+
   const visibleRows = useMemo(
     () =>
       shownCategories.size === 0
@@ -587,10 +592,12 @@ export function Schedule() {
               alignItems: 'center',
               gap: theme.space[2],
               flexShrink: 0,
-              flexWrap: 'wrap',
-              // Mobile: the pills sit left to right and wrap as a row,
-              // rather than being spread across the width with odd gaps.
+              // One row, always. On mobile the pills share the width
+              // equally and drop their labels for icons when three or
+              // more are showing, so nothing ever wraps to a second line.
+              flexWrap: 'nowrap',
               justifyContent: 'flex-end',
+              minWidth: 0,
             }}
           >
             {/* Type filter only earns its place once there's a list to
@@ -600,61 +607,37 @@ export function Schedule() {
                 counts={categoryCounts}
                 selected={shownCategories}
                 onChange={setShownCategories}
+                stretch={isMobile}
+                compact={compactPills}
               />
             ) : null}
             {freeTime?.open ? (
-              <ToolbarPill ariaLabel="Down time by role and room" onClick={() => setDownTimeOpen(true)}>
-                <Hourglass size={16} aria-hidden />
-                Down time
-              </ToolbarPill>
+              <ToolbarPill
+                ariaLabel="Down time by role and room"
+                onClick={() => setDownTimeOpen(true)}
+                icon={<Hourglass size={16} aria-hidden />}
+                label="Down time"
+                stretch={isMobile}
+                compact={compactPills}
+              />
             ) : null}
             {!onToday ? (
-              <TodayPill onClick={handleJumpToToday} />
+              <TodayPill onClick={handleJumpToToday} stretch={isMobile} compact={compactPills} />
             ) : null}
             {/* CS staff don't book on Lounge — bookings flow through
                 Checkpoint. Hide the New booking CTA entirely for them
                 so there's no affordance to misfire on. */}
             {!isCsOnly ? (
-              <button
-                type="button"
+              <ToolbarPill
+                ariaLabel="New booking"
                 onClick={() => tryOpenNewBooking(defaultBookingIso(selectedDate, startHour))}
-                aria-label="New booking"
+                icon={<Plus size={16} aria-hidden />}
+                label="New booking"
                 title={newBookingBlocker ?? undefined}
-                aria-disabled={newBookingBlocker ? 'true' : undefined}
-                style={{
-                  appearance: 'none',
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: theme.space[2],
-                  height: 44,
-                  padding: `0 ${theme.space[4]}px`,
-                  background: 'rgba(14,20,20,0.05)',
-                  border: 'none',
-                  borderRadius: theme.radius.pill,
-                  cursor: newBookingBlocker ? 'not-allowed' : 'pointer',
-                  fontSize: theme.type.size.sm,
-                  fontWeight: theme.type.weight.medium,
-                  color: theme.color.inkMuted,
-                  opacity: newBookingBlocker ? 0.5 : 1,
-                  lineHeight: 1,
-                  whiteSpace: 'nowrap',
-                  flexShrink: 0,
-                  transition: `background ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}, color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
-                }}
-                onMouseEnter={(e) => {
-                  if (newBookingBlocker) return;
-                  (e.currentTarget as HTMLElement).style.background = theme.color.accentBg;
-                  (e.currentTarget as HTMLElement).style.color = theme.color.accent;
-                }}
-                onMouseLeave={(e) => {
-                  if (newBookingBlocker) return;
-                  (e.currentTarget as HTMLElement).style.background = 'rgba(14,20,20,0.05)';
-                  (e.currentTarget as HTMLElement).style.color = theme.color.inkMuted;
-                }}
-              >
-                <Plus size={16} aria-hidden />
-                New booking
-              </button>
+                blocked={!!newBookingBlocker}
+                stretch={isMobile}
+                compact={compactPills}
+              />
             ) : null}
           </div>
         </div>
@@ -1564,27 +1547,58 @@ export function Schedule() {
 // Visual: shares the exact toolbar-pill chrome with Filter and New
 // booking — 44px tall, subtle-tint fill, no border, hover tints to the
 // accent. Sizing them as a matched set keeps the action row symmetrical.
-function TodayPill({ onClick }: { onClick: () => void }) {
+function TodayPill({ onClick, stretch = false, compact = false }: { onClick: () => void; stretch?: boolean; compact?: boolean }) {
   return (
-    <ToolbarPill ariaLabel="Jump to today" onClick={onClick}>
-      <CalendarCheck size={16} aria-hidden />
-      Jump to today
-    </ToolbarPill>
+    <ToolbarPill
+      ariaLabel="Jump to today"
+      onClick={onClick}
+      icon={<CalendarCheck size={16} aria-hidden />}
+      label="Jump to today"
+      stretch={stretch}
+      compact={compact}
+    />
   );
 }
 
-// The quiet grey toolbar pill used beside Filter and New booking.
-function ToolbarPill({ ariaLabel, onClick, children }: { ariaLabel: string; onClick: () => void; children: ReactNode }) {
+// The quiet grey toolbar pill: Filter, Down time, Jump to today and
+// New booking all share it. On mobile the pills share the row equally
+// (stretch); with three or more showing they drop to icons (compact)
+// so the toolbar never wraps to a second line. The label always stays
+// in aria-label and title for screen readers and long-press.
+function ToolbarPill({
+  ariaLabel,
+  onClick,
+  icon,
+  label,
+  title,
+  blocked = false,
+  stretch = false,
+  compact = false,
+}: {
+  ariaLabel: string;
+  onClick: () => void;
+  icon: ReactNode;
+  label: string;
+  title?: string;
+  /** Rendered but not actionable (the click explains why). */
+  blocked?: boolean;
+  stretch?: boolean;
+  compact?: boolean;
+}) {
   return (
     <button
       type="button"
       onClick={onClick}
       aria-label={ariaLabel}
+      title={title ?? (compact ? label : undefined)}
+      aria-disabled={blocked ? 'true' : undefined}
       onMouseEnter={(e) => {
+        if (blocked) return;
         (e.currentTarget as HTMLElement).style.background = theme.color.accentBg;
         (e.currentTarget as HTMLElement).style.color = theme.color.accent;
       }}
       onMouseLeave={(e) => {
+        if (blocked) return;
         (e.currentTarget as HTMLElement).style.background = 'rgba(14,20,20,0.05)';
         (e.currentTarget as HTMLElement).style.color = theme.color.inkMuted;
       }}
@@ -1597,20 +1611,24 @@ function ToolbarPill({ ariaLabel, onClick, children }: { ariaLabel: string; onCl
         fontSize: theme.type.size.sm,
         fontWeight: theme.type.weight.medium,
         height: 44,
-        padding: `0 ${theme.space[4]}px`,
+        padding: compact ? 0 : `0 ${theme.space[4]}px`,
         borderRadius: theme.radius.pill,
-        cursor: 'pointer',
+        cursor: blocked ? 'not-allowed' : 'pointer',
+        opacity: blocked ? 0.5 : 1,
         display: 'inline-flex',
         alignItems: 'center',
+        justifyContent: 'center',
         gap: theme.space[2],
         lineHeight: 1,
         transition: `background ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}, color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
         WebkitTapHighlightColor: 'transparent',
-        flexShrink: 0,
+        flex: stretch ? '1 1 0' : '0 0 auto',
+        minWidth: 44,
         whiteSpace: 'nowrap',
       }}
     >
-      {children}
+      {icon}
+      {compact ? null : label}
     </button>
   );
 }

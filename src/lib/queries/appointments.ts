@@ -100,6 +100,10 @@ export interface AppointmentRow {
   // has not been materialised yet (legacy data) — consumers should
   // fall back to a single implicit phase covering the whole window.
   phases: AppointmentPhaseSummary[];
+  /** The clinician's (host's) sessions on the video call, from Meet
+   *  attendance. Empty until the call has happened. Only the day
+   *  query fills this; other readers leave it undefined. */
+  call_sessions?: { start_at: string; end_at: string }[];
 }
 
 // Title-cases a name. Lowercase words → "Amanda". All-caps words of any

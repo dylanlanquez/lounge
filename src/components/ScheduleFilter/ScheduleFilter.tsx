@@ -17,6 +17,10 @@ import {
 } from '../../lib/queries/appointments.ts';
 
 export interface ScheduleFilterProps {
+  /** Fill the width given (mobile toolbar, where the pills share the row). */
+  stretch?: boolean;
+  /** Icon only; the label stays in aria-label and title. */
+  compact?: boolean;
   // Per-category booking counts for the day in view. Only categories
   // with at least one booking today are offered — an empty type would
   // just be a dead row, and filtering to it could only ever blank the
@@ -36,7 +40,7 @@ const PANEL_WIDTH = 340;
 // popover. Model: nothing ticked = All booking types (the default).
 // Ticking one or more types shows only those; "All booking types" clears
 // back to the default.
-export function ScheduleFilter({ counts, selected, onChange }: ScheduleFilterProps) {
+export function ScheduleFilter({ counts, selected, onChange, stretch = false, compact = false }: ScheduleFilterProps) {
   const [open, setOpen] = useState(false);
   const [hovered, setHovered] = useState(false);
   const wrapperRef = useRef<HTMLDivElement | null>(null);
@@ -115,6 +119,9 @@ export function ScheduleFilter({ counts, selected, onChange }: ScheduleFilterPro
     appearance: 'none',
     display: 'inline-flex',
     alignItems: 'center',
+    justifyContent: 'center',
+    width: stretch ? '100%' : undefined,
+    minWidth: 44,
     gap: theme.space[2],
     height: 44,
     padding: `0 ${theme.space[4]}px`,
@@ -146,7 +153,7 @@ export function ScheduleFilter({ counts, selected, onChange }: ScheduleFilterPro
     : 0;
 
   return (
-    <div ref={wrapperRef} style={{ position: 'relative', flexShrink: 0 }}>
+    <div ref={wrapperRef} style={{ position: 'relative', flexShrink: 0, flex: stretch ? '1 1 0' : undefined, minWidth: 0 }}>
       <button
         ref={triggerRef}
         type="button"
@@ -161,10 +168,11 @@ export function ScheduleFilter({ counts, selected, onChange }: ScheduleFilterPro
             ? `Filter on, ${shownPresent.length} of ${present.length} booking types shown`
             : 'Filter booking types'
         }
-        style={trigger}
+        title={compact ? (active ? 'Filter on' : 'Filter') : undefined}
+        style={{ ...trigger, padding: compact ? 0 : trigger.padding }}
       >
         <ListFilter size={16} aria-hidden />
-        {active ? 'Filter on' : 'Filter'}
+        {compact ? null : active ? 'Filter on' : 'Filter'}
         {active ? (
           <span
             aria-hidden

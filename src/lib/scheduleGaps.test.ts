@@ -204,6 +204,40 @@ describe('computeResourceUsage', () => {
   });
 });
 
+describe('video calls are measured from the call itself', () => {
+  const call = (s: string, status: string, sessions: Array<[string, string]>) => ({
+    start_at: at(s), end_at: new Date(ms(at(s)) + 30 * 60_000).toISOString(), status, join_url: 'https://meet.google.com/x',
+    phases: [{ patient_required: true, start_at: at(s), end_at: new Date(ms(at(s)) + 30 * 60_000).toISOString(), pool_ids: ['virtual-impression-clinician'] }],
+    call_sessions: sessions.map(([a, b]) => ({ start_at: at(a), end_at: at(b) })),
+  });
+  const pools = [{ id: 'virtual-impression-clinician', name: 'Virtual Impression Clinician', kind: 'staff_role' as const, staffNames: [], units: 2 }];
+
+  it('uses the host sessions, not the booked slot, once the call happened', () => {
+    const out = computeResourceUsage({
+      rows: [call('10:00', 'complete', [['09:56', '10:01'], ['10:01', '10:17']])],
+      dateIso: DAY, hours: HOURS, now: new Date(at('16:00')), isToday: true, isPast: false, pools,
+    });
+    expect(out[0]!.usage.bookedMinutes).toBe(21);
+  });
+
+  it('a no-show still cost the clinician the time they waited on the call', () => {
+    const out = computeResourceUsage({
+      rows: [call('10:00', 'no_show', [['09:51', '10:15']])],
+      dateIso: DAY, hours: HOURS, now: new Date(at('16:00')), isToday: true, isPast: false, pools,
+    });
+    expect(out[0]!.usage.bookedMinutes).toBe(24);
+  });
+
+  it('a past call nobody joined cost nothing; a future call is planned from its slot', () => {
+    const out = computeResourceUsage({
+      rows: [call('10:00', 'no_show', []), call('15:00', 'booked', [])],
+      dateIso: DAY, hours: HOURS, now: new Date(at('14:00')), isToday: true, isPast: false, pools,
+    });
+    expect(out[0]!.usage.bookedMinutes).toBe(30);
+    expect(out[0]!.usage.downMinutes).toBe(240);
+  });
+});
+
 describe('formatMinutes', () => {
   it('reads naturally', () => {
     expect(formatMinutes(45)).toBe('45m');
