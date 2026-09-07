@@ -181,7 +181,7 @@ export async function buildCashCountPdf(
   // deposit, float top-up, etc.). Listed below the payment lines under
   // their own heading so the reader can reconcile the running balance
   // ("payments in" + "cash taken out" = "expected").
-  if (statement.withdrawals && statement.withdrawals.length > 0) {
+  if (statement.withdrawals && statement.withdrawals.some((w) => !w.reversed_at)) {
     y += 8;
     if (y > PAGE_H - MARGIN_B - 20) {
       pdf.addPage();
@@ -194,6 +194,8 @@ export async function buildCashCountPdf(
     pdf.setFont('helvetica', 'normal');
     pdf.setFontSize(9);
     for (const w of statement.withdrawals) {
+      // Reversed = treated as never entered; not on the statement.
+      if (w.reversed_at) continue;
       if (y > PAGE_H - MARGIN_B - 20) {
         pdf.addPage();
         y = MARGIN_T;

@@ -20,6 +20,7 @@ import {
   ShieldCheck,
   Undo2,
   Wallet,
+  Archive,
 } from 'lucide-react';
 import {
   BottomSheet,
@@ -244,7 +245,7 @@ export function CashCounts() {
             />
             {position.data.lines.length > 0 ? (
               <RecentActivityCard
-                lines={position.data.lines}
+                lines={position.data.lines.filter((l) => !(l.kind === 'withdrawal' && l.reversed_at))}
                 baselinePence={position.data.baseline_pence}
                 onExportCsv={() => exportActivityCsv(position.data!)}
                 onExportPdf={() => void exportActivityPdf(position.data!)}
@@ -271,9 +272,29 @@ export function CashCounts() {
               />
             ) : null}
             <HistoryCard
-              counts={counts.data}
+              counts={counts.data.filter((c) => c.status !== 'disputed')}
               onOpen={(id) => setStatementCountId(id)}
             />
+            {account.is_super_admin
+            && (counts.data.some((c) => c.status === 'disputed')
+              || position.data.lines.some((l) => l.kind === 'withdrawal' && !!l.reversed_at)) ? (
+              <ArchivedCountsCard
+                counts={counts.data.filter((c) => c.status === 'disputed')}
+                reversed={position.data.lines.filter(
+                  (l): l is CashPositionWithdrawalLine => l.kind === 'withdrawal' && !!l.reversed_at,
+                )}
+                onOpen={(id) => setStatementCountId(id)}
+                onPutBack={(line) =>
+                  setPutBackTarget({
+                    withdrawal_id: line.withdrawal_id,
+                    amount_pence: line.amount_pence,
+                    label: line.note?.trim() || withdrawalReasonLabel(line.reason),
+                    right_now_pence: position.data!.expected_in_safe_pence,
+                    count: null,
+                  })
+                }
+              />
+            ) : null}
           </>
         )}
       </div>
@@ -1441,6 +1462,138 @@ function joinNames(names: string[]): string {
 // ─────────────────────────────────────────────────────────────────────────────
 // History — one row per past count, single line where possible
 // ─────────────────────────────────────────────────────────────────────────────
+
+// Voided counts are out of the story: they never anchor the safe and
+// never appear in Past counts. The super admin alone can see them
+// here, for the record and to restore one voided by mistake.
+function ArchivedCountsCard({
+  counts,
+  reversed,
+  onOpen,
+  onPutBack,
+}: {
+  counts: CashCountRow[];
+  /** Reversed withdrawals in the open period: gone from the record,
+   *  kept here. */
+  reversed: CashPositionWithdrawalLine[];
+  onOpen: (id: string) => void;
+  onPutBack: (line: CashPositionWithdrawalLine) => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const summary = [
+    counts.length > 0 ? `${formatNumber(counts.length)} voided count${counts.length === 1 ? '' : 's'}` : null,
+    reversed.length > 0 ? `${formatNumber(reversed.length)} reversed withdrawal${reversed.length === 1 ? '' : 's'}` : null,
+  ]
+    .filter((x): x is string => !!x)
+    .join(' and ');
+  return (
+    <Card padding="none">
+      <header
+        style={{
+          padding: `${theme.space[5]}px ${theme.space[5]}px ${expanded ? theme.space[3] : theme.space[5]}px`,
+          display: 'flex',
+          alignItems: 'flex-start',
+          justifyContent: 'space-between',
+          gap: theme.space[3],
+          flexWrap: 'wrap',
+        }}
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[1], flex: 1, minWidth: 240 }}>
+          <p
+            style={{
+              margin: 0,
+              fontSize: theme.type.size.md,
+              fontWeight: theme.type.weight.semibold,
+              color: theme.color.ink,
+              letterSpacing: theme.type.tracking.tight,
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: theme.space[2],
+            }}
+          >
+            <Archive size={16} aria-hidden style={{ color: theme.color.inkMuted }} />
+            Archive
+          </p>
+          <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkMuted, lineHeight: theme.type.leading.snug }}>
+            {summary}. Not part of the safe's figures and hidden from everyone else. Open a count to restore it if it was voided by mistake.
+          </p>
+        </div>
+        <Button variant="tertiary" size="sm" onClick={() => setExpanded((v) => !v)}>
+          {expanded ? 'Hide' : 'Show'}
+        </Button>
+      </header>
+      {expanded ? (
+        <>
+          {counts.length > 0 ? (
+            <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
+              {counts.map((c) => (
+                <CountRow key={c.id} count={c} isFirst={false} onOpen={() => onOpen(c.id)} />
+              ))}
+            </ul>
+          ) : null}
+          {reversed.length > 0 ? (
+            <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
+              {reversed.map((l) => (
+                <li
+                  key={l.withdrawal_id}
+                  style={{
+                    borderTop: `1px solid ${theme.color.border}`,
+                    padding: `${theme.space[4]}px ${theme.space[5]}px`,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: theme.space[4],
+                    flexWrap: 'wrap',
+                  }}
+                >
+                  <div style={{ flex: 1, minWidth: 240, display: 'flex', flexDirection: 'column', gap: 2 }}>
+                    <span
+                      style={{
+                        fontSize: theme.type.size.sm,
+                        fontWeight: theme.type.weight.semibold,
+                        color: theme.color.inkMuted,
+                        textDecoration: 'line-through',
+                      }}
+                    >
+                      {l.note?.trim() || withdrawalReasonLabel(l.reason)}
+                    </span>
+                    <span style={{ fontSize: theme.type.size.xs, color: theme.color.inkMuted }}>
+                      {[
+                        withdrawalReasonLabel(l.reason),
+                        formatDateTime(l.taken_at),
+                        l.taken_by_name ? `entered by ${l.taken_by_name}` : null,
+                        `reversed${l.reversed_by_name ? ` by ${l.reversed_by_name}` : ''}${l.reversal_reason ? `: ${l.reversal_reason}` : ''}`,
+                      ]
+                        .filter((x): x is string => !!x)
+                        .join(' · ')}
+                    </span>
+                  </div>
+                  <span
+                    style={{
+                      fontSize: theme.type.size.base,
+                      fontWeight: theme.type.weight.semibold,
+                      color: theme.color.inkSubtle,
+                      textDecoration: 'line-through',
+                      fontVariantNumeric: 'tabular-nums',
+                    }}
+                  >
+                    {formatPence(l.amount_pence)}
+                  </span>
+                  {!l.put_back ? (
+                    <Button variant="tertiary" size="sm" onClick={() => onPutBack(l)}>
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
+                        <Undo2 size={12} aria-hidden /> Put back
+                      </span>
+                    </Button>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </>
+      ) : null}
+    </Card>
+  );
+}
 
 function HistoryCard({
   counts,
@@ -3220,7 +3373,7 @@ function CountDetailsSheet({
             )}
           </Section>
           {data.withdrawals.length > 0 ? (
-            <Section title={`Cash taken from the safe in this period (${formatNumber(data.withdrawals.length)})`}>
+            <Section title={`Cash taken from the safe in this period (${formatNumber(data.withdrawals.filter((w) => canCorrect || !w.reversed_at).length)})`}>
               <ul
                 style={{
                   listStyle: 'none',
@@ -3231,7 +3384,7 @@ function CountDetailsSheet({
                   gap: theme.space[2],
                 }}
               >
-                {data.withdrawals.map((w) => (
+                {data.withdrawals.filter((w) => canCorrect || !w.reversed_at).map((w) => (
                   <li
                     key={w.withdrawal_id}
                     style={{

@@ -448,22 +448,10 @@ export function buildActivityStatement(position: CashPosition): ActivityStatemen
         });
         break;
       case 'withdrawal':
-        if (l.reversed_at) {
-          // Reversed by the super admin: stays on the statement for
-          // the record, moves nothing.
-          rows.push({
-            when: l.taken_at,
-            type: `Taken from safe, reversed: ${withdrawalReasonLabel(l.reason)}`,
-            detail: [l.note, l.reversal_reason ? `Reversed: ${l.reversal_reason}` : null].filter(Boolean).join(' · '),
-            reference: null,
-            taken_by: l.taken_by_name,
-            in_pence: 0,
-            out_pence: 0,
-            balance_pence: balance,
-            visit_id: null,
-          });
-          break;
-        }
+        // A reversed withdrawal is treated as never entered: it is not
+        // on the statement at all. The super admin sees it in the
+        // Archive on the Cash counts page.
+        if (l.reversed_at) break;
         balance -= l.amount_pence;
         rows.push({
           when: l.taken_at,
