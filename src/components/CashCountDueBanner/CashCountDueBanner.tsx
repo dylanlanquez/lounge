@@ -26,7 +26,29 @@ export function CashCountDueBanner() {
   if (!account || !data || !data.due_date) return null;
   const mine = data.responsible_account_id === account.account_id;
   if (!mine && !account.is_super_admin) return null;
+  return (
+    <CashCountDueBannerView
+      data={{ ...data, due_date: data.due_date }}
+      mine={mine}
+      canCount={!!account.can_count_cash}
+      onCount={() => navigate('/cash-counts')}
+    />
+  );
+}
 
+// The visual part, kept free of hooks so it can be rendered with fixed
+// data (previews, tests).
+export function CashCountDueBannerView({
+  data,
+  mine,
+  canCount,
+  onCount,
+}: {
+  data: { due_date: string; today: string | null; overdue: boolean; responsible_name: string | null; is_cover: boolean };
+  mine: boolean;
+  canCount: boolean;
+  onCount: () => void;
+}) {
   const isToday = data.due_date === data.today;
   const who = data.responsible_name ?? 'the safe holder';
   const title = data.overdue
@@ -85,8 +107,8 @@ export function CashCountDueBanner() {
           <span style={{ fontSize: theme.type.size.sm, color: theme.color.ink, lineHeight: theme.type.leading.snug }}>{body}</span>
         </div>
       </div>
-      {account.can_count_cash ? (
-        <Button variant="primary" onClick={() => navigate('/cash-counts')}>
+      {canCount ? (
+        <Button variant="primary" onClick={onCount}>
           Count cash now
         </Button>
       ) : null}
