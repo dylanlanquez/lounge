@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { type ReactNode, useCallback, useMemo, useRef, useState } from 'react';
 import { Navigate, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   AlertTriangle,
@@ -8,6 +8,7 @@ import {
   CalendarDays,
   CalendarOff,
   ChevronDown,
+  Hourglass,
   ChevronLeft,
   ChevronRight,
   ListFilter,
@@ -40,7 +41,8 @@ import {
 import { SourceGlyph } from '../components/AppointmentCard/AppointmentCard.tsx';
 import { ScheduleListRow, ScheduleListView } from '../components/ScheduleListView/ScheduleListView.tsx';
 import { dayHoursForDate, useClinicSettings } from '../lib/queries/clinicSettings.ts';
-import { computeDayFreeTime, formatMinutes } from '../lib/scheduleGaps.ts';
+import { computeDayFreeTime } from '../lib/scheduleGaps.ts';
+import { DownTimeSheet } from '../components/DownTimeSheet/DownTimeSheet.tsx';
 import { BOTTOM_NAV_HEIGHT } from '../components/BottomNav/BottomNav.tsx';
 import { MarketingCampaignBanner } from '../components/MarketingCampaignBanner/MarketingCampaignBanner.tsx';
 import { CashCountDueBanner } from '../components/CashCountDueBanner/CashCountDueBanner.tsx';
@@ -258,6 +260,11 @@ export function Schedule() {
   // no-show rows give their time back. Hidden rows (type filter) still
   // hold their slot: a filtered-out booking is not free time.
   const clinicSettings = useClinicSettings();
+  const dayHours = useMemo(
+    () => (clinicSettings.loading ? null : dayHoursForDate(clinicSettings.data.openingHours, selectedDate)),
+    [clinicSettings.loading, clinicSettings.data.openingHours, selectedDate],
+  );
+  const [downTimeOpen, setDownTimeOpen] = useState(false);
   const freeTime = useMemo(
     () =>
       clinicSettings.loading
@@ -265,12 +272,12 @@ export function Schedule() {
         : computeDayFreeTime({
             rows: day.data,
             dateIso: selectedDate,
-            hours: dayHoursForDate(clinicSettings.data.openingHours, selectedDate),
+            hours: dayHours,
             now,
             isToday: selectedDate === todayIso,
             isPast: selectedDate < todayIso,
           }),
-    [clinicSettings.loading, clinicSettings.data.openingHours, day.data, selectedDate, now, todayIso],
+    [clinicSettings.loading, dayHours, day.data, selectedDate, now, todayIso],
   );
 
   const visibleRows = useMemo(
@@ -571,10 +578,7 @@ export function Schedule() {
                 : filterActive
                   ? `${visibleRows.length} of ${day.data.length} shown`
                   : `${day.data.length} appointment${day.data.length === 1 ? '' : 's'}`}
-              {freeTime?.open && freeTime.downMinutes > 0 ? ` · ${formatMinutes(freeTime.downMinutes)} down time` : ''}
-              {freeTime?.open && freeTime.freeMinutes > 0 && freeTime.closesAt
-                ? ` · ${formatMinutes(freeTime.freeMinutes)} free before ${formatTimeNoZone(freeTime.closesAt)}`
-                : ''}
+              {freeTime?.open && freeTime.closesAt ? ` · open until ${formatTimeNoZone(freeTime.closesAt)}` : ''}
             </span>
           </div>
           <div
@@ -595,6 +599,12 @@ export function Schedule() {
                 selected={shownCategories}
                 onChange={setShownCategories}
               />
+            ) : null}
+            {freeTime?.open ? (
+              <ToolbarPill ariaLabel="Down time by role and room" onClick={() => setDownTimeOpen(true)}>
+                <Hourglass size={16} aria-hidden />
+                Down time
+              </ToolbarPill>
             ) : null}
             {!onToday ? (
               <TodayPill onClick={handleJumpToToday} />
@@ -798,6 +808,18 @@ export function Schedule() {
             </DayReloadingWrapper>
           )}
         </Card>
+
+        <DownTimeSheet
+          open={downTimeOpen}
+          onClose={() => setDownTimeOpen(false)}
+          rows={day.data}
+          dateIso={selectedDate}
+          dayLabel={dayHeading}
+          hours={dayHours}
+          now={now}
+          isToday={onToday}
+          isPast={selectedDate < todayIso}
+        />
 
         <p
           style={{
@@ -1542,10 +1564,20 @@ export function Schedule() {
 // accent. Sizing them as a matched set keeps the action row symmetrical.
 function TodayPill({ onClick }: { onClick: () => void }) {
   return (
+    <ToolbarPill ariaLabel="Jump to today" onClick={onClick}>
+      <CalendarCheck size={16} aria-hidden />
+      Jump to today
+    </ToolbarPill>
+  );
+}
+
+// The quiet grey toolbar pill used beside Filter and New booking.
+function ToolbarPill({ ariaLabel, onClick, children }: { ariaLabel: string; onClick: () => void; children: ReactNode }) {
+  return (
     <button
       type="button"
       onClick={onClick}
-      aria-label="Jump to today"
+      aria-label={ariaLabel}
       onMouseEnter={(e) => {
         (e.currentTarget as HTMLElement).style.background = theme.color.accentBg;
         (e.currentTarget as HTMLElement).style.color = theme.color.accent;
@@ -1576,8 +1608,7 @@ function TodayPill({ onClick }: { onClick: () => void }) {
         whiteSpace: 'nowrap',
       }}
     >
-      <CalendarCheck size={16} aria-hidden />
-      Jump to today
+      {children}
     </button>
   );
 }

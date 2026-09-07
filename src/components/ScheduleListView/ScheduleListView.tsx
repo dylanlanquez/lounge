@@ -293,7 +293,7 @@ function DownRow({ window: w }: { window: FreeWindow }) {
             {formatMinutes(w.minutes)} down time
           </p>
           <p style={{ margin: `${theme.space[1]}px 0 0`, fontSize: theme.type.size.sm, color: theme.color.inkSubtle }}>
-            Nothing was booked.
+            No patient was in.
           </p>
         </div>
       </div>
@@ -355,7 +355,7 @@ function FreeRow({ window: w, onBook }: { window: FreeWindow; onBook: (() => voi
             whiteSpace: 'nowrap',
           }}
         >
-          {onBook ? 'Nothing booked. Tap to book this time.' : 'Nothing booked.'}
+          {onBook ? 'No patient in. Tap to book this time.' : 'No patient in.'}
         </p>
       </div>
       {onBook ? (
