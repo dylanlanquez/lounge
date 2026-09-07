@@ -39,6 +39,8 @@ import {
 } from '../components/index.ts';
 import { SourceGlyph } from '../components/AppointmentCard/AppointmentCard.tsx';
 import { ScheduleListRow, ScheduleListView } from '../components/ScheduleListView/ScheduleListView.tsx';
+import { dayHoursForDate, useClinicSettings } from '../lib/queries/clinicSettings.ts';
+import { computeDayFreeTime, formatMinutes } from '../lib/scheduleGaps.ts';
 import { BOTTOM_NAV_HEIGHT } from '../components/BottomNav/BottomNav.tsx';
 import { MarketingCampaignBanner } from '../components/MarketingCampaignBanner/MarketingCampaignBanner.tsx';
 import { CashCountDueBanner } from '../components/CashCountDueBanner/CashCountDueBanner.tsx';
@@ -47,7 +49,7 @@ import { theme } from '../theme/index.ts';
 import { useAuth } from '../lib/auth.tsx';
 import { useCurrentAccount } from '../lib/queries/currentAccount.tsx';
 import { useIsDesktop, useIsMobile } from '../lib/useIsMobile.ts';
-import { fmtTzAbbr } from '../lib/dateFormat.ts';
+import { fmtTzAbbr, formatTimeNoZone } from '../lib/dateFormat.ts';
 import {
   MeetingJoinBlockSheet,
   type MeetingJoinBlockReason,
@@ -250,6 +252,27 @@ export function Schedule() {
 
   // The rows actually rendered. Empty filter = the whole day; otherwise
   // narrowed to the ticked categories.
+  // Free time still open before closing. The list draws it in place so
+  // the day reads to closing time, not to the last appointment, and
+  // the desk can see what needs filling. Cancelled / rescheduled /
+  // no-show rows give their time back. Hidden rows (type filter) still
+  // hold their slot: a filtered-out booking is not free time.
+  const clinicSettings = useClinicSettings();
+  const freeTime = useMemo(
+    () =>
+      clinicSettings.loading
+        ? null
+        : computeDayFreeTime({
+            rows: day.data,
+            dateIso: selectedDate,
+            hours: dayHoursForDate(clinicSettings.data.openingHours, selectedDate),
+            now,
+            isToday: selectedDate === todayIso,
+            isPast: selectedDate < todayIso,
+          }),
+    [clinicSettings.loading, clinicSettings.data.openingHours, day.data, selectedDate, now, todayIso],
+  );
+
   const visibleRows = useMemo(
     () =>
       shownCategories.size === 0
@@ -548,6 +571,9 @@ export function Schedule() {
                 : filterActive
                   ? `${visibleRows.length} of ${day.data.length} shown`
                   : `${day.data.length} appointment${day.data.length === 1 ? '' : 's'}`}
+              {freeTime?.open && freeTime.freeMinutes > 0 && freeTime.closesAt
+                ? ` · ${formatMinutes(freeTime.freeMinutes)} free before ${formatTimeNoZone(freeTime.closesAt)}`
+                : ''}
             </span>
           </div>
           <div
@@ -707,7 +733,16 @@ export function Schedule() {
             <SkeletonRows />
           ) : (
             <DayReloadingWrapper loading={day.loading}>
-              {day.data.length === 0 ? (
+              {day.data.length === 0 && freeTime?.open && freeTime.windows.length > 0 ? (
+            <ScheduleListView
+              rows={[]}
+              onPick={setSelected}
+              isToday={onToday}
+              dateIso={selectedDate}
+              freeTime={freeTime}
+              onBookAt={!isCsOnly ? tryOpenNewBooking : undefined}
+            />
+          ) : day.data.length === 0 ? (
             <EmptyState
               icon={<CalendarOff size={24} />}
               title={onToday ? 'No appointments today' : 'Nothing on this day'}
@@ -750,7 +785,14 @@ export function Schedule() {
               }
             />
           ) : (
-            <ScheduleListView rows={visibleRows} onPick={setSelected} isToday={onToday} />
+            <ScheduleListView
+              rows={visibleRows}
+              onPick={setSelected}
+              isToday={onToday}
+              dateIso={selectedDate}
+              freeTime={freeTime}
+              onBookAt={!isCsOnly ? tryOpenNewBooking : undefined}
+            />
           )}
             </DayReloadingWrapper>
           )}

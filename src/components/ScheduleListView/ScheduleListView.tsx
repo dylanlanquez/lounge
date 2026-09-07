@@ -1,5 +1,5 @@
 import { Fragment } from 'react';
-import { AlertTriangle, ChevronRight } from 'lucide-react';
+import { AlertTriangle, ChevronRight, Plus } from 'lucide-react';
 import googleMeetIcon from '../../assets/google-meet.png';
 import { SourceGlyph } from '../AppointmentCard/AppointmentCard.tsx';
 import { StatusPill } from '../StatusPill/StatusPill.tsx';
@@ -18,6 +18,7 @@ import {
 } from '../../lib/queries/appointments.ts';
 import { useNow } from '../../lib/useNow.ts';
 import { fmtTzAbbr } from '../../lib/dateFormat.ts';
+import { type DayFreeTime, type FreeWindow, formatMinutes, londonWallClockToDate } from '../../lib/scheduleGaps.ts';
 
 export interface ScheduleListViewProps {
   rows: AppointmentRow[];
@@ -26,25 +27,82 @@ export interface ScheduleListViewProps {
   // between the appointments that have already started and those still
   // to come, and re-positions itself as time passes.
   isToday?: boolean;
+  /** The day's date, YYYY-MM-DD in clinic time. Needed to split the
+   *  list at noon and to place the lunch and closing markers. */
+  dateIso?: string;
+  /** Free time still open before closing (see computeDayFreeTime).
+   *  When given, every free stretch is drawn as a row in its place so
+   *  the day reads to closing time, not to the last appointment. */
+  freeTime?: DayFreeTime | null;
+  /** Opens the new-booking sheet at the given instant. Omit for staff
+   *  who cannot book here; free rows then show but do not act. */
+  onBookAt?: (iso: string) => void;
 }
 
-export function ScheduleListView({ rows, onPick, isToday = false }: ScheduleListViewProps) {
+// One thing in the list, in time order: an appointment, a free stretch
+// of opening hours, or a quiet marker (lunch, closing).
+type Entry =
+  | { kind: 'appt'; at: number; row: AppointmentRow }
+  | { kind: 'free'; at: number; window: FreeWindow }
+  | { kind: 'marker'; at: number; label: string; clockIso: string };
+
+export function ScheduleListView({
+  rows,
+  onPick,
+  isToday = false,
+  dateIso,
+  freeTime = null,
+  onBookAt,
+}: ScheduleListViewProps) {
   const now = useNow();
-  const sorted = [...rows].sort((a, b) =>
-    a.start_at < b.start_at ? -1 : a.start_at > b.start_at ? 1 : 0
-  );
+  const entries: Entry[] = rows.map((row) => ({ kind: 'appt', at: new Date(row.start_at).getTime(), row }));
+
+  if (freeTime?.open && dateIso) {
+    // Split a free stretch that crosses noon so each half sits under
+    // its own Morning / Afternoon heading.
+    const noon = londonWallClockToDate(dateIso, '12:00')?.getTime() ?? null;
+    for (const w of freeTime.windows) {
+      const s = new Date(w.start).getTime();
+      const e = new Date(w.end).getTime();
+      if (noon !== null && s < noon && e > noon) {
+        entries.push({ kind: 'free', at: s, window: { start: w.start, end: new Date(noon).toISOString(), minutes: Math.round((noon - s) / 60_000) } });
+        entries.push({ kind: 'free', at: noon, window: { start: new Date(noon).toISOString(), end: w.end, minutes: Math.round((e - noon) / 60_000) } });
+      } else {
+        entries.push({ kind: 'free', at: s, window: w });
+      }
+    }
+    // Lunch marker, only while lunch is still ahead of the window we
+    // are filling (today: ahead of now).
+    if (freeTime.lunch) {
+      const ls = new Date(freeTime.lunch.start).getTime();
+      const from = isToday ? now.getTime() : 0;
+      if (ls >= from) {
+        entries.push({ kind: 'marker', at: ls, clockIso: freeTime.lunch.start, label: `Lunch until ${formatTime(freeTime.lunch.end)}` });
+      }
+    }
+    if (freeTime.closesAt) {
+      const c = new Date(freeTime.closesAt).getTime();
+      entries.push({ kind: 'marker', at: c, clockIso: freeTime.closesAt, label: freeTime.closedForToday ? 'Closed' : 'Closes' });
+    }
+  }
+
+  entries.sort((a, b) => a.at - b.at || rank(a) - rank(b));
+
   // Morning/afternoon split is computed in clinic time so a 12:01 BST
   // booking always lands under Afternoon for every viewer, regardless
   // of the staff member's device timezone.
-  const morning = sorted.filter((r) => londonHour(r.start_at) < 12);
-  const afternoon = sorted.filter((r) => londonHour(r.start_at) >= 12);
+  const morning = entries.filter((e) => londonHour(new Date(e.at).toISOString()) < 12);
+  const afternoon = entries.filter((e) => londonHour(new Date(e.at).toISOString()) >= 12);
 
-  // Global index where the now-marker sits: the count of appointments
-  // that have already started, so it lands just before the first one
-  // still to come. -1 disables it (not today, or no appointments).
-  const showNow = isToday && sorted.length > 0;
+  // Global index where the now-marker sits: the count of entries that
+  // have already started, so it lands just before the first one still
+  // to come. -1 disables it (not today, or nothing in the list).
+  const showNow = isToday && entries.length > 0;
+  // An entry is "already started" when its start is behind now. A free
+  // stretch only counts once it has fully passed, so the one that
+  // contains now always sits just under the live line.
   const nowAt = showNow
-    ? sorted.filter((r) => new Date(r.start_at).getTime() <= now.getTime()).length
+    ? entries.filter((e) => (e.kind === 'free' ? new Date(e.window.end).getTime() <= now.getTime() : e.at < now.getTime())).length
     : -1;
   const hasAfternoon = afternoon.length > 0;
 
@@ -53,8 +111,9 @@ export function ScheduleListView({ rows, onPick, isToday = false }: ScheduleList
       {morning.length > 0 ? (
         <Section
           label="Morning"
-          rows={morning}
+          entries={morning}
           onPick={onPick}
+          onBookAt={onBookAt}
           now={now}
           startIndex={0}
           nowAt={nowAt}
@@ -64,8 +123,9 @@ export function ScheduleListView({ rows, onPick, isToday = false }: ScheduleList
       {hasAfternoon ? (
         <Section
           label="Afternoon"
-          rows={afternoon}
+          entries={afternoon}
           onPick={onPick}
+          onBookAt={onBookAt}
           now={now}
           startIndex={morning.length}
           nowAt={nowAt}
@@ -76,60 +136,243 @@ export function ScheduleListView({ rows, onPick, isToday = false }: ScheduleList
   );
 }
 
+// Same instant: appointments first, then free time, markers last.
+function rank(e: Entry): number {
+  return e.kind === 'appt' ? 0 : e.kind === 'free' ? 1 : 2;
+}
+
 function Section({
   label,
-  rows,
+  entries,
   onPick,
+  onBookAt,
   now,
   startIndex,
   nowAt,
   isLast,
 }: {
   label: string;
-  rows: AppointmentRow[];
+  entries: Entry[];
   onPick: (r: AppointmentRow) => void;
+  onBookAt?: (iso: string) => void;
   now: Date;
-  // Index of this section's first row in the full sorted day, so the
+  // Index of this section's first entry in the full sorted day, so the
   // now-marker can be placed by a single global index.
   startIndex: number;
   nowAt: number;
   isLast: boolean;
 }) {
+  const freeMinutes = entries.reduce((sum, e) => (e.kind === 'free' ? sum + e.window.minutes : sum), 0);
   return (
     <div>
-      <p
+      <div
         style={{
+          display: 'flex',
+          alignItems: 'baseline',
+          justifyContent: 'space-between',
+          gap: theme.space[3],
           margin: `0 0 ${theme.space[2]}px`,
-          fontSize: theme.type.size.xs,
-          color: theme.color.inkSubtle,
-          fontWeight: theme.type.weight.medium,
-          textTransform: 'uppercase',
-          letterSpacing: theme.type.tracking.wide,
         }}
       >
-        {label}
-      </p>
+        <p
+          style={{
+            margin: 0,
+            fontSize: theme.type.size.xs,
+            color: theme.color.inkSubtle,
+            fontWeight: theme.type.weight.medium,
+            textTransform: 'uppercase',
+            letterSpacing: theme.type.tracking.wide,
+          }}
+        >
+          {label}
+        </p>
+        {freeMinutes > 0 ? (
+          <p
+            style={{
+              margin: 0,
+              fontSize: theme.type.size.xs,
+              color: theme.color.accent,
+              fontWeight: theme.type.weight.semibold,
+              fontVariantNumeric: 'tabular-nums',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {formatMinutes(freeMinutes)} free to fill
+          </p>
+        ) : null}
+      </div>
       <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
-        {rows.map((r, i) => (
-          <Fragment key={r.id}>
+        {entries.map((e, i) => (
+          <Fragment key={entryKey(e)}>
             {nowAt === startIndex + i ? <NowMarker now={now} /> : null}
-            <ScheduleListRow row={r} onPick={() => onPick(r)} now={now} />
+            {e.kind === 'appt' ? (
+              <ScheduleListRow row={e.row} onPick={() => onPick(e.row)} now={now} />
+            ) : e.kind === 'free' ? (
+              <FreeRow window={e.window} onBook={onBookAt ? () => onBookAt(e.window.start) : null} />
+            ) : (
+              <TimeMarker clockIso={e.clockIso} label={e.label} />
+            )}
           </Fragment>
         ))}
-        {/* Now is past every appointment in the day: marker at the foot
-            of the last section. */}
-        {isLast && nowAt === startIndex + rows.length ? <NowMarker now={now} /> : null}
+        {/* Now is past everything in the day: marker at the foot of the
+            last section. */}
+        {isLast && nowAt === startIndex + entries.length ? <NowMarker now={now} /> : null}
       </ul>
     </div>
+  );
+}
+
+function entryKey(e: Entry): string {
+  return e.kind === 'appt' ? e.row.id : e.kind === 'free' ? `free-${e.window.start}` : `marker-${e.label}-${e.clockIso}`;
+}
+
+// A stretch of opening hours with nothing booked. Same shape as an
+// appointment row so the eye reads it as a slot in the day, drawn
+// dashed and tinted so it reads as open rather than taken. Tapping it
+// opens the booking sheet at its start.
+function FreeRow({ window: w, onBook }: { window: FreeWindow; onBook: (() => void) | null }) {
+  const body = (
+    <>
+      <div style={{ width: 80, flexShrink: 0 }}>
+        <p
+          style={{
+            margin: 0,
+            fontSize: theme.type.size.base,
+            fontWeight: theme.type.weight.semibold,
+            fontVariantNumeric: 'tabular-nums',
+            color: theme.color.accent,
+          }}
+        >
+          {formatTime(w.start)}
+        </p>
+        <p
+          style={{
+            margin: `${theme.space[1]}px 0 0`,
+            fontSize: theme.type.size.xs,
+            fontWeight: theme.type.weight.medium,
+            color: theme.color.inkSubtle,
+            letterSpacing: theme.type.tracking.wide,
+            fontVariantNumeric: 'tabular-nums',
+          }}
+        >
+          to {formatTime(w.end)}
+        </p>
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <p
+          style={{
+            margin: 0,
+            fontSize: theme.type.size.base,
+            fontWeight: theme.type.weight.semibold,
+            color: theme.color.accent,
+            fontVariantNumeric: 'tabular-nums',
+          }}
+        >
+          {formatMinutes(w.minutes)} free
+        </p>
+        <p
+          style={{
+            margin: `${theme.space[1]}px 0 0`,
+            fontSize: theme.type.size.sm,
+            color: theme.color.inkMuted,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {onBook ? 'Nothing booked. Tap to book this time.' : 'Nothing booked.'}
+        </p>
+      </div>
+      {onBook ? (
+        <>
+          <span
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: theme.space[1],
+              fontSize: theme.type.size.sm,
+              fontWeight: theme.type.weight.semibold,
+              color: theme.color.accent,
+              whiteSpace: 'nowrap',
+            }}
+          >
+            <Plus size={16} aria-hidden /> Book
+          </span>
+          <ChevronRight size={18} color={theme.color.inkSubtle} aria-hidden style={{ flexShrink: 0 }} />
+        </>
+      ) : null}
+    </>
+  );
+  const frame = {
+    width: '100%',
+    minHeight: 84,
+    display: 'flex',
+    alignItems: 'center',
+    gap: theme.space[4],
+    padding: theme.space[4],
+    background: theme.color.accentBg,
+    border: `1px dashed ${theme.color.accent}`,
+    borderRadius: 14,
+    boxSizing: 'border-box' as const,
+  };
+  return (
+    <li>
+      {onBook ? (
+        <button
+          type="button"
+          onClick={onBook}
+          aria-label={`Book ${formatTime(w.start)} to ${formatTime(w.end)}, ${formatMinutes(w.minutes)} free`}
+          style={{
+            appearance: 'none',
+            textAlign: 'left',
+            cursor: 'pointer',
+            ...frame,
+            transition: `background ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+          }}
+          onMouseEnter={(e) => {
+            (e.currentTarget as HTMLElement).style.background = theme.color.surface;
+          }}
+          onMouseLeave={(e) => {
+            (e.currentTarget as HTMLElement).style.background = theme.color.accentBg;
+          }}
+        >
+          {body}
+        </button>
+      ) : (
+        <div style={frame}>{body}</div>
+      )}
+    </li>
   );
 }
 
 // Live current-time line drawn inside the list on today's view. A small
 // dot + clock label on the left, a hairline rule filling the rest.
 function NowMarker({ now }: { now: Date }) {
+  return <MarkerLine clock={formatClock(now)} label={null} colour={theme.color.accent} ariaLabel={`Current time, ${formatClock(now)}`} strong />;
+}
+
+// Quiet fixed-time line for lunch and closing, so the day reads to its
+// real end instead of stopping at the last appointment.
+function TimeMarker({ clockIso, label }: { clockIso: string; label: string }) {
+  return <MarkerLine clock={formatClock(new Date(clockIso))} label={label} colour={theme.color.inkSubtle} ariaLabel={`${label}, ${formatClock(new Date(clockIso))}`} strong={false} />;
+}
+
+function MarkerLine({
+  clock,
+  label,
+  colour,
+  ariaLabel,
+  strong,
+}: {
+  clock: string;
+  label: string | null;
+  colour: string;
+  ariaLabel: string;
+  strong: boolean;
+}) {
   return (
     <li
-      aria-label={`Current time, ${formatClock(now)}`}
+      aria-label={ariaLabel}
       style={{ listStyle: 'none', display: 'flex', alignItems: 'center', gap: theme.space[2], padding: `${theme.space[1]}px 0` }}
     >
       <span
@@ -139,15 +382,16 @@ function NowMarker({ now }: { now: Date }) {
           gap: 6,
           fontSize: theme.type.size.xs,
           fontWeight: theme.type.weight.semibold,
-          color: theme.color.accent,
+          color: colour,
           fontVariantNumeric: 'tabular-nums',
           whiteSpace: 'nowrap',
         }}
       >
-        <span style={{ width: 7, height: 7, borderRadius: '50%', background: theme.color.accent }} aria-hidden />
-        {formatClock(now)}
+        <span style={{ width: 7, height: 7, borderRadius: '50%', background: colour }} aria-hidden />
+        {clock}
+        {label ? <span style={{ fontWeight: theme.type.weight.medium }}>· {label}</span> : null}
       </span>
-      <span style={{ flex: 1, height: 2, background: theme.color.accent, borderRadius: 1 }} aria-hidden />
+      <span style={{ flex: 1, height: strong ? 2 : 1, background: colour, borderRadius: 1, opacity: strong ? 1 : 0.5 }} aria-hidden />
     </li>
   );
 }
