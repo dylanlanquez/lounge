@@ -50,6 +50,7 @@ function withdrawal(id: string, amount: number, at: string): CashPositionLine {
     reversed_at: null,
     reversal_reason: null,
     reversed_by_name: null,
+    put_back: false,
   };
 }
 
@@ -283,6 +284,7 @@ describe('buildCashActivityCsv', () => {
           reversed_at: null,
           reversal_reason: null,
           reversed_by_name: null,
+          put_back: false,
         },
       ],
       baseline_pence: 100,

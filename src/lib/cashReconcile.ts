@@ -433,6 +433,20 @@ export function buildActivityStatement(position: CashPosition): ActivityStatemen
           visit_id: null,
         });
         break;
+      case 'adjustment':
+        balance += l.amount_pence;
+        rows.push({
+          when: l.taken_at,
+          type: l.amount_pence > 0 ? 'Put back into the safe' : 'Adjustment',
+          detail: [l.withdrawal_note ? `${l.withdrawal_note} reversed` : null, l.reason].filter(Boolean).join(' · '),
+          reference: null,
+          taken_by: l.made_by_name,
+          in_pence: l.amount_pence > 0 ? l.amount_pence : 0,
+          out_pence: l.amount_pence < 0 ? -l.amount_pence : 0,
+          balance_pence: balance,
+          visit_id: null,
+        });
+        break;
       case 'withdrawal':
         if (l.reversed_at) {
           // Reversed by the super admin: stays on the statement for

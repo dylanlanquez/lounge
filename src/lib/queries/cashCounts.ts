@@ -290,6 +290,8 @@ export interface CashPositionWithdrawalLine {
   reversed_at: string | null;
   reversal_reason: string | null;
   reversed_by_name: string | null;
+  /** Set once the reversed cash was put back into the running balance. */
+  put_back: boolean;
 }
 
 export interface CashPositionRefundLine {
@@ -318,11 +320,26 @@ export interface CashPositionRefundedSaleLine {
   taken_by_name: string;
 }
 
+/** A super-admin correction to the running balance: currently "put
+ *  back" a reversed withdrawal whose cash never left the safe and was
+ *  not in the last count. Positive amounts add to the safe. */
+export interface CashPositionAdjustmentLine {
+  kind: 'adjustment';
+  adjustment_id: string;
+  amount_pence: number;
+  taken_at: string;
+  reason: string;
+  withdrawal_id: string | null;
+  withdrawal_note: string | null;
+  made_by_name: string;
+}
+
 export type CashPositionLine =
   | CashPositionPaymentLine
   | CashPositionWithdrawalLine
   | CashPositionRefundLine
-  | CashPositionRefundedSaleLine;
+  | CashPositionRefundedSaleLine
+  | CashPositionAdjustmentLine;
 
 /** A non-cash payment taken in the same window. Evidence for the
  *  "paid in cash but logged as card" explanation of a surplus. */
@@ -411,10 +428,13 @@ interface RpcPersonParts {
 }
 
 interface RpcCashPositionLine extends RpcPersonParts {
-  kind: 'payment' | 'refunded_sale' | 'refund' | 'withdrawal';
+  kind: 'payment' | 'refunded_sale' | 'refund' | 'withdrawal' | 'adjustment';
   payment_id?: string;
   refund_id?: string;
-  withdrawal_id?: string;
+  withdrawal_id?: string | null;
+  adjustment_id?: string;
+  withdrawal_note?: string | null;
+  put_back_adjustment_id?: string | null;
   amount_pence: number;
   taken_at: string;
   appointment_ref?: string | null;
@@ -425,6 +445,7 @@ interface RpcCashPositionLine extends RpcPersonParts {
   on_camera?: boolean | null;
   reversed_at?: string | null;
   reversal_reason?: string | null;
+  reason_text?: string | null;
 }
 
 interface RpcOtherPayment extends RpcPersonParts {
@@ -542,6 +563,7 @@ export function shapeCashPosition(payload: RpcCashPosition | null): CashPosition
           on_camera: l.on_camera ?? null,
           reversed_at: l.reversed_at ?? null,
           reversal_reason: l.reversal_reason ?? null,
+          put_back: !!l.put_back_adjustment_id,
           reversed_by_name:
             l.reverser_first || l.reverser_last || l.reverser_name
               ? composePersonName({
@@ -550,6 +572,18 @@ export function shapeCashPosition(payload: RpcCashPosition | null): CashPosition
                   name: l.reverser_name ?? null,
                 })
               : null,
+        };
+      case 'adjustment':
+        if (!l.adjustment_id) throw new Error('cash_position: adjustment line without adjustment_id');
+        return {
+          kind: 'adjustment',
+          adjustment_id: l.adjustment_id,
+          amount_pence: l.amount_pence,
+          taken_at: l.taken_at,
+          reason: (l.reason as unknown as string) ?? '',
+          withdrawal_id: l.withdrawal_id ?? null,
+          withdrawal_note: l.withdrawal_note ?? null,
+          made_by_name: actorName(l),
         };
       default:
         throw new Error(`cash_position: unknown line kind ${(l as { kind: string }).kind}`);
@@ -677,6 +711,7 @@ export function useCashPosition(): CashPositionResult {
       { table: 'lng_payments' },
       { table: 'lng_payment_refunds' },
       { table: 'lng_cash_withdrawals' },
+      { table: 'lng_cash_adjustments' },
       { table: 'lng_cash_counts' },
     ],
     refresh,
@@ -1342,11 +1377,19 @@ export interface ReverseWithdrawalResult {
   count_expected_after: number | null;
 }
 
-export async function reverseCashWithdrawal(withdrawalId: string, reason: string): Promise<ReverseWithdrawalResult> {
+export async function reverseCashWithdrawal(
+  withdrawalId: string,
+  reason: string,
+  /** Closed-period only: the cash never left AND was not in the count,
+   *  so add it back to the running balance instead of restating the
+   *  count. */
+  putBack: boolean = false,
+): Promise<ReverseWithdrawalResult> {
   if (reason.trim().length === 0) throw new Error('Say why this withdrawal is being reversed.');
   const { data, error } = await supabase.rpc('lng_cash_reverse_withdrawal', {
     p_withdrawal_id: withdrawalId,
     p_reason: reason.trim(),
+    p_put_back: putBack,
   });
   if (error) throw new Error(error.message);
   const out = data as {
@@ -1361,6 +1404,17 @@ export async function reverseCashWithdrawal(withdrawalId: string, reason: string
     count_expected_before: out?.count_expected_before ?? null,
     count_expected_after: out?.count_expected_after ?? null,
   };
+}
+
+/** Put an already-reversed withdrawal's cash back into the running
+ *  balance (it never left the safe and was not in the last count). Undoes
+ *  the count restatement the reversal made, if any. */
+export async function putBackWithdrawal(withdrawalId: string, reason: string): Promise<{ amount_pence: number }> {
+  if (reason.trim().length === 0) throw new Error('Say why the cash is being put back.');
+  const { data, error } = await supabase.rpc('lng_cash_put_back_withdrawal', { p_withdrawal_id: withdrawalId, p_reason: reason.trim() });
+  if (error) throw new Error(error.message);
+  const out = data as { amount_pence?: number } | null;
+  return { amount_pence: out?.amount_pence ?? 0 };
 }
 
 /** Accept a signed count's difference with a note. expected becomes the
@@ -1404,6 +1458,9 @@ export interface CashCountStatementWithdrawal {
    *  line itself is immutable). */
   reversed_at: string | null;
   reversal_reason: string | null;
+  put_back: boolean;
+  /** True when the reversal restated this count's expected figure. */
+  restated: boolean;
 }
 
 export interface CashCountStatement {
@@ -1463,7 +1520,7 @@ export function useCashCountStatement(countId: string | null): StatementResult {
             .order('taken_at', { ascending: true }),
           supabase
             .from('lng_cash_count_withdrawal_lines')
-            .select('withdrawal_id, amount_pence, taken_at, reason_snapshot, note_snapshot, taken_by_name_snapshot, withdrawal:lng_cash_withdrawals!withdrawal_id ( reversed_at, reversal_reason )')
+            .select('withdrawal_id, amount_pence, taken_at, reason_snapshot, note_snapshot, taken_by_name_snapshot, withdrawal:lng_cash_withdrawals!withdrawal_id ( reversed_at, reversal_reason, put_back_adjustment_id, restated_count_id )')
             .eq('count_id', countId)
             .order('taken_at', { ascending: true }),
           supabase
@@ -1501,8 +1558,8 @@ export function useCashCountStatement(countId: string | null): StatementResult {
           note_snapshot: string | null;
           taken_by_name_snapshot: string | null;
           withdrawal:
-            | { reversed_at: string | null; reversal_reason: string | null }
-            | { reversed_at: string | null; reversal_reason: string | null }[]
+            | { reversed_at: string | null; reversal_reason: string | null; put_back_adjustment_id: string | null; restated_count_id: string | null }
+            | { reversed_at: string | null; reversal_reason: string | null; put_back_adjustment_id: string | null; restated_count_id: string | null }[]
             | null;
         }>).map((w) => {
           const live = pickOne(w.withdrawal);
@@ -1515,6 +1572,8 @@ export function useCashCountStatement(countId: string | null): StatementResult {
             taken_by_name: w.taken_by_name_snapshot,
             reversed_at: live?.reversed_at ?? null,
             reversal_reason: live?.reversal_reason ?? null,
+            put_back: !!live?.put_back_adjustment_id,
+            restated: !!live?.restated_count_id,
           };
         });
         if (cancelled) return;

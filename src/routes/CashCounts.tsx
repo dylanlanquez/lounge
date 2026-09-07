@@ -55,6 +55,7 @@ import {
   recordCashWithdrawal,
   reverseCashWithdrawal,
   saveCashCountUnrecorded,
+  putBackWithdrawal,
   signCashCount,
   voidCashCount,
   writeOffCountDifference,
@@ -122,6 +123,7 @@ export function CashCounts() {
   const [reverseTarget, setReverseTarget] = useState<ReverseTarget | null>(null);
   const [voidTarget, setVoidTarget] = useState<{ id: string; period_end: string } | null>(null);
   const [writeOffTarget, setWriteOffTarget] = useState<WriteOffTarget | null>(null);
+  const [putBackTarget, setPutBackTarget] = useState<PutBackTarget | null>(null);
   // Two-person rule: the safe witnesses on record. Loaded once for the
   // page and shared by the Right-now card (so the rule is visible before
   // anyone opens the safe) and both sheets (which refuse to submit
@@ -256,6 +258,15 @@ export function CashCounts() {
                     right_now_pence: position.data!.expected_in_safe_pence,
                   })
                 }
+                onPutBack={(line) =>
+                  setPutBackTarget({
+                    withdrawal_id: line.withdrawal_id,
+                    amount_pence: line.amount_pence,
+                    label: line.note?.trim() || withdrawalReasonLabel(line.reason),
+                    right_now_pence: position.data!.expected_in_safe_pence,
+                    count: null,
+                  })
+                }
               />
             ) : null}
             <HistoryCard
@@ -308,7 +319,7 @@ export function CashCounts() {
         countId={statementCountId}
         onClose={() => setStatementCountId(null)}
         canCorrect={!!account.is_super_admin}
-        reloadKey={reverseTarget === null && voidTarget === null && writeOffTarget === null ? 1 : 0}
+        reloadKey={reverseTarget === null && voidTarget === null && writeOffTarget === null && putBackTarget === null ? 1 : 0}
         onReverse={(w, count) =>
           setReverseTarget({
             withdrawal_id: w.withdrawal_id,
@@ -322,6 +333,25 @@ export function CashCounts() {
         }
         onVoid={(id, periodEnd) => setVoidTarget({ id, period_end: periodEnd })}
         onWriteOff={(t) => setWriteOffTarget(t)}
+        onPutBack={(w, count) =>
+          setPutBackTarget({
+            withdrawal_id: w.withdrawal_id,
+            amount_pence: w.amount_pence,
+            label: w.note?.trim() || withdrawalReasonLabel(w.reason),
+            right_now_pence: position.data?.expected_in_safe_pence ?? 0,
+            count: w.restated ? count : null,
+          })
+        }
+      />
+
+      <PutBackSheet
+        target={putBackTarget}
+        onClose={() => setPutBackTarget(null)}
+        onDone={() => {
+          setPutBackTarget(null);
+          position.refresh();
+          counts.refresh();
+        }}
       />
 
       <WriteOffSheet
@@ -558,21 +588,24 @@ function RecentActivityCard({
   onExportPdf,
   canReverse,
   onReverse,
+  onPutBack,
 }: {
   lines: CashPosition['lines'];
   baselinePence: number;
   onExportCsv: () => void;
   onExportPdf: () => void;
-  /** Super admin only: reverse a withdrawal recorded by mistake. */
+  /** Super admin only: reverse a withdrawal recorded by mistake, or put
+   *  a reversed one's cash back into the running balance. */
   canReverse: boolean;
   onReverse: (line: CashPositionWithdrawalLine) => void;
+  onPutBack: (line: CashPositionWithdrawalLine) => void;
 }) {
   const navigate = useNavigate();
   // Cash in = sales that kept their money. Cash out = withdrawals plus
   // real refunds (partial clawbacks / older-sale refunds). Refunded sales
   // net to zero and sit in neither total.
   const paymentTotal = useMemo(
-    () => lines.reduce((sum, l) => (l.kind === 'payment' ? sum + l.amount_pence : sum), 0),
+    () => lines.reduce((sum, l) => (l.kind === 'payment' || l.kind === 'adjustment' ? sum + l.amount_pence : sum), 0),
     [lines],
   );
   const cashOutTotal = useMemo(
@@ -659,7 +692,9 @@ function RecentActivityCard({
               ? line.payment_id
               : line.kind === 'refund'
                 ? line.refund_id
-                : line.withdrawal_id;
+                : line.kind === 'adjustment'
+                  ? line.adjustment_id
+                  : line.withdrawal_id;
           const visitLink = line.kind === 'payment' || line.kind === 'refunded_sale' ? line.visit_id : null;
           const interactive = !!visitLink;
           // Three visual variants: money in (green +), money out (red −,
@@ -668,8 +703,13 @@ function RecentActivityCard({
           // refunded sale, or a withdrawal the super admin reversed.
           const reversed = line.kind === 'withdrawal' && !!line.reversed_at;
           const variant: 'in' | 'out' | 'refunded' =
-            line.kind === 'payment' ? 'in' : line.kind === 'refunded_sale' || reversed ? 'refunded' : 'out';
+            line.kind === 'payment' || line.kind === 'adjustment'
+              ? 'in'
+              : line.kind === 'refunded_sale' || reversed
+                ? 'refunded'
+                : 'out';
           const reversible = canReverse && line.kind === 'withdrawal' && !reversed;
+          const putBackable = canReverse && line.kind === 'withdrawal' && reversed && !line.put_back;
           // Mobile-first 2-line layout:
           //   Line 1 (top):    Label + tag (left)     · Amount (right)
           //   Line 2 (bottom): Time + context (muted) · Chevron
@@ -681,7 +721,9 @@ function RecentActivityCard({
               ? (line.note?.trim() || withdrawalReasonLabel(line.reason))
               : line.kind === 'refund'
                 ? 'Cash refund'
-                : (line.patient_name || 'Unknown patient');
+                : line.kind === 'adjustment'
+                  ? `Put back into the safe${line.withdrawal_note ? `: ${line.withdrawal_note}` : ''}`
+                  : (line.patient_name || 'Unknown patient');
           const subParts: string[] = [];
           if (line.kind === 'withdrawal' && line.note?.trim()) {
             subParts.push(withdrawalReasonLabel(line.reason));
@@ -694,7 +736,11 @@ function RecentActivityCard({
               subParts.push(
                 `reversed${line.reversed_by_name ? ` by ${line.reversed_by_name}` : ''}${line.reversal_reason ? `: ${line.reversal_reason}` : ''}`,
               );
+              if (line.put_back) subParts.push('put back into the safe');
             }
+          } else if (line.kind === 'adjustment') {
+            subParts.push(`by ${line.made_by_name}`);
+            if (line.reason) subParts.push(line.reason);
           } else if (line.kind === 'payment') {
             if (line.appointment_ref) subParts.push(line.appointment_ref);
             subParts.push(`by ${line.taken_by_name}`);
@@ -814,7 +860,7 @@ function RecentActivityCard({
                   {variant === 'in' ? '+' : variant === 'out' ? '−' : ''}
                   {formatPence(line.amount_pence)}
                 </span>
-                {!reversible ? (
+                {!reversible && !putBackable ? (
                   <ChevronRight
                     size={14}
                     aria-hidden
@@ -825,13 +871,15 @@ function RecentActivityCard({
                   />
                 ) : null}
               </button>
-              {reversible ? (
+              {reversible || putBackable ? (
                 <div style={{ display: 'flex', alignItems: 'center', paddingRight: theme.space[4] }}>
                   <button
                     type="button"
-                    aria-label="Reverse this withdrawal"
+                    aria-label={reversible ? 'Reverse this withdrawal' : 'Put this cash back into the safe'}
                     onClick={() => {
-                      if (line.kind === 'withdrawal') onReverse(line);
+                      if (line.kind !== 'withdrawal') return;
+                      if (reversible) onReverse(line);
+                      else onPutBack(line);
                     }}
                     style={{
                       appearance: 'none',
@@ -851,7 +899,7 @@ function RecentActivityCard({
                       cursor: 'pointer',
                     }}
                   >
-                    <Undo2 size={12} aria-hidden /> Reverse
+                    <Undo2 size={12} aria-hidden /> {reversible ? 'Reverse' : 'Put back'}
                   </button>
                 </div>
               ) : null}
@@ -2862,6 +2910,7 @@ function CountDetailsSheet({
   onReverse,
   onVoid,
   onWriteOff,
+  onPutBack,
 }: {
   countId: string | null;
   onClose: () => void;
@@ -2876,6 +2925,10 @@ function CountDetailsSheet({
   ) => void;
   onVoid: (countId: string, periodEnd: string) => void;
   onWriteOff: (target: WriteOffTarget) => void;
+  onPutBack: (
+    w: CashCountStatement['withdrawals'][number],
+    count: { period_end: string; expected_pence: number; actual_pence: number | null },
+  ) => void;
 }) {
   const { data, loading, error, refresh } = useCashCountStatement(countId);
   const [downloading, setDownloading] = useState(false);
@@ -3206,6 +3259,7 @@ function CountDetailsSheet({
                         {w.note?.trim() ? `${withdrawalReasonLabel(w.reason)} · ` : ''}
                         {formatDateTime(w.taken_at)}
                         {w.reversed_at ? ` · reversed after this count${w.reversal_reason ? `: ${w.reversal_reason}` : ''}` : ''}
+                        {w.reversed_at && w.put_back ? ' · put back into the safe' : ''}
                       </p>
                     </div>
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[3] }}>
@@ -3220,6 +3274,23 @@ function CountDetailsSheet({
                       >
                         −{formatPence(w.amount_pence)}
                       </span>
+                      {canCorrect && w.reversed_at && !w.put_back ? (
+                        <Button
+                          variant="tertiary"
+                          size="sm"
+                          onClick={() =>
+                            onPutBack(w, {
+                              period_end: data.count.period_end,
+                              expected_pence: data.count.expected_pence,
+                              actual_pence: data.count.actual_pence,
+                            })
+                          }
+                        >
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
+                            <Undo2 size={12} aria-hidden /> Put back
+                          </span>
+                        </Button>
+                      ) : null}
                       {canCorrect && !w.reversed_at ? (
                         <Button
                           variant="tertiary"
@@ -3341,22 +3412,29 @@ function ReverseWithdrawalSheet({
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Closed period only: was the cash inside the counted total, or not?
+  const [choice, setChoice] = useState<'in_count' | 'put_back' | null>(null);
   useEffect(() => {
     if (target) {
       setReason('');
       setError(null);
+      setChoice(target.moves_balance ? 'in_count' : null);
     }
   }, [target]);
   const submit = async () => {
     if (!target) return;
     setError(null);
+    if (!target.moves_balance && choice === null) {
+      setError('Say whether the cash was in the safe when it was counted.');
+      return;
+    }
     if (reason.trim().length === 0) {
       setError('Say why this withdrawal is being reversed. It goes on the record.');
       return;
     }
     setBusy(true);
     try {
-      await reverseCashWithdrawal(target.withdrawal_id, reason);
+      await reverseCashWithdrawal(target.withdrawal_id, reason, !target.moves_balance && choice === 'put_back');
       onDone();
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
@@ -3385,7 +3463,26 @@ function ReverseWithdrawalSheet({
       }
     >
       <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[4] }}>
-        {target ? <ReversalEffect target={target} /> : null}
+        {target && !target.moves_balance ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
+            <span style={{ fontSize: theme.type.size.sm, fontWeight: theme.type.weight.medium, color: theme.color.ink }}>
+              This sits inside the count from {formatLongDate(target.count?.period_end ?? target.taken_at)}. Was the cash in the safe when it was counted?
+            </span>
+            <ConfirmRow
+              checked={choice === 'in_count'}
+              onChange={() => setChoice('in_count')}
+              label="Yes, it was in the safe and got counted"
+              sub="The count was only over because of this entry. Its expected figure is corrected. Right now does not change."
+            />
+            <ConfirmRow
+              checked={choice === 'put_back'}
+              onChange={() => setChoice('put_back')}
+              label="No, it was not in that count. Put it back into Right now"
+              sub={`Right now goes up by ${formatPence(target.amount_pence)}. The count's figures stay as signed.`}
+            />
+          </div>
+        ) : null}
+        {target ? <ReversalEffect target={target} putBack={!target.moves_balance && choice === 'put_back'} /> : null}
         <Input
           label="Why is it being reversed?"
           value={reason}
@@ -3409,9 +3506,9 @@ function ReverseWithdrawalSheet({
 //   open period  -> Right now goes up by the amount.
 //   closed period -> Right now stays (it starts from what was counted);
 //                    the count's expected and difference are restated.
-function ReversalEffect({ target }: { target: ReverseTarget }) {
+function ReversalEffect({ target, putBack = false }: { target: ReverseTarget; putBack?: boolean }) {
   const rows: Array<{ label: string; before: string; after: string; tone?: 'up' | 'same' }> = [];
-  if (target.moves_balance) {
+  if (target.moves_balance || putBack) {
     rows.push({
       label: 'Right now in the safe',
       before: formatPence(target.right_now_pence),
@@ -3484,7 +3581,9 @@ function ReversalEffect({ target }: { target: ReverseTarget }) {
       <p style={{ margin: 0, fontSize: theme.type.size.xs, color: theme.color.inkMuted, lineHeight: theme.type.leading.snug }}>
         {target.moves_balance
           ? 'The cash never left, so Lounge puts it back into the running balance.'
-          : `Right now starts from what was physically counted, so it does not move. The count was only "over" because this withdrawal was recorded when the cash was still in the safe; restating it fixes that. If the count itself was wrong, void the count and count again instead.`}
+          : putBack
+            ? 'The cash never left and was not in the counted total, so Lounge adds it to the running balance as a put-back, on the record with your name and reason.'
+            : `Right now starts from what was physically counted, so it does not move. The count was only "over" because this withdrawal was recorded when the cash was still in the safe; restating it fixes that.`}
       </p>
     </div>
   );
@@ -3509,7 +3608,7 @@ function CountDifferencePanel({
   const diff = c.variance_pence;
   const over = diff > 0;
   const writtenOff = c.written_off_pence !== null && c.written_off_pence !== 0;
-  const reversedInCount = statement.withdrawals.filter((w) => w.reversed_at);
+  const reversedInCount = statement.withdrawals.filter((w) => w.reversed_at && w.restated && !w.put_back);
   const reversedPence = reversedInCount.reduce((s, w) => s + w.amount_pence, 0);
   const originalExpected = c.expected_pence - reversedPence - (writtenOff ? c.written_off_pence! : 0);
   const envelopesPence = statement.unrecorded.reduce((s, u) => s + u.amount_pence, 0);
@@ -3631,6 +3730,141 @@ function CountDifferencePanel({
         ) : null}
       </div>
     </div>
+  );
+}
+
+interface PutBackTarget {
+  withdrawal_id: string;
+  amount_pence: number;
+  label: string;
+  right_now_pence: number;
+  /** The count the reversal restated, if any, so the undo can be shown. */
+  count: { period_end: string; expected_pence: number; actual_pence: number | null } | null;
+}
+
+// Put a reversed withdrawal's cash back into the running balance: it
+// never left the safe and was not part of the last count.
+function PutBackSheet({
+  target,
+  onClose,
+  onDone,
+}: {
+  target: PutBackTarget | null;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    if (target) {
+      setReason('');
+      setError(null);
+    }
+  }, [target]);
+  const submit = async () => {
+    if (!target) return;
+    setError(null);
+    if (reason.trim().length === 0) {
+      setError('Say why the cash is being put back. It goes on the record.');
+      return;
+    }
+    setBusy(true);
+    try {
+      await putBackWithdrawal(target.withdrawal_id, reason);
+      onDone();
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      setError(message);
+      await logFailure({ source: 'cash.withdrawal.put_back', severity: 'error', message, context: { withdrawal_id: target.withdrawal_id } });
+    } finally {
+      setBusy(false);
+    }
+  };
+  const diffLabel = (d: number) => (d === 0 ? 'Matched' : `${formatPence(Math.abs(d))} ${d > 0 ? 'over' : 'short'}`);
+  const rows: Array<{ label: string; before: string; after: string; up?: boolean }> = target
+    ? [
+        { label: 'Right now in the safe', before: formatPence(target.right_now_pence), after: formatPence(target.right_now_pence + target.amount_pence), up: true },
+        ...(target.count
+          ? [
+              {
+                label: `Expected on the ${formatLongDate(target.count.period_end)} count`,
+                before: formatPence(target.count.expected_pence),
+                after: formatPence(Math.max(0, target.count.expected_pence - target.amount_pence)),
+              },
+              ...(target.count.actual_pence !== null
+                ? [
+                    {
+                      label: 'Difference on that count',
+                      before: diffLabel(target.count.actual_pence - target.count.expected_pence),
+                      after: diffLabel(target.count.actual_pence - Math.max(0, target.count.expected_pence - target.amount_pence)),
+                    },
+                  ]
+                : []),
+            ]
+          : []),
+      ]
+    : [];
+  return (
+    <BottomSheet
+      open={target !== null}
+      onClose={() => !busy && onClose()}
+      dismissable={!busy}
+      title="Put the cash back into the safe figure"
+      description={
+        target
+          ? `${formatPence(target.amount_pence)} for "${target.label}" was reversed. If that cash never left the safe and was not part of the last count, put it back into Right now.`
+          : ''
+      }
+      footer={
+        <div style={{ display: 'flex', gap: theme.space[3], justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+          <Button variant="tertiary" onClick={onClose} disabled={busy}>
+            Cancel
+          </Button>
+          <Button variant="primary" onClick={submit} loading={busy}>
+            Put back {target ? formatPence(target.amount_pence) : ''}
+          </Button>
+        </div>
+      }
+    >
+      <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[4] }}>
+        {target ? (
+          <div style={{ padding: theme.space[4], borderRadius: theme.radius.input, background: theme.color.bg, border: `1px solid ${theme.color.border}`, display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
+            <span style={{ fontSize: 11, fontWeight: theme.type.weight.semibold, color: theme.color.inkMuted, textTransform: 'uppercase', letterSpacing: theme.type.tracking.wide }}>
+              What changes
+            </span>
+            {rows.map((r) => (
+              <div key={r.label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: theme.space[3], flexWrap: 'wrap' }}>
+                <span style={{ fontSize: theme.type.size.sm, color: theme.color.ink }}>{r.label}</span>
+                <span style={{ fontSize: theme.type.size.sm, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+                  <span style={{ color: theme.color.inkMuted }}>{r.before}</span>
+                  <span style={{ color: theme.color.inkSubtle }}> to </span>
+                  <span style={{ fontWeight: theme.type.weight.semibold, color: r.up ? theme.color.accent : theme.color.ink }}>{r.after}</span>
+                </span>
+              </div>
+            ))}
+            <p style={{ margin: 0, fontSize: theme.type.size.xs, color: theme.color.inkMuted, lineHeight: theme.type.leading.snug }}>
+              {target.count
+                ? 'The reversal had corrected that count on the assumption the cash was counted. Putting it back undoes that: the count shows its original difference again, and the cash is added to the running balance.'
+                : 'The cash is added to the running balance as a put-back, on the record with your name and reason.'}
+            </p>
+          </div>
+        ) : null}
+        <Input
+          label="Why is it being put back?"
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          placeholder="e.g. Paid by card, recorded as cash by mistake. Cash never left."
+          autoFocus
+          fullWidth
+        />
+        {error ? (
+          <p role="alert" style={{ margin: 0, padding: `${theme.space[2]}px ${theme.space[3]}px`, borderRadius: theme.radius.input, background: '#FFEEEC', color: theme.color.alert, fontSize: theme.type.size.sm }}>
+            {error}
+          </p>
+        ) : null}
+      </div>
+    </BottomSheet>
   );
 }
 
