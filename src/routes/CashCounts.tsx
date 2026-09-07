@@ -478,6 +478,80 @@ export function CashCounts() {
 // Right-now card — the headline answer to "should I count tonight?"
 // ─────────────────────────────────────────────────────────────────────────────
 
+// One half of the safe total: sealed or loose. Same tile, two tones,
+// so the pair reads as one statement.
+function SafeSplitTile({
+  icon,
+  label,
+  amountPence,
+  sub,
+  tone,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  amountPence: number;
+  sub: string;
+  tone: 'sealed' | 'loose';
+}) {
+  return (
+    <div
+      style={{
+        display: 'flex',
+        gap: theme.space[3],
+        alignItems: 'flex-start',
+        padding: theme.space[4],
+        borderRadius: theme.radius.input,
+        background: tone === 'sealed' ? theme.color.accentBg : theme.color.bg,
+        border: `1px solid ${theme.color.border}`,
+        minWidth: 0,
+      }}
+    >
+      <span
+        aria-hidden
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          width: 36,
+          height: 36,
+          borderRadius: theme.radius.pill,
+          background: theme.color.surface,
+          color: tone === 'sealed' ? theme.color.accent : theme.color.ink,
+          flexShrink: 0,
+        }}
+      >
+        {icon}
+      </span>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
+        <span
+          style={{
+            fontSize: 11,
+            fontWeight: theme.type.weight.semibold,
+            color: theme.color.inkMuted,
+            textTransform: 'uppercase',
+            letterSpacing: theme.type.tracking.wide,
+          }}
+        >
+          {label}
+        </span>
+        <span
+          style={{
+            fontSize: theme.type.size.lg,
+            fontWeight: theme.type.weight.semibold,
+            color: theme.color.ink,
+            fontVariantNumeric: 'tabular-nums',
+            letterSpacing: theme.type.tracking.tight,
+            lineHeight: theme.type.leading.tight,
+          }}
+        >
+          {formatPence(amountPence)}
+        </span>
+        <span style={{ fontSize: theme.type.size.xs, color: theme.color.inkMuted, lineHeight: theme.type.leading.snug }}>{sub}</span>
+      </div>
+    </div>
+  );
+}
+
 function RightNowCard({
   position,
   canCountCash,
@@ -569,14 +643,10 @@ function RightNowCard({
           <>
             should be in the safe.{' '}
             <span style={{ color: theme.color.inkMuted }}>
-              Opening {formatPence(position.baseline_pence)}
-              {last ? ` from the count on ${formatLongDate(last.period_end)}` : ''}.
-              {' '}Since: {formatNumber(position.payment_count)} payment{position.payment_count === 1 ? '' : 's'} in,
-              {' '}{formatNumber(position.withdrawal_count)} withdrawal{position.withdrawal_count === 1 ? '' : 's'} out
+              {sealedOpenCount > 0 ? 'Sealed envelopes plus everything taken since.' : `Opening ${formatPence(position.baseline_pence)}${last ? ` from the count on ${formatLongDate(last.period_end)}` : ''}, plus everything since.`}
               {position.refund_count > 0
-                ? `, ${formatNumber(position.refund_count)} refund${position.refund_count === 1 ? '' : 's'} out`
+                ? ` ${formatNumber(position.refund_count)} cash refund${position.refund_count === 1 ? '' : 's'} went out.`
                 : ''}
-              .
               {position.refunded_sale_count > 0
                 ? ` ${formatNumber(position.refunded_sale_count)} refunded sale${position.refunded_sale_count === 1 ? '' : 's'} cancelled out and left the safe unchanged.`
                 : ''}
@@ -591,26 +661,42 @@ function RightNowCard({
         )}
       </p>
 
-      {sealedOpenCount > 0 ? (
-        <p
-          style={{
-            margin: `${theme.space[3]}px 0 0`,
-            fontSize: theme.type.size.sm,
-            color: theme.color.ink,
-            display: 'flex',
-            alignItems: 'center',
-            gap: theme.space[2],
-            fontVariantNumeric: 'tabular-nums',
-          }}
-        >
-          <Lock size={12} aria-hidden style={{ flexShrink: 0, color: theme.color.accent }} />
-          <span>
-            <span style={{ fontWeight: theme.type.weight.semibold }}>{formatPence(sealedOpenPence)}</span> sealed in{' '}
-            {formatNumber(sealedOpenCount)} envelope{sealedOpenCount === 1 ? '' : 's'}, ready to bank ·{' '}
-            <span style={{ fontWeight: theme.type.weight.semibold }}>{formatPence(Math.max(0, position.expected_in_safe_pence - sealedOpenPence))}</span> loose
-          </span>
-        </p>
-      ) : null}
+      {/* The safe total, split into what is sealed and what is loose.
+          Two level tiles so the eye reads "this much is sealed and
+          waiting, this much has come in since" in one glance. */}
+      <div
+        style={{
+          marginTop: theme.space[5],
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
+          gap: theme.space[3],
+        }}
+      >
+        <SafeSplitTile
+          icon={<Lock size={16} aria-hidden />}
+          label="Sealed, ready to bank"
+          amountPence={sealedOpenPence}
+          sub={
+            sealedOpenCount > 0
+              ? `${formatNumber(sealedOpenCount)} signed envelope${sealedOpenCount === 1 ? '' : 's'} in the safe${last ? `, from the count on ${formatLongDate(last.period_end)}` : ''}.`
+              : 'No envelopes waiting. Counted cash is sealed at the end of a count.'
+          }
+          tone="sealed"
+        />
+        <SafeSplitTile
+          icon={<Wallet size={16} aria-hidden />}
+          label={last ? `Loose, since ${formatLongDate(last.period_end)}` : 'Loose'}
+          amountPence={Math.max(0, position.expected_in_safe_pence - sealedOpenPence)}
+          sub={
+            position.payment_count > 0 || position.withdrawal_count > 0
+              ? `${formatNumber(position.payment_count)} cash payment${position.payment_count === 1 ? '' : 's'} in${
+                  position.withdrawal_count > 0 ? `, ${formatNumber(position.withdrawal_count)} taken out` : ''
+                }. Counted and sealed at the next count.`
+              : 'Nothing taken since. This grows with each cash payment until the next count.'
+          }
+          tone="loose"
+        />
+      </div>
 
       {last ? (
         <p
@@ -2374,7 +2460,7 @@ function NewCountSheet({
   const [staffNames, setStaffNames] = useState<StaffNameRow[]>([]);
   const twoPerson = useTwoPersonState(open, witnesses, currentAccountId);
   // What happens to the counted cash once the count is signed.
-  const [outcome, setOutcome] = useState<CashOutcome>('keep');
+  const [outcome, setOutcome] = useState<CashOutcome | null>(null);
   const [outcomeLabel, setOutcomeLabel] = useState('');
   const [outcomeNote, setOutcomeNote] = useState('');
   // Legacy-baseline only: optional inline withdrawal recorded
@@ -2393,7 +2479,7 @@ function NewCountSheet({
     setError(null);
     setCheckedPayments(new Set());
     setEnvelopes([]);
-    setOutcome('keep');
+    setOutcome(null);
     setOutcomeLabel('');
     setOutcomeNote('');
     setInlineWithdrawalOpen(false);
@@ -2518,6 +2604,14 @@ function NewCountSheet({
       );
       return;
     }
+    if (!isLegacyBaseline && loosePence > 0 && outcome === null) {
+      setError('Say what happens to the cash now: sealed in an envelope, banked, or collected.');
+      return;
+    }
+    if (!isLegacyBaseline && loosePence > 0 && outcome === 'collect' && outcomeNote.trim().length === 0) {
+      setError('Say who collected the cash.');
+      return;
+    }
     const rule = twoPerson.validate();
     if (rule) {
       setError(rule);
@@ -2573,7 +2667,7 @@ function NewCountSheet({
       // envelopes already sealed) is what gets sealed or goes out; the
       // same witness stands for it. Sealing and banking are recorded
       // AFTER the count is signed so they sit in the next period.
-      if (!isLegacyBaseline && outcome !== 'keep' && loosePence > 0) {
+      if (!isLegacyBaseline && outcome !== null && loosePence > 0) {
         const { envelope_id } = await sealCashEnvelope({
           amount_pence: loosePence,
           label: outcomeLabel.trim() || null,
@@ -2723,7 +2817,9 @@ function NewCountSheet({
           >
             {isLegacyBaseline
               ? 'Enter what is physically in the safe right now, including any cash from work processed outside Lounge. This becomes the starting point.'
-              : position.last_signed_count
+              : sealedOpenPence > 0
+                ? `${formatPence(sealedOpenPence)} sealed in envelopes, plus ${formatPence(Math.max(0, position.expected_in_safe_pence - sealedOpenPence))} loose (${formatNumber(position.payment_count)} cash payment${position.payment_count === 1 ? '' : 's'} in${position.withdrawal_count + position.refund_count > 0 ? `, ${formatNumber(position.withdrawal_count + position.refund_count)} taken out` : ''}). Count everything, envelopes included.`
+                : position.last_signed_count
                 ? `Opening ${formatPence(position.baseline_pence)} from the count on ${formatLongDate(position.last_signed_count.period_end)}, plus ${formatNumber(position.payment_count)} cash payment${position.payment_count === 1 ? '' : 's'} in, minus ${formatNumber(position.withdrawal_count + position.refund_count)} taken out since.`
                 : position.earliest_payment_at
                   ? `Cash since the first cash payment on ${formatLongDate(position.earliest_payment_at)}`
@@ -3101,7 +3197,7 @@ function ExtraCashBlock({
 // Ready to bank card until they go out.
 // ─────────────────────────────────────────────────────────────────────────────
 
-type CashOutcome = 'keep' | 'seal' | 'bank' | 'collect';
+type CashOutcome = 'seal' | 'bank' | 'collect';
 
 function CashOutcomeBlock({
   outcome,
@@ -3115,7 +3211,7 @@ function CashOutcomeBlock({
   countedPence,
   disabled,
 }: {
-  outcome: CashOutcome;
+  outcome: CashOutcome | null;
   onOutcome: (o: CashOutcome) => void;
   label: string;
   onLabel: (v: string) => void;
@@ -3128,14 +3224,22 @@ function CashOutcomeBlock({
 }) {
   const sub =
     sealedOpenPence > 0
-      ? `You counted ${formatPence(countedPence)}. ${formatPence(sealedOpenPence)} of that is already sealed in envelopes; the ${formatPence(loosePence)} loose is what this applies to.`
+      ? `You counted ${formatPence(countedPence)}. ${formatPence(sealedOpenPence)} of that is already sealed; this is about the ${formatPence(loosePence)} loose. Pick one.`
       : `The ${formatPence(countedPence)} you counted. Pick one; it is recorded with this count under the same witness.`;
   const options: Array<{ value: CashOutcome; label: string; sub: string }> = [
-    { value: 'keep', label: 'Stays loose in the safe', sub: 'Nothing more to record. It carries into the next period as normal.' },
     { value: 'seal', label: 'Sealed in an envelope, kept in the safe', sub: 'Signed and sealed now, banked or collected later. It shows on the Ready to bank card until it goes.' },
     { value: 'bank', label: 'Banked now', sub: `${formatPence(loosePence)} leaves the safe as a bank deposit, recorded now.` },
     { value: 'collect', label: 'Collected now', sub: `${formatPence(loosePence)} is handed over and leaves the safe, recorded now.` },
   ];
+  if (loosePence <= 0) {
+    return (
+      <SheetBlock title="What happens to the cash now?" sub="Everything counted is already sealed in envelopes. Nothing more to decide." icon={<Landmark size={16} aria-hidden />}>
+        <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>
+          Sealed envelopes are banked or collected from the Ready to bank card.
+        </p>
+      </SheetBlock>
+    );
+  }
   return (
     <SheetBlock title="What happens to the cash now?" sub={sub} icon={<Landmark size={16} aria-hidden />}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
@@ -3146,11 +3250,11 @@ function CashOutcomeBlock({
             onChange={() => onOutcome(o.value)}
             label={o.label}
             sub={o.sub}
-            disabled={disabled || (o.value !== 'keep' && loosePence <= 0)}
+            disabled={disabled}
           />
         ))}
       </div>
-      {outcome !== 'keep' ? (
+      {outcome !== null ? (
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: theme.space[3] }}>
           <Input
             label="What is written on the envelope"
