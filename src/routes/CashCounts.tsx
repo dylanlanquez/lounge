@@ -51,6 +51,7 @@ import {
   type CashCountStatement,
   type CashPositionPaymentLine,
   type CashPositionWithdrawalLine,
+  type CashCountDue,
   type CashCountRotaCover,
   type CashCountRotaDay,
   type UnrecordedEnvelopeInput,
@@ -72,6 +73,7 @@ import {
   writeOffCountDifference,
   updateCashCountActual,
   useAnomalyThresholds,
+  useCashCountDue,
   useCashCountRota,
   useCashCounts,
   useCashCountStatement,
@@ -137,6 +139,7 @@ export function CashCounts() {
   const [writeOffTarget, setWriteOffTarget] = useState<WriteOffTarget | null>(null);
   const [putBackTarget, setPutBackTarget] = useState<PutBackTarget | null>(null);
   const rota = useCashCountRota(account?.location_id ?? null);
+  const due = useCashCountDue();
   // Two-person rule: the safe witnesses on record. Loaded once for the
   // page and shared by the Right-now card (so the rule is visible before
   // anyone opens the safe) and both sheets (which refuse to submit
@@ -248,6 +251,7 @@ export function CashCounts() {
               position={position.data}
               canCountCash={!!account.can_count_cash}
               witnesses={witnesses}
+              due={due.data}
               onStart={() => {
                 setSheetKind('regular');
                 setSheetOpen(true);
@@ -442,12 +446,14 @@ function RightNowCard({
   position,
   canCountCash,
   witnesses,
+  due,
   onStart,
   onTakeFromSafe,
 }: {
   position: CashPosition;
   canCountCash: boolean;
   witnesses: SafeWitnessRow[] | null;
+  due: CashCountDue | null;
   onStart: () => void;
   onTakeFromSafe: () => void;
 }) {
@@ -582,6 +588,31 @@ function RightNowCard({
             ? 'Two people, on camera: no safe witness is set up yet. Add one in Admin, Staff.'
             : `Two people, on camera: a safe holder acts, with ${joinNames(witnesses.map((w) => w.name))} present.`}
       </p>
+
+      {due ? (
+        <p
+          style={{
+            margin: `${theme.space[2]}px 0 0`,
+            fontSize: theme.type.size.sm,
+            color: due.due_date ? (due.overdue ? theme.color.alert : theme.color.accent) : theme.color.inkMuted,
+            fontWeight: due.due_date ? theme.type.weight.medium : theme.type.weight.regular,
+            display: 'flex',
+            alignItems: 'center',
+            gap: theme.space[2],
+          }}
+        >
+          <CalendarCheck size={12} aria-hidden style={{ flexShrink: 0 }} />
+          {due.due_date
+            ? due.overdue
+              ? `Count overdue since ${formatLongDate(due.due_date)}${due.responsible_name ? `, ${due.responsible_name}` : ''}.`
+              : `Count due today${due.responsible_name ? `, ${due.responsible_name}` : ''}.`
+            : due.today_is_rota_day && due.done_today
+              ? `Today's count is done.${due.next_due_date ? ` Next count ${formatLongDate(due.next_due_date)}${due.next_responsible_name ? `, ${due.next_responsible_name}` : ''}.` : ''}`
+              : due.next_due_date
+                ? `Next count ${formatLongDate(due.next_due_date)}${due.next_responsible_name ? `, ${due.next_responsible_name}${due.next_is_cover ? ' covering' : ''}` : ''}.`
+                : 'No count rota set. Counts happen when a safe holder chooses.'}
+        </p>
+      ) : null}
 
       {canCountCash ? (
         <div

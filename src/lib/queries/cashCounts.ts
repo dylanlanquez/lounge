@@ -1594,11 +1594,24 @@ export async function removeCashCountCover(id: string): Promise<void> {
 export interface CashCountDue {
   due_date: string | null;
   today: string | null;
+  today_is_rota_day: boolean;
   overdue: boolean;
   responsible_account_id: string | null;
   responsible_name: string | null;
   is_cover: boolean;
   last_signed_date: string | null;
+  /** Today is a rota day and a count was signed today. */
+  done_today: {
+    signed_at: string;
+    counted_by_name: string | null;
+    witness_name: string | null;
+    actual_pence: number | null;
+  } | null;
+  /** The next rota day after today (or after the outstanding day). */
+  next_due_date: string | null;
+  next_responsible_account_id: string | null;
+  next_responsible_name: string | null;
+  next_is_cover: boolean;
 }
 
 export function useCashCountDue(): { data: CashCountDue | null; refresh: () => void } {
@@ -1617,11 +1630,17 @@ export function useCashCountDue(): { data: CashCountDue | null; refresh: () => v
       setData({
         due_date: o.due_date ?? null,
         today: o.today ?? null,
+        today_is_rota_day: o.today_is_rota_day === true,
         overdue: o.overdue === true,
         responsible_account_id: o.responsible_account_id ?? null,
         responsible_name: o.responsible_name ?? null,
         is_cover: o.is_cover === true,
         last_signed_date: o.last_signed_date ?? null,
+        done_today: o.done_today ?? null,
+        next_due_date: o.next_due_date ?? null,
+        next_responsible_account_id: o.next_responsible_account_id ?? null,
+        next_responsible_name: o.next_responsible_name ?? null,
+        next_is_cover: o.next_is_cover === true,
       });
     })();
     return () => {
