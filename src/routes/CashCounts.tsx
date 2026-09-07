@@ -587,13 +587,20 @@ function RecentActivityCard({
           // Mobile-first 2-line layout:
           //   Line 1 (top):    Label + tag (left)     · Amount (right)
           //   Line 2 (bottom): Time + context (muted) · Chevron
+          // A withdrawal's note is what it was FOR ("Window cleaner",
+          // "Joiners"), so it leads the row; the reason category and
+          // the who/when sit underneath.
           const middleLabel =
             line.kind === 'withdrawal'
-              ? withdrawalReasonLabel(line.reason)
+              ? (line.note?.trim() || withdrawalReasonLabel(line.reason))
               : line.kind === 'refund'
                 ? 'Cash refund'
                 : (line.patient_name || 'Unknown patient');
-          const subParts: string[] = [formatDateTime(line.taken_at)];
+          const subParts: string[] = [];
+          if (line.kind === 'withdrawal' && line.note?.trim()) {
+            subParts.push(withdrawalReasonLabel(line.reason));
+          }
+          subParts.push(formatDateTime(line.taken_at));
           if (line.kind === 'withdrawal') {
             if (line.taken_by_name) subParts.push(`by ${line.taken_by_name}`);
             if (line.witness_name) subParts.push(`witnessed by ${line.witness_name}`);
