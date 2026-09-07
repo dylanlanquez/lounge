@@ -1444,6 +1444,137 @@ export async function voidCashCount(countId: string, reason: string): Promise<vo
   if (error) throw new Error(error.message);
 }
 
+// ── Sealed envelopes ───────────────────────────────────────────────────────
+//
+// Counted cash sealed in a signed envelope and kept in the safe until
+// it is banked or collected. Sealing moves nothing: Right now (the safe
+// total) is unchanged; it just says how much of it is sealed and how
+// much is loose. Banking is one action (lng_cash_bank_envelopes) that
+// records the withdrawal under the two-person rule and stamps the
+// envelopes with it.
+
+export interface SealedEnvelope {
+  id: string;
+  amount_pence: number;
+  label: string | null;
+  note: string | null;
+  count_id: string | null;
+  sealed_at: string;
+  sealed_by_name: string;
+  witness_name: string | null;
+  banked_at: string | null;
+  banked_by_name: string | null;
+  banked_how: 'banked' | 'collected' | null;
+  banked_withdrawal_id: string | null;
+}
+
+interface EnvelopesResult {
+  data: SealedEnvelope[] | null;
+  loading: boolean;
+  error: string | null;
+  refresh: () => void;
+}
+
+export function useSealedEnvelopes(): EnvelopesResult {
+  const [data, setData] = useState<SealedEnvelope[] | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    (async () => {
+      try {
+        const res = await supabase
+          .from('lng_cash_sealed_envelopes')
+          .select(
+            'id, amount_pence, label, note, count_id, sealed_at, banked_at, banked_how, banked_withdrawal_id, sealed_by:accounts!sealed_by ( first_name, last_name, name ), witness:accounts!witness_id ( first_name, last_name, name ), banked_by:accounts!banked_by ( first_name, last_name, name )',
+          )
+          .order('sealed_at', { ascending: false });
+        if (cancelled) return;
+        if (res.error) throw new Error(`envelopes: ${res.error.message}`);
+        type P = { first_name: string | null; last_name: string | null; name: string | null };
+        setData(
+          ((res.data ?? []) as Array<{
+            id: string; amount_pence: number; label: string | null; note: string | null; count_id: string | null; sealed_at: string;
+            banked_at: string | null; banked_how: 'banked' | 'collected' | null; banked_withdrawal_id: string | null;
+            sealed_by: P | P[] | null; witness: P | P[] | null; banked_by: P | P[] | null;
+          }>).map((r) => ({
+            id: r.id,
+            amount_pence: r.amount_pence,
+            label: r.label,
+            note: r.note,
+            count_id: r.count_id,
+            sealed_at: r.sealed_at,
+            sealed_by_name: composePersonName(pickOne(r.sealed_by)),
+            witness_name: r.witness ? composePersonName(pickOne(r.witness)) : null,
+            banked_at: r.banked_at,
+            banked_by_name: r.banked_by ? composePersonName(pickOne(r.banked_by)) : null,
+            banked_how: r.banked_how,
+            banked_withdrawal_id: r.banked_withdrawal_id,
+          })),
+        );
+        setError(null);
+        setLoading(false);
+      } catch (e) {
+        if (cancelled) return;
+        const message = e instanceof Error ? e.message : String(e);
+        setError(message);
+        setLoading(false);
+        await logFailure({ source: 'cash.envelopes', severity: 'error', message, context: {} });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [tick]);
+  const refresh = useCallback(() => setTick((t) => t + 1), []);
+  useRealtimeRefresh([{ table: 'lng_cash_sealed_envelopes' }, { table: 'lng_cash_withdrawals' }], refresh);
+  useRefreshOnVisible(refresh);
+  return { data, loading, error, refresh };
+}
+
+export async function sealCashEnvelope(input: {
+  amount_pence: number;
+  label: string | null;
+  note: string | null;
+  count_id: string | null;
+  witness_id: string | null;
+}): Promise<{ envelope_id: string }> {
+  if (!Number.isInteger(input.amount_pence) || input.amount_pence <= 0) {
+    throw new Error('Enter the amount going into the envelope.');
+  }
+  const { data, error } = await supabase.rpc('lng_cash_seal_envelope', {
+    p_amount_pence: input.amount_pence,
+    p_label: input.label,
+    p_note: input.note,
+    p_count_id: input.count_id,
+    p_witness_id: input.witness_id,
+  });
+  if (error) throw new Error(error.message);
+  return { envelope_id: (data as { envelope_id: string }).envelope_id };
+}
+
+export async function bankCashEnvelopes(input: {
+  envelope_ids: string[];
+  how: 'banked' | 'collected';
+  note: string | null;
+  witness_id: string;
+  taken_at: string | null;
+}): Promise<{ withdrawal_id: string; amount_pence: number; envelope_count: number }> {
+  if (input.envelope_ids.length === 0) throw new Error('Pick at least one envelope.');
+  const { data, error } = await supabase.rpc('lng_cash_bank_envelopes', {
+    p_envelope_ids: input.envelope_ids,
+    p_how: input.how,
+    p_note: input.note,
+    p_witness_id: input.witness_id,
+    p_taken_at: input.taken_at,
+  });
+  if (error) throw new Error(error.message);
+  const out = data as { withdrawal_id: string; amount_pence: number; envelope_count: number };
+  return out;
+}
+
 // ── Count rota ─────────────────────────────────────────────────────────────
 //
 // Super admin sets which weekdays a count is due and who is responsible,

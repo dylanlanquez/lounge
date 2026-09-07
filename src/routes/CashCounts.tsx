@@ -22,6 +22,8 @@ import {
   Wallet,
   Archive,
   CalendarCheck,
+  Landmark,
+  Lock,
   Trash2,
 } from 'lucide-react';
 import {
@@ -54,11 +56,13 @@ import {
   type CashCountDue,
   type CashCountRotaCover,
   type CashCountRotaDay,
+  type SealedEnvelope,
   type UnrecordedEnvelopeInput,
   type WithdrawalReason,
   WEEKDAY_LABELS,
   WITHDRAWAL_REASONS,
   addCashCountCover,
+  bankCashEnvelopes,
   createCashCount,
   deleteVoidedCashCount,
   recordCashWithdrawal,
@@ -68,6 +72,7 @@ import {
   removeCashCountCover,
   restoreCashCount,
   saveCashCountRota,
+  sealCashEnvelope,
   signCashCount,
   voidCashCount,
   writeOffCountDifference,
@@ -78,6 +83,7 @@ import {
   useCashCounts,
   useCashCountStatement,
   useCashPosition,
+  useSealedEnvelopes,
   withdrawalReasonLabel,
 } from '../lib/queries/cashCounts.ts';
 import { formatNumber, formatPence } from '../lib/queries/carts.ts';
@@ -140,6 +146,10 @@ export function CashCounts() {
   const [putBackTarget, setPutBackTarget] = useState<PutBackTarget | null>(null);
   const rota = useCashCountRota(account?.location_id ?? null);
   const due = useCashCountDue();
+  const envelopes = useSealedEnvelopes();
+  const [bankOpen, setBankOpen] = useState(false);
+  const sealedOpen = useMemo(() => (envelopes.data ?? []).filter((e) => !e.banked_at), [envelopes.data]);
+  const sealedOpenPence = useMemo(() => sealedOpen.reduce((sum, e) => sum + e.amount_pence, 0), [sealedOpen]);
   // Two-person rule: the safe witnesses on record. Loaded once for the
   // page and shared by the Right-now card (so the rule is visible before
   // anyone opens the safe) and both sheets (which refuse to submit
@@ -252,12 +262,21 @@ export function CashCounts() {
               canCountCash={!!account.can_count_cash}
               witnesses={witnesses}
               due={due.data}
+              sealedOpenPence={sealedOpenPence}
+              sealedOpenCount={sealedOpen.length}
               onStart={() => {
                 setSheetKind('regular');
                 setSheetOpen(true);
               }}
               onTakeFromSafe={() => setTakeFromSafeOpen(true)}
             />
+            {sealedOpen.length > 0 || (envelopes.data ?? []).length > 0 ? (
+              <ReadyToBankCard
+                envelopes={envelopes.data ?? []}
+                canAct={!!account.can_count_cash}
+                onBank={() => setBankOpen(true)}
+              />
+            ) : null}
             {position.data.lines.length > 0 ? (
               <RecentActivityCard
                 lines={position.data.lines.filter((l) => !(l.kind === 'withdrawal' && l.reversed_at))}
@@ -339,17 +358,34 @@ export function CashCounts() {
           currentAccountId={account.account_id ?? null}
           witnesses={witnesses}
           witnessesError={witnessesError}
+          sealedOpenPence={sealedOpenPence}
           kind={sheetKind}
           onExportCsv={() => exportActivityCsv(position.data!)}
           onExportPdf={() => void exportActivityPdf(position.data!)}
           onSigned={() => {
             counts.refresh?.();
             position.refresh();
+            envelopes.refresh();
             setSheetOpen(false);
             setSheetKind('regular');
           }}
         />
       ) : null}
+
+      <BankEnvelopesSheet
+        open={bankOpen}
+        onClose={() => setBankOpen(false)}
+        envelopes={sealedOpen}
+        earliestDateIso={position.data?.last_signed_count?.period_end ?? null}
+        currentAccountId={account.account_id ?? null}
+        witnesses={witnesses}
+        witnessesError={witnessesError}
+        onDone={() => {
+          setBankOpen(false);
+          position.refresh();
+          envelopes.refresh();
+        }}
+      />
 
       <TakeFromSafeSheet
         open={takeFromSafeOpen}
@@ -447,6 +483,8 @@ function RightNowCard({
   canCountCash,
   witnesses,
   due,
+  sealedOpenPence,
+  sealedOpenCount,
   onStart,
   onTakeFromSafe,
 }: {
@@ -454,6 +492,9 @@ function RightNowCard({
   canCountCash: boolean;
   witnesses: SafeWitnessRow[] | null;
   due: CashCountDue | null;
+  /** Counted cash sealed in envelopes and still in the safe. */
+  sealedOpenPence: number;
+  sealedOpenCount: number;
   onStart: () => void;
   onTakeFromSafe: () => void;
 }) {
@@ -549,6 +590,27 @@ function RightNowCard({
           </span>
         )}
       </p>
+
+      {sealedOpenCount > 0 ? (
+        <p
+          style={{
+            margin: `${theme.space[3]}px 0 0`,
+            fontSize: theme.type.size.sm,
+            color: theme.color.ink,
+            display: 'flex',
+            alignItems: 'center',
+            gap: theme.space[2],
+            fontVariantNumeric: 'tabular-nums',
+          }}
+        >
+          <Lock size={12} aria-hidden style={{ flexShrink: 0, color: theme.color.accent }} />
+          <span>
+            <span style={{ fontWeight: theme.type.weight.semibold }}>{formatPence(sealedOpenPence)}</span> sealed in{' '}
+            {formatNumber(sealedOpenCount)} envelope{sealedOpenCount === 1 ? '' : 's'}, ready to bank ·{' '}
+            <span style={{ fontWeight: theme.type.weight.semibold }}>{formatPence(Math.max(0, position.expected_in_safe_pence - sealedOpenPence))}</span> loose
+          </span>
+        </p>
+      ) : null}
 
       {last ? (
         <p
@@ -2270,6 +2332,7 @@ function NewCountSheet({
   currentAccountId,
   witnesses,
   witnessesError,
+  sealedOpenPence,
   onSigned,
   onExportCsv,
   onExportPdf,
@@ -2287,6 +2350,10 @@ function NewCountSheet({
   currentAccountId: string | null;
   witnesses: SafeWitnessRow[] | null;
   witnessesError: string | null;
+  /** Cash already sealed in envelopes and still in the safe. The
+   *  counted total includes it; only the loose part can be sealed or
+   *  banked at the end of this count. */
+  sealedOpenPence: number;
   onSigned: () => void;
   onExportCsv: () => void;
   onExportPdf: () => void;
@@ -2306,6 +2373,10 @@ function NewCountSheet({
   const [envelopes, setEnvelopes] = useState<EnvelopeDraft[]>([]);
   const [staffNames, setStaffNames] = useState<StaffNameRow[]>([]);
   const twoPerson = useTwoPersonState(open, witnesses, currentAccountId);
+  // What happens to the counted cash once the count is signed.
+  const [outcome, setOutcome] = useState<CashOutcome>('keep');
+  const [outcomeLabel, setOutcomeLabel] = useState('');
+  const [outcomeNote, setOutcomeNote] = useState('');
   // Legacy-baseline only: optional inline withdrawal recorded
   // immediately AFTER the count is signed. Lets the operator seed
   // the safe and log "some of this isn't really staying in the
@@ -2322,6 +2393,9 @@ function NewCountSheet({
     setError(null);
     setCheckedPayments(new Set());
     setEnvelopes([]);
+    setOutcome('keep');
+    setOutcomeLabel('');
+    setOutcomeNote('');
     setInlineWithdrawalOpen(false);
     setInlineWithdrawalAmountText('');
     setInlineWithdrawalReason('bank_deposit');
@@ -2495,6 +2569,28 @@ function NewCountSheet({
         signer_account_id: twoPerson.witnessId!,
       });
       pendingCountId = null;
+      // What happens to the cash. The loose part (counted total minus
+      // envelopes already sealed) is what gets sealed or goes out; the
+      // same witness stands for it. Sealing and banking are recorded
+      // AFTER the count is signed so they sit in the next period.
+      if (!isLegacyBaseline && outcome !== 'keep' && loosePence > 0) {
+        const { envelope_id } = await sealCashEnvelope({
+          amount_pence: loosePence,
+          label: outcomeLabel.trim() || null,
+          note: outcome === 'seal' ? outcomeNote.trim() || null : null,
+          count_id: created.count_id,
+          witness_id: twoPerson.witnessId!,
+        });
+        if (outcome === 'bank' || outcome === 'collect') {
+          await bankCashEnvelopes({
+            envelope_ids: [envelope_id],
+            how: outcome === 'bank' ? 'banked' : 'collected',
+            note: outcomeNote.trim() || null,
+            witness_id: twoPerson.witnessId!,
+            taken_at: null,
+          });
+        }
+      }
       // Inline withdrawal records AFTER the count is signed, so the
       // withdrawal's taken_at falls AFTER the count's period_end and
       // flows into the next count's running-balance maths (rather
@@ -2548,6 +2644,9 @@ function NewCountSheet({
   };
 
   const envelopeList = useMemo(() => envelopeListSince(position), [position]);
+  // Loose cash after this count: what was counted minus what is already
+  // sealed away in envelopes.
+  const loosePence = Math.max(0, (actualPence ?? 0) - sealedOpenPence);
 
   return (
     <BottomSheet
@@ -2753,6 +2852,21 @@ function NewCountSheet({
               </div>
             ) : null}
           </SheetBlock>
+        ) : null}
+
+        {!isLegacyBaseline && actualPence !== null && actualPence > 0 ? (
+          <CashOutcomeBlock
+            outcome={outcome}
+            onOutcome={setOutcome}
+            label={outcomeLabel}
+            onLabel={setOutcomeLabel}
+            note={outcomeNote}
+            onNote={setOutcomeNote}
+            loosePence={loosePence}
+            sealedOpenPence={sealedOpenPence}
+            countedPence={actualPence}
+            disabled={busy}
+          />
         ) : null}
 
         <TwoPersonBlock state={twoPerson} witnessesError={witnessesError} action="count" />
@@ -2974,6 +3088,461 @@ function ExtraCashBlock({
         </div>
       ) : null}
     </SheetBlock>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// What happens to the cash — the last step of a count
+//
+// Jade counts every Friday. The counted cash then either stays loose,
+// is sealed in a signed envelope kept in the safe, is banked straight
+// away, or is handed to whoever collects it. One choice, made in the
+// same sheet, under the same witness. Sealed envelopes wait on the
+// Ready to bank card until they go out.
+// ─────────────────────────────────────────────────────────────────────────────
+
+type CashOutcome = 'keep' | 'seal' | 'bank' | 'collect';
+
+function CashOutcomeBlock({
+  outcome,
+  onOutcome,
+  label,
+  onLabel,
+  note,
+  onNote,
+  loosePence,
+  sealedOpenPence,
+  countedPence,
+  disabled,
+}: {
+  outcome: CashOutcome;
+  onOutcome: (o: CashOutcome) => void;
+  label: string;
+  onLabel: (v: string) => void;
+  note: string;
+  onNote: (v: string) => void;
+  loosePence: number;
+  sealedOpenPence: number;
+  countedPence: number;
+  disabled: boolean;
+}) {
+  const sub =
+    sealedOpenPence > 0
+      ? `You counted ${formatPence(countedPence)}. ${formatPence(sealedOpenPence)} of that is already sealed in envelopes; the ${formatPence(loosePence)} loose is what this applies to.`
+      : `The ${formatPence(countedPence)} you counted. Pick one; it is recorded with this count under the same witness.`;
+  const options: Array<{ value: CashOutcome; label: string; sub: string }> = [
+    { value: 'keep', label: 'Stays loose in the safe', sub: 'Nothing more to record. It carries into the next period as normal.' },
+    { value: 'seal', label: 'Sealed in an envelope, kept in the safe', sub: 'Signed and sealed now, banked or collected later. It shows on the Ready to bank card until it goes.' },
+    { value: 'bank', label: 'Banked now', sub: `${formatPence(loosePence)} leaves the safe as a bank deposit, recorded now.` },
+    { value: 'collect', label: 'Collected now', sub: `${formatPence(loosePence)} is handed over and leaves the safe, recorded now.` },
+  ];
+  return (
+    <SheetBlock title="What happens to the cash now?" sub={sub} icon={<Landmark size={16} aria-hidden />}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
+        {options.map((o) => (
+          <ConfirmRow
+            key={o.value}
+            checked={outcome === o.value}
+            onChange={() => onOutcome(o.value)}
+            label={o.label}
+            sub={o.sub}
+            disabled={disabled || (o.value !== 'keep' && loosePence <= 0)}
+          />
+        ))}
+      </div>
+      {outcome !== 'keep' ? (
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: theme.space[3] }}>
+          <Input
+            label="What is written on the envelope"
+            value={label}
+            onChange={(e) => onLabel(e.target.value)}
+            placeholder="e.g. Fri 11 Sept, JC/RM"
+            fullWidth
+            disabled={disabled}
+          />
+          <Input
+            label={outcome === 'collect' ? 'Who collected it' : 'Note (optional)'}
+            value={note}
+            onChange={(e) => onNote(e.target.value)}
+            placeholder={outcome === 'bank' ? 'e.g. Lloyds, slip #84' : outcome === 'collect' ? 'e.g. Dylan' : 'Anything worth noting'}
+            fullWidth
+            disabled={disabled}
+          />
+        </div>
+      ) : null}
+    </SheetBlock>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Ready to bank — sealed envelopes in the safe, and where past ones went
+// ─────────────────────────────────────────────────────────────────────────────
+
+function ReadyToBankCard({
+  envelopes,
+  canAct,
+  onBank,
+}: {
+  envelopes: SealedEnvelope[];
+  canAct: boolean;
+  onBank: () => void;
+}) {
+  const open = envelopes.filter((e) => !e.banked_at);
+  const gone = envelopes.filter((e) => e.banked_at);
+  const openPence = open.reduce((s, e) => s + e.amount_pence, 0);
+  const [showGone, setShowGone] = useState(false);
+  return (
+    <Card padding="lg">
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'flex-start',
+          justifyContent: 'space-between',
+          gap: theme.space[3],
+          marginBottom: theme.space[4],
+          flexWrap: 'wrap',
+        }}
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[1], flex: '1 1 320px', minWidth: 0, maxWidth: 560 }}>
+          <span
+            style={{
+              fontSize: 11,
+              fontWeight: theme.type.weight.semibold,
+              color: theme.color.inkMuted,
+              textTransform: 'uppercase',
+              letterSpacing: theme.type.tracking.wide,
+            }}
+          >
+            Ready to bank
+          </span>
+          <span style={{ fontSize: theme.type.size.sm, color: theme.color.inkMuted, lineHeight: theme.type.leading.snug }}>
+            {open.length > 0
+              ? `${formatNumber(open.length)} sealed envelope${open.length === 1 ? '' : 's'} in the safe, ${formatPence(openPence)} in total. Each one is signed and sealed; they go out together whenever they are banked or collected.`
+              : 'Nothing sealed at the moment. Counted cash can be sealed at the end of a count.'}
+          </span>
+        </div>
+        {canAct && open.length > 0 ? (
+          <Button variant="primary" onClick={onBank}>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
+              <Landmark size={14} aria-hidden /> Bank or collect
+            </span>
+          </Button>
+        ) : null}
+      </div>
+
+      {open.length > 0 ? (
+        <ul
+          style={{
+            listStyle: 'none',
+            margin: 0,
+            padding: 0,
+            border: `1px solid ${theme.color.border}`,
+            borderRadius: theme.radius.input,
+            overflow: 'hidden',
+          }}
+        >
+          {open.map((e, idx) => (
+            <EnvelopeRow key={e.id} envelope={e} first={idx === 0} />
+          ))}
+        </ul>
+      ) : null}
+
+      {gone.length > 0 ? (
+        <div style={{ marginTop: theme.space[4], paddingTop: theme.space[3], borderTop: `1px solid ${theme.color.border}` }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: theme.space[3] }}>
+            <span style={{ fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>
+              {formatNumber(gone.length)} envelope{gone.length === 1 ? '' : 's'} banked or collected before.
+            </span>
+            <Button variant="tertiary" size="sm" onClick={() => setShowGone((v) => !v)}>
+              {showGone ? 'Hide' : 'Show'}
+            </Button>
+          </div>
+          {showGone ? (
+            <ul
+              style={{
+                listStyle: 'none',
+                margin: `${theme.space[3]}px 0 0`,
+                padding: 0,
+                border: `1px solid ${theme.color.border}`,
+                borderRadius: theme.radius.input,
+                overflow: 'hidden',
+              }}
+            >
+              {gone.map((e, idx) => (
+                <EnvelopeRow key={e.id} envelope={e} first={idx === 0} />
+              ))}
+            </ul>
+          ) : null}
+        </div>
+      ) : null}
+    </Card>
+  );
+}
+
+function EnvelopeRow({ envelope: e, first }: { envelope: SealedEnvelope; first: boolean }) {
+  const gone = !!e.banked_at;
+  const sub = [
+    `sealed ${formatDateTime(e.sealed_at)} by ${e.sealed_by_name}`,
+    e.witness_name ? `witnessed by ${e.witness_name}` : null,
+    e.note,
+    gone && e.banked_at ? `${e.banked_how === 'collected' ? 'collected' : 'banked'} ${formatDateTime(e.banked_at)}${e.banked_by_name ? ` by ${e.banked_by_name}` : ''}` : null,
+  ]
+    .filter((x): x is string => !!x)
+    .join(' · ');
+  return (
+    <li
+      style={{
+        borderTop: first ? 'none' : `1px solid ${theme.color.border}`,
+        padding: `${theme.space[3]}px ${theme.space[4]}px`,
+        display: 'flex',
+        alignItems: 'center',
+        gap: theme.space[3],
+        opacity: gone ? 0.6 : 1,
+      }}
+    >
+      <span
+        aria-hidden
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          width: 32,
+          height: 32,
+          borderRadius: theme.radius.pill,
+          background: gone ? theme.color.bg : theme.color.accentBg,
+          color: gone ? theme.color.inkMuted : theme.color.accent,
+          flexShrink: 0,
+        }}
+      >
+        {gone ? <Landmark size={14} aria-hidden /> : <Lock size={14} aria-hidden />}
+      </span>
+      <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
+        <span style={{ fontSize: theme.type.size.sm, fontWeight: theme.type.weight.semibold, color: theme.color.ink }}>
+          {e.label?.trim() || 'Sealed envelope'}
+        </span>
+        <span style={{ fontSize: theme.type.size.xs, color: theme.color.inkMuted, lineHeight: theme.type.leading.snug }}>{sub}</span>
+      </div>
+      <span
+        style={{
+          fontSize: theme.type.size.base,
+          fontWeight: theme.type.weight.semibold,
+          color: theme.color.ink,
+          fontVariantNumeric: 'tabular-nums',
+          whiteSpace: 'nowrap',
+        }}
+      >
+        {formatPence(e.amount_pence)}
+      </span>
+    </li>
+  );
+}
+
+// Bank or collect: pick the envelopes going out, say how, two people on
+// camera, and the date it happened. One withdrawal for the total.
+function BankEnvelopesSheet({
+  open,
+  onClose,
+  envelopes,
+  earliestDateIso,
+  currentAccountId,
+  witnesses,
+  witnessesError,
+  onDone,
+}: {
+  open: boolean;
+  onClose: () => void;
+  envelopes: SealedEnvelope[];
+  earliestDateIso: string | null;
+  currentAccountId: string | null;
+  witnesses: SafeWitnessRow[] | null;
+  witnessesError: string | null;
+  onDone: () => void;
+}) {
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [how, setHow] = useState<'banked' | 'collected'>('banked');
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const twoPerson = useTwoPersonState(open, witnesses, currentAccountId);
+  const [dateIso, setDateIso] = useState(localDateIso(new Date()));
+  const [dateOpen, setDateOpen] = useState(false);
+  const dateTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const todayIso = localDateIso(new Date());
+  const minDateIso = earliestDateIso ? localDateIso(new Date(earliestDateIso)) : undefined;
+
+  useEffect(() => {
+    if (!open) return;
+    setPicked(new Set(envelopes.map((e) => e.id)));
+    setHow('banked');
+    setNote('');
+    setError(null);
+    setDateIso(localDateIso(new Date()));
+    setDateOpen(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  const total = envelopes.filter((e) => picked.has(e.id)).reduce((s, e) => s + e.amount_pence, 0);
+
+  const submit = async () => {
+    setError(null);
+    if (picked.size === 0) {
+      setError('Pick at least one envelope.');
+      return;
+    }
+    if (how === 'collected' && note.trim().length === 0) {
+      setError('Say who collected it.');
+      return;
+    }
+    const rule = twoPerson.validate();
+    if (rule) {
+      setError(rule);
+      return;
+    }
+    const takenAt = dateIso === todayIso ? null : `${dateIso}T12:00:00`;
+    setBusy(true);
+    try {
+      await bankCashEnvelopes({
+        envelope_ids: Array.from(picked),
+        how,
+        note: note.trim() || null,
+        witness_id: twoPerson.witnessId!,
+        taken_at: takenAt ? new Date(takenAt).toISOString() : null,
+      });
+      onDone();
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      setError(message);
+      await logFailure({ source: 'cash.envelopes.bank', severity: 'error', message, context: { count: picked.size, how } });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <BottomSheet
+      open={open}
+      onClose={() => !busy && onClose()}
+      dismissable={!busy}
+      title="Bank or collect"
+      description="The sealed envelopes leaving the safe. One withdrawal is recorded for the total, two people, on camera, and each envelope is marked as gone."
+      footer={
+        <div style={{ display: 'flex', gap: theme.space[3], justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+          <Button variant="tertiary" onClick={onClose} disabled={busy}>
+            Cancel
+          </Button>
+          <Button variant="primary" onClick={submit} loading={busy}>
+            {how === 'collected' ? 'Record collection' : 'Record bank deposit'} {total > 0 ? formatPence(total) : ''}
+          </Button>
+        </div>
+      }
+    >
+      <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[5] }}>
+        <SheetBlock title="Which envelopes" sub="Tick the envelopes going out. All of them by default.">
+          <ul
+            style={{
+              listStyle: 'none',
+              margin: 0,
+              padding: 0,
+              border: `1px solid ${theme.color.border}`,
+              borderRadius: theme.radius.input,
+              overflow: 'hidden',
+              background: theme.color.surface,
+            }}
+          >
+            {envelopes.map((e, idx) => {
+              const on = picked.has(e.id);
+              return (
+                <li
+                  key={e.id}
+                  style={{
+                    borderTop: idx === 0 ? 'none' : `1px solid ${theme.color.border}`,
+                    padding: `${theme.space[3]}px ${theme.space[4]}px`,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: theme.space[3],
+                  }}
+                >
+                  <Checkbox
+                    checked={on}
+                    onChange={() =>
+                      setPicked((prev) => {
+                        const next = new Set(prev);
+                        if (next.has(e.id)) next.delete(e.id);
+                        else next.add(e.id);
+                        return next;
+                      })
+                    }
+                    ariaLabel={`${e.label ?? 'Sealed envelope'}, ${formatPence(e.amount_pence)}`}
+                  />
+                  <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
+                    <span style={{ fontSize: theme.type.size.sm, fontWeight: theme.type.weight.semibold, color: theme.color.ink }}>
+                      {e.label?.trim() || 'Sealed envelope'}
+                    </span>
+                    <span style={{ fontSize: theme.type.size.xs, color: theme.color.inkMuted }}>
+                      sealed {formatDateTime(e.sealed_at)} by {e.sealed_by_name}
+                    </span>
+                  </div>
+                  <span style={{ fontSize: theme.type.size.base, fontWeight: theme.type.weight.semibold, fontVariantNumeric: 'tabular-nums' }}>
+                    {formatPence(e.amount_pence)}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', paddingTop: theme.space[2] }}>
+            <span style={{ fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>
+              {formatNumber(picked.size)} of {formatNumber(envelopes.length)} envelope{envelopes.length === 1 ? '' : 's'}
+            </span>
+            <span style={{ fontSize: theme.type.size.lg, fontWeight: theme.type.weight.semibold, fontVariantNumeric: 'tabular-nums', letterSpacing: theme.type.tracking.tight }}>
+              {formatPence(total)}
+            </span>
+          </div>
+        </SheetBlock>
+
+        <SheetBlock title="Where is it going?">
+          <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
+            <ConfirmRow checked={how === 'banked'} onChange={() => setHow('banked')} label="Paid into the bank" sub="Recorded as a bank deposit." />
+            <ConfirmRow checked={how === 'collected'} onChange={() => setHow('collected')} label="Collected by someone" sub="Recorded as a bank deposit, with who took it." />
+          </div>
+          <Input
+            label={how === 'collected' ? 'Who collected it' : 'Note (optional)'}
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            placeholder={how === 'collected' ? 'e.g. Dylan' : 'e.g. Lloyds, slip #84'}
+            fullWidth
+          />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
+            <FieldTrigger
+              ref={dateTriggerRef}
+              label="Date it left"
+              icon={<CalendarClock size={16} aria-hidden />}
+              value={dateIso === todayIso ? `Today, ${formatLongDate(dateIso)}` : formatLongDate(dateIso)}
+              placeholder="Pick a date"
+              open={dateOpen}
+              onClick={() => setDateOpen((v) => !v)}
+            />
+            <DatePicker
+              open={dateOpen}
+              onClose={() => setDateOpen(false)}
+              value={dateIso}
+              onChange={(iso) => setDateIso(iso)}
+              anchorRef={dateTriggerRef}
+              title="When did it leave the safe?"
+              minIso={minDateIso}
+              maxIso={todayIso}
+            />
+          </div>
+        </SheetBlock>
+
+        <TwoPersonBlock state={twoPerson} witnessesError={witnessesError} action="withdrawal" />
+
+        {error ? (
+          <p role="alert" style={{ margin: 0, padding: `${theme.space[2]}px ${theme.space[3]}px`, borderRadius: theme.radius.input, background: '#FFEEEC', color: theme.color.alert, fontSize: theme.type.size.sm }}>
+            {error}
+          </p>
+        ) : null}
+      </div>
+    </BottomSheet>
   );
 }
 
