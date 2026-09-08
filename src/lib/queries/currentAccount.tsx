@@ -3,6 +3,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from 'react';
@@ -143,6 +144,16 @@ const CurrentAccountContext = createContext<Result | null>(null);
 
 export function CurrentAccountProvider({ children }: { children: ReactNode }) {
   const { user, loading: authLoading } = useAuth();
+  // Identity, not object reference. supabase-js mints a fresh session
+  // (and therefore a fresh user object) on every TOKEN_REFRESHED /
+  // SIGNED_IN event, and it fires one every time the tab is brought
+  // back to the foreground. Keying the fetch effect on the object made
+  // every alt-tab re-run it, blank the account, flip loading back to
+  // true, and so make RequireStaff swap the whole route out for the
+  // Loading fallback: React then unmounted the page and remounted it
+  // fresh, which is why typed-but-unsaved fields, open sheets, and the
+  // scroll position were all lost on returning to the tab.
+  const userId = user?.id ?? null;
   const [account, setAccount] = useState<CurrentAccount | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -152,10 +163,15 @@ export function CurrentAccountProvider({ children }: { children: ReactNode }) {
   // auth_account_id + accounts/staff fetches under the same React
   // tree, so router state, modals, and in-flight forms survive.
   const [retryTick, setRetryTick] = useState(0);
+  // The user id the current `account` was resolved for. Lets the
+  // effect tell a genuine identity change (blank and show the
+  // fallback) from a token refresh (re-fetch silently in place).
+  const loadedForUserRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (authLoading) return;
-    if (!user) {
+    if (!userId) {
+      loadedForUserRef.current = null;
       setAccount(null);
       setError(null);
       setConnectivityError(false);
@@ -164,15 +180,23 @@ export function CurrentAccountProvider({ children }: { children: ReactNode }) {
     }
     let cancelled = false;
     // Clear the previous user's account before flipping loading
-    // back to true. Without this, when auth swaps user1 → user2
-    // mid-session (rare but real — admin impersonation, dev
-    // switching accounts in one tab, etc) consumers would briefly
-    // read user1's permissions tagged with loading=true. Setting
-    // account to null guarantees the only state a consumer can
-    // observe between user changes is { account: null, loading:
-    // true } — same shape as the very first mount.
-    setAccount(null);
-    setLoading(true);
+    // back to true, but ONLY when the signed-in identity actually
+    // changed. When auth swaps user1 → user2 mid-session (rare but
+    // real — admin impersonation, dev switching accounts in one tab)
+    // consumers must never read user1's permissions tagged with
+    // loading=true, so we blank first: the only state observable
+    // between user changes is { account: null, loading: true }, the
+    // same shape as the very first mount.
+    //
+    // For the same user (a token refresh, a retry) we re-fetch in
+    // place and leave account/loading alone. Blanking there is what
+    // tore the mounted route down on every tab switch.
+    const identityChanged = loadedForUserRef.current !== userId;
+    if (identityChanged) {
+      loadedForUserRef.current = userId;
+      setAccount(null);
+      setLoading(true);
+    }
     setError(null);
     setConnectivityError(false);
     (async () => {
@@ -306,7 +330,7 @@ export function CurrentAccountProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [authLoading, user, retryTick]);
+  }, [authLoading, userId, retryTick]);
 
   // ── Tell Telemetry who this is ───────────────────────────────────────────
   //

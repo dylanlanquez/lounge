@@ -43,10 +43,16 @@ export function useMfaStatus(): MfaStatus {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
+  // Identity, not object reference — same reason as
+  // CurrentAccountProvider: supabase-js hands us a new session object
+  // on every token refresh, and it refreshes whenever the tab comes
+  // back to the foreground. Keyed on the object, this re-ran four auth
+  // round trips on every tab switch for an answer that had not changed.
+  const userId = session?.user?.id ?? null;
 
   useEffect(() => {
     if (authLoading) return;
-    if (!session) {
+    if (!userId) {
       setAal(null);
       setHasVerifiedFactor(false);
       setVerifiedFactorId(null);
@@ -78,7 +84,7 @@ export function useMfaStatus(): MfaStatus {
     return () => {
       cancelled = true;
     };
-  }, [session, authLoading, tick]);
+  }, [userId, authLoading, tick]);
 
   return {
     loading: authLoading || loading,
