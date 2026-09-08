@@ -15,7 +15,6 @@ import {
   computeResourceUsage,
   formatMinutes,
 } from '../../lib/scheduleGaps.ts';
-import { formatTimeNoZone } from '../../lib/dateFormat.ts';
 
 // Reception's work is booked under the "Miscellaneous" pool in Admin,
 // Booking types (every Book-in phase names it), while the people are
@@ -89,21 +88,12 @@ export function DownTimeSheet({ open, onClose, rows, dateIso, dayLabel, hours, n
       description={
         closed
           ? `The clinic is closed on ${dayLabel}.`
-          : `${dayLabel}, open ${span}. Each bar is the day for one person or room: when a booking needs them, when nobody does.`
+          : `${dayLabel}, open ${span}. For each person and room: how much of the day a booking needed them, how much nobody did, and how much is still open to book. Percentages are of the open day.`
       }
     >
       {closed ? null : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[6] }}>
           <Legend />
-          <ResourceBlock
-            name="Patients in"
-            detail="Any patient in the building or on a call"
-            usage={overall.usage!}
-            unused={false}
-            isPast={isPast}
-            showLab
-          />
-          <div style={{ height: 1, background: theme.color.border }} aria-hidden />
           {pools.loading || assignments.loading || staff.loading ? (
             <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>Loading roles and rooms…</p>
           ) : pools.error || assignments.error || staff.error ? (
@@ -153,16 +143,22 @@ function ResourceBlock({
 }) {
   return (
     <section aria-label={name} style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: theme.space[3], flexWrap: 'wrap' }}>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
-          <span style={{ fontSize: theme.type.size.md, fontWeight: theme.type.weight.semibold, color: theme.color.ink, letterSpacing: theme.type.tracking.tight }}>
-            {name}
-          </span>
-          <span style={{ fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>{detail}</span>
-        </div>
-        <Figures usage={usage} unused={unused} isPast={isPast} />
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
+        <span style={{ fontSize: theme.type.size.md, fontWeight: theme.type.weight.semibold, color: theme.color.ink, letterSpacing: theme.type.tracking.tight }}>
+          {name}
+        </span>
+        <span style={{ fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>{detail}</span>
       </div>
-      <UsageBar usage={usage} />
+      {unused ? (
+        <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkSubtle }}>
+          {isPast ? 'No booking needed them that day.' : 'No booking needs them.'}
+        </p>
+      ) : (
+        <>
+          <Stats usage={usage} />
+          <SummaryBar usage={usage} />
+        </>
+      )}
       {showLab && usage.labMinutes > 0 ? (
         <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>
           Repairs and manufacturing {isPast ? 'ran' : 'run'} for {formatMinutes(usage.labMinutes)} alongside. That time needs nobody at the desk.
@@ -172,105 +168,83 @@ function ResourceBlock({
   );
 }
 
-// Three chips, each with the same swatch the bar uses, so the numbers
-// and the colours read as one thing.
-function Figures({ usage, unused, isPast }: { usage: DayUsage; unused: boolean; isPast: boolean }) {
-  if (unused) {
-    return (
-      <span style={{ fontSize: theme.type.size.sm, color: theme.color.inkSubtle, paddingTop: 2 }}>
-        {isPast ? 'Not needed that day' : 'Not needed'}
-      </span>
-    );
-  }
-  const all: Array<{ kind: UsageKind; minutes: number }> = [
+// Three tiles: busy, down, free. A big figure, a plain word, and the
+// share of the open day, so "3h 5m down · 39% of the day" lands
+// without reading a chart.
+function Stats({ usage }: { usage: DayUsage }) {
+  const share = (m: number) => (usage.openMinutes > 0 ? Math.round((m / usage.openMinutes) * 100) : 0);
+  const tiles: Array<{ kind: UsageKind; minutes: number }> = [
     { kind: 'booked', minutes: usage.bookedMinutes },
     { kind: 'down', minutes: usage.downMinutes },
     { kind: 'free', minutes: usage.freeMinutes },
   ];
-  const parts = all.filter((p) => p.minutes > 0);
   return (
-    <span style={{ display: 'inline-flex', gap: theme.space[2], flexWrap: 'wrap' }}>
-      {parts.map((p) => (
-        <span
-          key={p.kind}
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: theme.space[2] }}>
+      {tiles.map((t) => (
+        <div
+          key={t.kind}
           style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: theme.space[2],
-            padding: `${theme.space[1]}px ${theme.space[3]}px`,
-            borderRadius: theme.radius.pill,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 2,
+            padding: `${theme.space[3]}px ${theme.space[3]}px`,
+            borderRadius: theme.radius.input,
             background: theme.color.bg,
             border: `1px solid ${theme.color.border}`,
-            fontSize: theme.type.size.sm,
-            color: theme.color.ink,
-            fontVariantNumeric: 'tabular-nums',
-            whiteSpace: 'nowrap',
+            minWidth: 0,
+            opacity: t.minutes === 0 ? 0.55 : 1,
           }}
         >
-          <Swatch kind={p.kind} />
-          <span style={{ fontWeight: theme.type.weight.semibold }}>{formatMinutes(p.minutes)}</span>
-          <span style={{ color: theme.color.inkMuted }}>{labelFor(p.kind).toLowerCase()}</span>
-        </span>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2], fontSize: theme.type.size.xs, color: theme.color.inkMuted }}>
+            <Swatch kind={t.kind} />
+            {labelFor(t.kind)}
+          </span>
+          <span
+            style={{
+              fontSize: theme.type.size.lg,
+              fontWeight: theme.type.weight.semibold,
+              color: t.kind === 'free' ? theme.color.accent : theme.color.ink,
+              fontVariantNumeric: 'tabular-nums',
+              letterSpacing: theme.type.tracking.tight,
+              lineHeight: theme.type.leading.tight,
+            }}
+          >
+            {t.minutes === 0 ? 'None' : formatMinutes(t.minutes)}
+          </span>
+          <span style={{ fontSize: theme.type.size.xs, color: theme.color.inkSubtle, fontVariantNumeric: 'tabular-nums' }}>
+            {t.minutes === 0 ? '\u00a0' : `${share(t.minutes)}%`}
+          </span>
+        </div>
       ))}
-    </span>
+    </div>
+  );
+}
+
+// One bar, always in the same order: busy, down, free, lunch. Not a
+// timeline; just how the open hours divide up.
+function SummaryBar({ usage }: { usage: DayUsage }) {
+  const all: Array<{ kind: UsageKind; minutes: number }> = [
+    { kind: 'booked', minutes: usage.bookedMinutes },
+    { kind: 'down', minutes: usage.downMinutes },
+    { kind: 'free', minutes: usage.freeMinutes },
+    { kind: 'lunch', minutes: usage.lunchMinutes },
+  ];
+  const parts = all.filter((p) => p.minutes > 0);
+  return (
+    <div
+      role="img"
+      aria-label={parts.map((p) => `${labelFor(p.kind)} ${formatMinutes(p.minutes)}`).join(', ')}
+      style={{ display: 'flex', height: 12, borderRadius: theme.radius.pill, overflow: 'hidden', background: theme.color.bg, border: `1px solid ${theme.color.border}` }}
+    >
+      {parts.map((p, i) => (
+        <div key={p.kind} title={`${labelFor(p.kind)} ${formatMinutes(p.minutes)}`} style={{ flex: `${p.minutes} 0 0`, minWidth: 0, ...styleFor(p.kind), borderLeft: i === 0 ? 'none' : `2px solid ${theme.color.surface}` }} />
+      ))}
+    </div>
   );
 }
 
 function Swatch({ kind }: { kind: UsageKind }) {
   return <span aria-hidden style={{ width: 12, height: 12, borderRadius: 3, border: `1px solid ${theme.color.border}`, flexShrink: 0, ...styleFor(kind) }} />;
-}
-
-// The opening hours as one bar, opening on the left, closing on the
-// right. Each segment is sized by its minutes. A thin ink tick marks
-// now on today's view.
-export function UsageBar({ usage }: { usage: DayUsage }) {
-  const first = usage.segments[0];
-  const last = usage.segments[usage.segments.length - 1];
-  const lunch = usage.segments.find((x) => x.kind === 'lunch');
-  const lunchLeft = lunch && first ? ((new Date(lunch.start).getTime() - new Date(first.start).getTime()) / (usage.openMinutes * 60_000)) * 100 : null;
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[1] }}>
-      <UsageTrack usage={usage} />
-      {first && last ? (
-        <div style={{ position: 'relative', height: 16, fontSize: theme.type.size.xs, color: theme.color.inkSubtle, fontVariantNumeric: 'tabular-nums' }} aria-hidden>
-          <span style={{ position: 'absolute', left: 0 }}>{clock12(first.start)}</span>
-          {lunchLeft !== null && lunchLeft > 12 && lunchLeft < 88 ? (
-            <span style={{ position: 'absolute', left: `${lunchLeft}%`, transform: 'translateX(-50%)' }}>lunch</span>
-          ) : null}
-          <span style={{ position: 'absolute', right: 0 }}>{clock12(last.end)}</span>
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function UsageTrack({ usage }: { usage: DayUsage }) {
-  return (
-    <div
-      role="img"
-      aria-label={`${formatMinutes(usage.bookedMinutes)} busy, ${formatMinutes(usage.downMinutes)} down, ${formatMinutes(usage.freeMinutes)} free to fill, ${formatMinutes(usage.lunchMinutes)} lunch`}
-      style={{ position: 'relative', display: 'flex', height: 18, borderRadius: 6, overflow: 'hidden', background: theme.color.bg, border: `1px solid ${theme.color.border}` }}
-    >
-      {usage.segments.map((seg, i) => (
-        <div
-          key={`${seg.kind}-${seg.start}`}
-          title={`${labelFor(seg.kind)} ${formatTimeNoZone(seg.start)} to ${formatTimeNoZone(seg.end)}, ${formatMinutes(seg.minutes)}`}
-          style={{
-            flex: `${seg.minutes} 0 0`,
-            minWidth: 0,
-            ...styleFor(seg.kind),
-            borderLeft: i === 0 ? 'none' : `1px solid ${theme.color.surface}`,
-          }}
-        />
-      ))}
-      {usage.nowFraction !== null ? (
-        <div
-          aria-hidden
-          style={{ position: 'absolute', top: -1, bottom: -1, left: `${usage.nowFraction * 100}%`, width: 2, background: theme.color.ink, transform: 'translateX(-1px)' }}
-        />
-      ) : null}
-    </div>
-  );
 }
 
 function styleFor(kind: UsageKind): { background: string; backgroundImage?: string } {
@@ -304,8 +278,8 @@ function labelFor(kind: UsageKind): string {
 
 function Legend() {
   const items: Array<{ kind: UsageKind; hint: string }> = [
-    { kind: 'booked', hint: 'a booking needs them' },
-    { kind: 'down', hint: 'nobody needed them' },
+    { kind: 'booked', hint: 'a booking needed them' },
+    { kind: 'down', hint: 'nobody did' },
     { kind: 'free', hint: 'still open to book' },
     { kind: 'lunch', hint: '' },
   ];

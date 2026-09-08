@@ -729,16 +729,7 @@ export function Schedule() {
             <SkeletonRows />
           ) : (
             <DayReloadingWrapper loading={day.loading}>
-              {day.data.length === 0 && freeTime?.open && freeTime.windows.length > 0 ? (
-            <ScheduleListView
-              rows={[]}
-              onPick={setSelected}
-              isToday={onToday}
-              dateIso={selectedDate}
-              freeTime={freeTime}
-              onBookAt={!isCsOnly ? tryOpenNewBooking : undefined}
-            />
-          ) : day.data.length === 0 ? (
+              {day.data.length === 0 ? (
             <EmptyState
               icon={<CalendarOff size={24} />}
               title={onToday ? 'No appointments today' : 'Nothing on this day'}
@@ -781,14 +772,7 @@ export function Schedule() {
               }
             />
           ) : (
-            <ScheduleListView
-              rows={visibleRows}
-              onPick={setSelected}
-              isToday={onToday}
-              dateIso={selectedDate}
-              freeTime={freeTime}
-              onBookAt={!isCsOnly ? tryOpenNewBooking : undefined}
-            />
+            <ScheduleListView rows={visibleRows} onPick={setSelected} isToday={onToday} freeTime={freeTime} />
           )}
             </DayReloadingWrapper>
           )}

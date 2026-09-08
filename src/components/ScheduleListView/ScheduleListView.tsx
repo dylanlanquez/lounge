@@ -1,5 +1,5 @@
 import { Fragment } from 'react';
-import { AlertTriangle, ChevronRight, Plus } from 'lucide-react';
+import { AlertTriangle, ChevronRight } from 'lucide-react';
 import googleMeetIcon from '../../assets/google-meet.png';
 import { SourceGlyph } from '../AppointmentCard/AppointmentCard.tsx';
 import { StatusPill } from '../StatusPill/StatusPill.tsx';
@@ -18,7 +18,7 @@ import {
 } from '../../lib/queries/appointments.ts';
 import { useNow } from '../../lib/useNow.ts';
 import { fmtTzAbbr } from '../../lib/dateFormat.ts';
-import { type DayFreeTime, type FreeWindow, formatMinutes, londonWallClockToDate } from '../../lib/scheduleGaps.ts';
+import type { DayFreeTime } from '../../lib/scheduleGaps.ts';
 
 export interface ScheduleListViewProps {
   rows: AppointmentRow[];
@@ -27,56 +27,27 @@ export interface ScheduleListViewProps {
   // between the appointments that have already started and those still
   // to come, and re-positions itself as time passes.
   isToday?: boolean;
-  /** The day's date, YYYY-MM-DD in clinic time. Needed to split the
-   *  list at noon and to place the lunch and closing markers. */
-  dateIso?: string;
-  /** Free time still open before closing (see computeDayFreeTime).
-   *  When given, every free stretch is drawn as a row in its place so
-   *  the day reads to closing time, not to the last appointment. */
+  /** Opening hours for the day (see computeDayFreeTime). When given,
+   *  the list ends at closing time with a quiet "Closes" line, and a
+   *  "Lunch" line sits where the break falls, so the day reads to its
+   *  real end rather than stopping at the last appointment. Free and
+   *  down time are not drawn here; they live in the Down time sheet. */
   freeTime?: DayFreeTime | null;
-  /** Opens the new-booking sheet at the given instant. Omit for staff
-   *  who cannot book here; free rows then show but do not act. */
-  onBookAt?: (iso: string) => void;
 }
 
-// One thing in the list, in time order: an appointment, a free stretch
-// of opening hours, or a quiet marker (lunch, closing).
+// One thing in the list, in time order: an appointment, or a quiet
+// marker (lunch, closing).
 type Entry =
   | { kind: 'appt'; at: number; row: AppointmentRow }
-  | { kind: 'free'; at: number; window: FreeWindow }
   | { kind: 'marker'; at: number; label: string; clockIso: string };
 
-export function ScheduleListView({
-  rows,
-  onPick,
-  isToday = false,
-  dateIso,
-  freeTime = null,
-  onBookAt,
-}: ScheduleListViewProps) {
+export function ScheduleListView({ rows, onPick, isToday = false, freeTime = null }: ScheduleListViewProps) {
   const now = useNow();
   const entries: Entry[] = rows.map((row) => ({ kind: 'appt', at: new Date(row.start_at).getTime(), row }));
 
-  if (freeTime?.open && dateIso) {
-    // Split a free stretch that crosses noon so each half sits under
-    // its own Morning / Afternoon heading.
-    const noon = londonWallClockToDate(dateIso, '12:00')?.getTime() ?? null;
-    // Down time (gaps already gone by) is deliberately not drawn here:
-    // it lives in the Down time sheet, by role. The list only shows
-    // what is still ahead to fill.
-    const push = (kind: 'free', w: FreeWindow) => {
-      const s = new Date(w.start).getTime();
-      const e = new Date(w.end).getTime();
-      if (noon !== null && s < noon && e > noon) {
-        entries.push({ kind, at: s, window: { start: w.start, end: new Date(noon).toISOString(), minutes: Math.round((noon - s) / 60_000) } });
-        entries.push({ kind, at: noon, window: { start: new Date(noon).toISOString(), end: w.end, minutes: Math.round((e - noon) / 60_000) } });
-      } else {
-        entries.push({ kind, at: s, window: w });
-      }
-    };
-    for (const w of freeTime.windows) push('free', w);
-    // Lunch marker, only while lunch is still ahead of the window we
-    // are filling (today: ahead of now).
+  if (freeTime?.open) {
+    // Lunch marker, only while lunch is still ahead (today: ahead of
+    // now; other days: always).
     if (freeTime.lunch) {
       const ls = new Date(freeTime.lunch.start).getTime();
       const from = isToday ? now.getTime() : 0;
@@ -102,12 +73,7 @@ export function ScheduleListView({
   // have already started, so it lands just before the first one still
   // to come. -1 disables it (not today, or nothing in the list).
   const showNow = isToday && entries.length > 0;
-  // An entry is "already started" when its start is behind now. A free
-  // stretch only counts once it has fully passed, so the one that
-  // contains now always sits just under the live line.
-  const nowAt = showNow
-    ? entries.filter((e) => (e.kind === 'free' ? new Date(e.window.end).getTime() <= now.getTime() : e.at < now.getTime())).length
-    : -1;
+  const nowAt = showNow ? entries.filter((e) => e.at < now.getTime()).length : -1;
   const hasAfternoon = afternoon.length > 0;
 
   return (
@@ -117,7 +83,6 @@ export function ScheduleListView({
           label="Morning"
           entries={morning}
           onPick={onPick}
-          onBookAt={onBookAt}
           now={now}
           startIndex={0}
           nowAt={nowAt}
@@ -129,7 +94,6 @@ export function ScheduleListView({
           label="Afternoon"
           entries={afternoon}
           onPick={onPick}
-          onBookAt={onBookAt}
           now={now}
           startIndex={morning.length}
           nowAt={nowAt}
@@ -140,16 +104,15 @@ export function ScheduleListView({
   );
 }
 
-// Same instant: appointments first, then free time, markers last.
+// Same instant: appointments first, markers last.
 function rank(e: Entry): number {
-  return e.kind === 'appt' ? 0 : e.kind === 'free' ? 1 : 2;
+  return e.kind === 'appt' ? 0 : 1;
 }
 
 function Section({
   label,
   entries,
   onPick,
-  onBookAt,
   now,
   startIndex,
   nowAt,
@@ -158,7 +121,6 @@ function Section({
   label: string;
   entries: Entry[];
   onPick: (r: AppointmentRow) => void;
-  onBookAt?: (iso: string) => void;
   now: Date;
   // Index of this section's first entry in the full sorted day, so the
   // now-marker can be placed by a single global index.
@@ -166,53 +128,26 @@ function Section({
   nowAt: number;
   isLast: boolean;
 }) {
-  const freeMinutes = entries.reduce((sum, e) => (e.kind === 'free' ? sum + e.window.minutes : sum), 0);
   return (
     <div>
-      <div
+      <p
         style={{
-          display: 'flex',
-          alignItems: 'baseline',
-          justifyContent: 'space-between',
-          gap: theme.space[3],
           margin: `0 0 ${theme.space[2]}px`,
+          fontSize: theme.type.size.xs,
+          color: theme.color.inkSubtle,
+          fontWeight: theme.type.weight.medium,
+          textTransform: 'uppercase',
+          letterSpacing: theme.type.tracking.wide,
         }}
       >
-        <p
-          style={{
-            margin: 0,
-            fontSize: theme.type.size.xs,
-            color: theme.color.inkSubtle,
-            fontWeight: theme.type.weight.medium,
-            textTransform: 'uppercase',
-            letterSpacing: theme.type.tracking.wide,
-          }}
-        >
-          {label}
-        </p>
-        {freeMinutes > 0 ? (
-          <p
-            style={{
-              margin: 0,
-              fontSize: theme.type.size.xs,
-              color: theme.color.accent,
-              fontWeight: theme.type.weight.semibold,
-              fontVariantNumeric: 'tabular-nums',
-              whiteSpace: 'nowrap',
-            }}
-          >
-            {formatMinutes(freeMinutes)} free to fill
-          </p>
-        ) : null}
-      </div>
+        {label}
+      </p>
       <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
         {entries.map((e, i) => (
           <Fragment key={entryKey(e)}>
             {nowAt === startIndex + i ? <NowMarker now={now} /> : null}
             {e.kind === 'appt' ? (
               <ScheduleListRow row={e.row} onPick={() => onPick(e.row)} now={now} />
-            ) : e.kind === 'free' ? (
-              <FreeRow window={e.window} onBook={onBookAt ? () => onBookAt(e.window.start) : null} />
             ) : (
               <TimeMarker clockIso={e.clockIso} label={e.label} />
             )}
@@ -227,126 +162,7 @@ function Section({
 }
 
 function entryKey(e: Entry): string {
-  return e.kind === 'appt' ? e.row.id : e.kind === 'marker' ? `marker-${e.label}-${e.clockIso}` : `${e.kind}-${e.window.start}`;
-}
-
-// A stretch of opening hours with nothing booked. Same shape as an
-// appointment row so the eye reads it as a slot in the day, drawn
-// dashed and tinted so it reads as open rather than taken. Tapping it
-// opens the booking sheet at its start.
-function FreeRow({ window: w, onBook }: { window: FreeWindow; onBook: (() => void) | null }) {
-  const body = (
-    <>
-      <div style={{ width: 80, flexShrink: 0 }}>
-        <p
-          style={{
-            margin: 0,
-            fontSize: theme.type.size.base,
-            fontWeight: theme.type.weight.semibold,
-            fontVariantNumeric: 'tabular-nums',
-            color: theme.color.accent,
-          }}
-        >
-          {formatTime(w.start)}
-        </p>
-        <p
-          style={{
-            margin: `${theme.space[1]}px 0 0`,
-            fontSize: theme.type.size.xs,
-            fontWeight: theme.type.weight.medium,
-            color: theme.color.inkSubtle,
-            letterSpacing: theme.type.tracking.wide,
-            fontVariantNumeric: 'tabular-nums',
-          }}
-        >
-          to {formatTime(w.end)}
-        </p>
-      </div>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <p
-          style={{
-            margin: 0,
-            fontSize: theme.type.size.base,
-            fontWeight: theme.type.weight.semibold,
-            color: theme.color.accent,
-            fontVariantNumeric: 'tabular-nums',
-          }}
-        >
-          {formatMinutes(w.minutes)} free
-        </p>
-        <p
-          style={{
-            margin: `${theme.space[1]}px 0 0`,
-            fontSize: theme.type.size.sm,
-            color: theme.color.inkMuted,
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap',
-          }}
-        >
-          {onBook ? 'No patient in. Tap to book this time.' : 'No patient in.'}
-        </p>
-      </div>
-      {onBook ? (
-        <>
-          <span
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: theme.space[1],
-              fontSize: theme.type.size.sm,
-              fontWeight: theme.type.weight.semibold,
-              color: theme.color.accent,
-              whiteSpace: 'nowrap',
-            }}
-          >
-            <Plus size={16} aria-hidden /> Book
-          </span>
-          <ChevronRight size={18} color={theme.color.inkSubtle} aria-hidden style={{ flexShrink: 0 }} />
-        </>
-      ) : null}
-    </>
-  );
-  const frame = {
-    width: '100%',
-    minHeight: 84,
-    display: 'flex',
-    alignItems: 'center',
-    gap: theme.space[4],
-    padding: theme.space[4],
-    background: theme.color.accentBg,
-    border: `1px dashed ${theme.color.accent}`,
-    borderRadius: 14,
-    boxSizing: 'border-box' as const,
-  };
-  return (
-    <li>
-      {onBook ? (
-        <button
-          type="button"
-          onClick={onBook}
-          aria-label={`Book ${formatTime(w.start)} to ${formatTime(w.end)}, ${formatMinutes(w.minutes)} free`}
-          style={{
-            appearance: 'none',
-            textAlign: 'left',
-            cursor: 'pointer',
-            ...frame,
-            transition: `background ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
-          }}
-          onMouseEnter={(e) => {
-            (e.currentTarget as HTMLElement).style.background = theme.color.surface;
-          }}
-          onMouseLeave={(e) => {
-            (e.currentTarget as HTMLElement).style.background = theme.color.accentBg;
-          }}
-        >
-          {body}
-        </button>
-      ) : (
-        <div style={frame}>{body}</div>
-      )}
-    </li>
-  );
+  return e.kind === 'appt' ? e.row.id : `marker-${e.label}-${e.clockIso}`;
 }
 
 // Live current-time line drawn inside the list on today's view. A small
