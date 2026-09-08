@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { Camera, ChevronLeft, ChevronRight, ImageOff, Megaphone, Sparkles, X } from 'lucide-react';
+import { Camera, ChevronLeft, ChevronRight, ImageOff, Megaphone, Sparkles, Tag, X } from 'lucide-react';
 import { CollapsibleCard } from '../CollapsibleCard/CollapsibleCard.tsx';
 import { useCaptureFlow } from '../CapturePopup/CapturePopup.tsx';
 import { EmptyState } from '../EmptyState/EmptyState.tsx';
@@ -8,7 +8,7 @@ import { Toast } from '../Toast/Toast.tsx';
 import { theme } from '../../theme/index.ts';
 import { fmtTzAbbr } from '../../lib/dateFormat.ts';
 import { useScrollLock } from '../../lib/useScrollLock.ts';
-import { signedUrlFor, uploadPatientFile } from '../../lib/queries/patientFiles.ts';
+import { setPatientFileLabel, signedUrlFor, uploadPatientFile } from '../../lib/queries/patientFiles.ts';
 import {
   type PatientFileEntry,
 } from '../../lib/queries/patientProfile.ts';
@@ -99,6 +99,14 @@ export function BeforeAfterGallery({
         { labelKey: LABEL_BEFORE, label: 'Add before' },
         { labelKey: LABEL_AFTER, label: 'Add after' },
       ]}
+      // Both photos routinely go in through one tile, usually "Add
+      // before", because that is the tile nearest the thumb. Offering
+      // the swap on the open photo means the fix does not depend on
+      // the original still being on the device.
+      relabelTo={[
+        { labelKey: LABEL_BEFORE, label: 'Mark as before' },
+        { labelKey: LABEL_AFTER, label: 'Mark as after' },
+      ]}
       emptyTitle="No before/after photos yet"
       emptyDescription={
         readOnly
@@ -155,6 +163,7 @@ function GalleryCard({
   refresh,
   isMobile,
   uploads,
+  relabelTo = [],
   emptyTitle,
   emptyDescription,
   readOnly = false,
@@ -168,13 +177,17 @@ function GalleryCard({
   refresh: () => void;
   isMobile: boolean;
   uploads: UploadDef[];
+  // Labels this card's photos can be moved between after upload.
+  // Empty for a card whose photos only ever carry one label.
+  relabelTo?: UploadDef[];
   emptyTitle: string;
   emptyDescription: string;
   readOnly?: boolean;
 }) {
   const [openIndex, setOpenIndex] = useState<number | null>(null);
   const [busyKey, setBusyKey] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [relabelling, setRelabelling] = useState(false);
+  const [error, setError] = useState<{ title: string; detail: string } | null>(null);
   const patientName = `${properCase(patient.first_name)} ${properCase(patient.last_name)}`.trim() || 'Patient';
 
   const onPick = async (labelKey: string, file: File) => {
@@ -206,9 +219,34 @@ function GalleryCard({
       });
       refresh();
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Upload failed');
+      setError({ title: 'Could not upload', detail: e instanceof Error ? e.message : 'Upload failed' });
     } finally {
       setBusyKey(null);
+    }
+  };
+
+  // Move one already-uploaded photo to another label. The lightbox
+  // stays open on the same photo: the row keeps its uploaded_at, so
+  // refresh() returns the list in the same order and the chip under
+  // the image simply changes.
+  const onRelabel = async (item: GalleryItem, labelKey: string) => {
+    setRelabelling(true);
+    setError(null);
+    try {
+      await setPatientFileLabel({
+        fileId: item.id,
+        patientId: patient.id,
+        labelKey,
+        labelDisplayName: LABEL_DISPLAY[labelKey] ?? labelKey,
+      });
+      refresh();
+    } catch (e) {
+      setError({
+        title: 'Could not change the label',
+        detail: e instanceof Error ? e.message : 'Label change failed',
+      });
+    } finally {
+      setRelabelling(false);
     }
   };
 
@@ -270,10 +308,23 @@ function GalleryCard({
         {tileCount < 0 ? null : null}
       </CollapsibleCard>
 
-      <PhotoLightbox items={items} index={openIndex} onChange={setOpenIndex} />
+      <PhotoLightbox
+        items={items}
+        index={openIndex}
+        onChange={setOpenIndex}
+        relabelTo={readOnly ? [] : relabelTo}
+        relabelling={relabelling}
+        onRelabel={onRelabel}
+      />
 
       {error ? (
-        <Toast tone="error" title="Could not upload" description={error} duration={6000} onDismiss={() => setError(null)} />
+        <Toast
+          tone="error"
+          title={error.title}
+          description={error.detail}
+          duration={6000}
+          onDismiss={() => setError(null)}
+        />
       ) : null}
     </>
   );
@@ -480,10 +531,16 @@ function PhotoLightbox({
   items,
   index,
   onChange,
+  relabelTo = [],
+  relabelling = false,
+  onRelabel,
 }: {
   items: GalleryItem[];
   index: number | null;
   onChange: (i: number | null) => void;
+  relabelTo?: UploadDef[];
+  relabelling?: boolean;
+  onRelabel?: (item: GalleryItem, labelKey: string) => void;
 }) {
   const open = index !== null;
   const current = open ? items[index!] ?? null : null;
@@ -527,6 +584,7 @@ function PhotoLightbox({
 
   const hasPrev = index! > 0;
   const hasNext = index! < items.length - 1;
+  const relabelOptions = relabelTo.filter((o) => o.labelKey !== current.label_key);
 
   return (
     <div
@@ -631,6 +689,52 @@ function PhotoLightbox({
             {index! + 1} of {items.length}
           </span>
         </div>
+
+        {/* Label repair. Only the labels this photo is not already on
+            are offered, so the before/after card shows exactly one
+            button and there is nothing to read or decide. */}
+        {onRelabel && relabelOptions.length > 0 ? (
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: theme.space[2],
+              flexWrap: 'wrap',
+              justifyContent: 'center',
+            }}
+          >
+            {relabelOptions.map((opt) => (
+              <button
+                key={opt.labelKey}
+                type="button"
+                disabled={relabelling}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onRelabel(current, opt.labelKey);
+                }}
+                style={{
+                  appearance: 'none',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: theme.space[2],
+                  padding: `8px ${theme.space[4]}px`,
+                  borderRadius: theme.radius.pill,
+                  border: '1px solid rgba(255, 255, 255, 0.28)',
+                  background: 'rgba(255, 255, 255, 0.12)',
+                  color: '#fff',
+                  fontFamily: 'inherit',
+                  fontSize: theme.type.size.sm,
+                  fontWeight: theme.type.weight.semibold,
+                  cursor: relabelling ? 'wait' : 'pointer',
+                  opacity: relabelling ? 0.6 : 1,
+                }}
+              >
+                <Tag size={15} aria-hidden />
+                {relabelling ? 'Saving…' : opt.label}
+              </button>
+            ))}
+          </div>
+        ) : null}
       </div>
     </div>
   );

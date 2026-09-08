@@ -18,6 +18,10 @@ interface QueryState {
     data: Record<string, unknown> | null;
     error: { message: string; code?: string } | null;
   };
+  update: {
+    data: Record<string, unknown> | null;
+    error: { message: string; code?: string } | null;
+  };
   eventError: { message: string } | null;
   uploadError: { message: string } | null;
   removeError: { message: string } | null;
@@ -33,6 +37,7 @@ const state: QueryState = {
   labelRows: [],
   labelError: null,
   insert: { data: null, error: null },
+  update: { data: null, error: null },
   eventError: null,
   uploadError: null,
   removeError: null,
@@ -44,9 +49,13 @@ const state: QueryState = {
 
 const storageOps: Array<{ op: 'upload' | 'remove'; paths: string[] }> = [];
 const inserts: Array<{ table: string; payload: Record<string, unknown> }> = [];
+const updates: Array<{ table: string; payload: Record<string, unknown> }> = [];
 const failures: Array<Record<string, unknown>> = [];
 
 function builder(table: string): Record<string, unknown> {
+  // Which write this chain is: .single() resolves to the update result
+  // for an update chain and the insert result otherwise.
+  let op: 'insert' | 'update' = 'insert';
   const settle = () => {
     if (table === 'file_labels') {
       return { data: state.labelRows, error: state.labelError };
@@ -61,9 +70,14 @@ function builder(table: string): Record<string, unknown> {
     is: () => proxy,
     in: () => proxy,
     limit: () => Promise.resolve(settle()),
-    single: () => Promise.resolve(state.insert),
+    single: () => Promise.resolve(op === 'update' ? state.update : state.insert),
     // production_cases resolves on .eq(), with no .limit() to await it.
     eq: () => (table === 'production_cases' ? Promise.resolve(settle()) : proxy),
+    update(payload: Record<string, unknown>) {
+      op = 'update';
+      updates.push({ table, payload });
+      return proxy;
+    },
     insert(payload: Record<string, unknown>) {
       inserts.push({ table, payload });
       if (table === 'patient_events') {
@@ -100,7 +114,7 @@ vi.mock('../failureLog.ts', () => ({
   },
 }));
 
-const { getLabelId, uploadPatientFile } = await import('./patientFiles.ts');
+const { getLabelId, setPatientFileLabel, uploadPatientFile } = await import('./patientFiles.ts');
 
 const fakeFile = {
   name: 'before.jpg',
@@ -121,6 +135,7 @@ beforeEach(() => {
   state.labelRows = [{ id: 'lbl-before' }];
   state.labelError = null;
   state.insert = { data: { id: 'pf-1' }, error: null };
+  state.update = { data: { id: 'pf-1', label_id: 'lbl-before' }, error: null };
   state.eventError = null;
   state.uploadError = null;
   state.removeError = null;
@@ -130,6 +145,7 @@ beforeEach(() => {
   state.lockError = null;
   storageOps.length = 0;
   inserts.length = 0;
+  updates.length = 0;
   failures.length = 0;
 });
 
@@ -268,5 +284,69 @@ describe('uploadPatientFile — the scan-cleanup lock is explained, not leaked',
     state.lockRows = [{ id: 'cleanup-1' }];
     await expect(uploadPatientFile(uploadArgs)).rejects.toThrow(/scan cleanup/);
     expect(storageOps.map((o) => o.op)).toEqual(['upload', 'remove']);
+  });
+});
+
+describe('setPatientFileLabel — repairing a mislabelled photo', () => {
+  const relabelArgs = {
+    fileId: 'pf-1',
+    patientId: 'p1',
+    labelKey: 'after_photo',
+    labelDisplayName: 'After photo',
+  };
+
+  it('moves the label and the description together', async () => {
+    state.labelRows = [{ id: 'lbl-after' }];
+    await setPatientFileLabel(relabelArgs);
+    expect(updates).toHaveLength(1);
+    expect(updates[0]!.table).toBe('patient_files');
+    expect(updates[0]!.payload).toEqual({ label_id: 'lbl-after', description: 'After photo' });
+  });
+
+  it('leaves the stored object alone', async () => {
+    state.labelRows = [{ id: 'lbl-after' }];
+    await setPatientFileLabel(relabelArgs);
+    expect(storageOps).toHaveLength(0);
+  });
+
+  it('records the change on the patient timeline', async () => {
+    state.labelRows = [{ id: 'lbl-after' }];
+    await setPatientFileLabel(relabelArgs);
+    const event = inserts.find((i) => i.table === 'patient_events');
+    expect(event?.payload).toMatchObject({
+      patient_id: 'p1',
+      event_type: 'patient_photo_relabelled',
+    });
+  });
+
+  it('refuses when the target label is not in the catalogue', async () => {
+    state.labelRows = [];
+    await expect(setPatientFileLabel(relabelArgs)).rejects.toThrow(
+      /missing from the file_labels catalogue/
+    );
+    expect(updates).toHaveLength(0);
+  });
+
+  it('names the scan-cleanup lock when the update is refused by RLS', async () => {
+    state.labelRows = [{ id: 'lbl-after' }];
+    state.update = {
+      data: null,
+      error: { message: 'new row violates row-level security policy', code: '42501' },
+    };
+    state.caseRows = [{ id: 'case-1' }];
+    state.lockRows = [{ id: 'cleanup-1' }];
+    await expect(setPatientFileLabel(relabelArgs)).rejects.toThrow(/scan cleanup/i);
+    expect(failures.some((f) => f.source === 'patient_files.setPatientFileLabel')).toBe(true);
+  });
+
+  it('still returns the row when the timeline write fails', async () => {
+    state.labelRows = [{ id: 'lbl-after' }];
+    state.eventError = { message: 'events down' };
+    await expect(setPatientFileLabel(relabelArgs)).resolves.toMatchObject({ id: 'pf-1' });
+    expect(
+      failures.some(
+        (f) => f.source === 'patient_files.setPatientFileLabel' && f.severity === 'warning'
+      )
+    ).toBe(true);
   });
 });

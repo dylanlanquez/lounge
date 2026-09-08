@@ -278,3 +278,73 @@ export async function signedUrlFor(filePath: string, ttlSeconds = 300): Promise<
   if (error || !data) return null;
   return data.signedUrl;
 }
+
+// Move an already-uploaded file to a different label.
+//
+// The need is mundane and constant on the floor: two photos get taken
+// at collection, both go in through "Add before" because that is the
+// tile the receptionist's thumb landed on, and the after side of the
+// card stays empty. Before this, the only repair was to delete and
+// re-upload, which needs the original photo still on the device.
+//
+// Only the label moves. The object stays where it is in case-files,
+// so the row keeps its uploaded_at, uploaded_by, version and every
+// signed URL already handed out. `description` moves with the label
+// because it holds the label's display name (set on upload, NOT NULL
+// with a >= 3 char check), and leaving it saying "Before photo" on a
+// row now labelled after_photo is exactly the kind of quiet
+// disagreement that makes a record untrustworthy later.
+//
+// Refusals get the same treatment as the insert path: an RLS denial
+// here is almost always Meridian's scan-cleanup lock, so probe for it
+// and say what is actually happening instead of naming a policy.
+export async function setPatientFileLabel(args: {
+  fileId: string;
+  patientId: string;
+  labelKey: string;
+  labelDisplayName: string;
+}): Promise<PatientFileRow> {
+  const labelId = await getLabelId(args.labelKey);
+
+  const { data: row, error } = await supabase
+    .from('patient_files')
+    .update({ label_id: labelId, description: args.labelDisplayName })
+    .eq('id', args.fileId)
+    .select('*')
+    .single();
+  if (error || !row) {
+    const refusal = isRlsRefusal(error) ? await describeInsertRefusal(args.patientId) : '';
+    await logFailure({
+      source: 'patient_files.setPatientFileLabel',
+      severity: 'error',
+      message: `patient_files label change to "${args.labelKey}" failed: ${error?.message ?? 'no row returned'}`,
+      context: {
+        patientId: args.patientId,
+        fileId: args.fileId,
+        labelKey: args.labelKey,
+        refusalCause: refusal || null,
+      },
+    });
+    if (refusal) throw new Error(refusal);
+    throw new Error(error?.message ?? 'Could not change the photo label');
+  }
+
+  // Patient-axis event, same as the upload path. Best effort: the
+  // label has already moved, so a timeline write that fails must not
+  // fail the change, but it must not disappear either.
+  const { error: eventErr } = await supabase.from('patient_events').insert({
+    patient_id: args.patientId,
+    event_type: 'patient_photo_relabelled',
+    payload: { file_id: args.fileId, label: args.labelKey },
+  });
+  if (eventErr) {
+    await logFailure({
+      source: 'patient_files.setPatientFileLabel',
+      severity: 'warning',
+      message: `patient_events insert failed after label change: ${eventErr.message}`,
+      context: { patientId: args.patientId, fileId: args.fileId, labelKey: args.labelKey },
+    });
+  }
+
+  return row as PatientFileRow;
+}
