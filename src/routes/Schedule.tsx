@@ -280,10 +280,11 @@ export function Schedule() {
     [clinicSettings.loading, dayHours, day.data, selectedDate, now, todayIso],
   );
 
-  // Pills on the day toolbar. Three or more do not fit with labels on a
-  // phone, so they compress to icons (each keeps its aria-label).
-  const pillCount = (day.data.length > 0 ? 1 : 0) + (freeTime?.open ? 1 : 0) + (selectedDate === todayIso ? 0 : 1) + (isCsOnly ? 0 : 1);
-  const compactPills = isMobile && pillCount >= 3;
+  // Pills on the day toolbar. On a phone they are always icons: a rule
+  // based on how many are showing flickered from words to icons as the
+  // day and the clinic hours loaded (Dylan, 8 Sep 2026). Each keeps its
+  // aria-label and title.
+  const compactPills = isMobile;
 
   const visibleRows = useMemo(
     () =>
