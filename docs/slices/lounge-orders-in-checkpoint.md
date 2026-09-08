@@ -2,7 +2,14 @@
 
 **Status:** planned, awaiting build sign-off
 **Requested by:** UK team + Customer Services, Sep 2026
-**Decision:** federate (read live from Lounge), do not mirror. Full order record. Checkpoint is the destination surface.
+**Decision:** federate via direct RLS-gated reads. No mirror, no cross-app secret, no new edge functions. Full order record. Checkpoint is the destination surface.
+
+**Revision note:** an earlier draft of this slice proposed a pair of new edge
+functions bridged by `CROSS_APP_SECRET`. That was over-built. Checkpoint
+already holds a live client pointed at the Lounge project
+(`src/lib/loungeSupabase.js`), and Customer Services agents already have Lounge
+logins, so the correct mechanism is a real Lounge session plus RLS. The edge
+function layer, the shared secret and the bundle contract are all dropped.
 
 ---
 
@@ -38,8 +45,8 @@ shared transaction, so drift is a matter of when, not if.
 The money calculation is the clearest argument. `lng_visit_paid_status` has
 taken five corrective migrations, the most recent (`20260519000010`) fixing a
 double-subtraction that rendered a £199 cart as £398 after a full refund. Any
-second implementation of that arithmetic in a mirror or in a new edge function
-will drift from it. The bundle reads the view; it never recomputes money.
+second implementation of that arithmetic will drift from it. Checkpoint reads
+the view; it never recomputes money.
 
 Mirroring also puts a second copy of patient PII across a project boundary,
 widening the DSAR and retention surface that `docs/02-data-protection.md §8`
@@ -47,156 +54,149 @@ has to answer for, with no offsetting benefit: a mirrored walk-in still needs
 new search plumbing in Checkpoint, so the mirror adds sync cost without
 removing any work.
 
-The codebase has already chosen federation for the Checkpoint to Meridian
-direction (`meridian-patient-bundle`, `meridian-cases-for-order`,
-`meridian-lab-queue`, `meridian-file-signed-url`). This is the same pattern
-pointed at the same project.
-
 The existing `shipping_queue` cross-post stays as a mirror, correctly. It is a
 write-once terminal work queue, not a record of truth.
 
 ---
 
-## 2. Scope lock
+## 2. Mechanism: the channel already exists
+
+`src/lib/loungeSupabase.js` in Checkpoint is a second Supabase client pointed
+at the Lounge project, already in production use by
+`src/components/PatientAppointments/PatientAppointmentsCard.jsx` and the
+in-ScanView appointment booker. Nothing new is needed to reach Lounge.
+
+Today that client is **anon-only and session-less** (`persistSession: false`,
+`storageKey: 'lounge-anon'`), which is right for what it does now: the
+widget-facing surface that the public embed also reads, granted deliberately
+by the `lng_widget_*` migrations.
+
+That anon path cannot carry orders, and must not be made to. `lng_payments`
+has exactly two policies, both `TO authenticated`
+(`20260428000017_lng_rls_policies.sql:221`): `is_admin()`, or
+`auth_is_receptionist()` scoped to `auth_location_id()`. `lng_carts` and
+`lng_cart_items` have the same shape. The anon role has no policy on any of
+them, so RLS denies it outright.
+
+**Granting anon SELECT on the order tables is the one move to refuse.** That
+key ships in the public booking embed on venneir.com and
+denture-services.co.uk, so it would publish every customer's payment record,
+card last-4 and refund history to anyone who views source.
+
+The answer is a real Lounge session, not a wider anon grant.
+
+---
+
+## 3. Auth model
+
+CS agents already have Lounge logins. A Lounge login means three rows on the
+`npuvhxakffxqoszytkxw` project: an `auth.users` row, an `accounts` row
+(`accounts.auth_user_id = auth.uid()`, shared with Meridian), and an
+`lng_staff_members` row FK'd to `accounts.id` with
+`is_customer_service = true`.
+
+So the flow is simply:
+
+1. The staff member signs in to Lounge **once** from inside Checkpoint. The
+   session persists; `autoRefreshToken` keeps it alive.
+2. Checkpoint queries the Lounge order tables directly through
+   `loungeSupabase`, as that authenticated user.
+3. Lounge RLS decides what they can see. No secret, no proxy, no service role
+   anywhere in the path.
+
+### Changes to `loungeSupabase.js`
+
+`persistSession` flips to `true` and `autoRefreshToken` to `true`, under a new
+`storageKey` (`lounge-staff`). The existing anon client stays as-is under
+`lounge-anon` for the booker and availability reads, which must keep working
+for staff who have no Lounge account. Two clients, two purposes.
+
+### The sign-in surface
+
+A "Connect your Lounge account" panel on the order page, shown when no Lounge
+session is held. Email and password against Lounge, then the TOTP challenge
+when the account has `require_2fa` set. One-time per browser; re-prompted on
+session expiry with the order the agent was trying to open preserved.
+
+### 2FA, and why the new policies require aal2
+
+Lounge enforces 2FA **client-side only**: `src/App.tsx:174` checks
+`account.require_2fa && mfa.aal !== 'aal2'` and blocks the UI. RLS does not
+look at AAL. So a plain password sign-in from Checkpoint yields an `aal1`
+session that Lounge's own interface would refuse, while RLS would happily
+serve payment data to it.
+
+That would make the bar for reading card and refund data from Checkpoint
+**lower** than from Lounge itself. The new CS policies therefore require
+`aal2` at the data layer:
+
+```
+(auth.jwt() ->> 'aal') = 'aal2'
+```
+
+This is deliberately stricter than the existing receptionist policies, which
+inherit only the client-side gate. It is enforced where it cannot be bypassed,
+and it means the Checkpoint sign-in flow must complete the TOTP step for any
+CS account with `require_2fa`. Accounts without `require_2fa` are unaffected.
+
+---
+
+## 4. Scope lock
 
 ### Lounge repo
 
-- **New** `supabase/functions/lng-order-bundle/index.ts`, the inbound cross-app endpoint.
-- **New** `supabase/config.toml` entry for it with `verify_jwt = false` (secret checked manually).
-- **Modify** `supabase/functions/book-lng-shipment/index.ts` for the `order_name` fix, see §7.
+- **New migration** `YYYYMMDD_NN_lng_customer_service_order_read.sql`:
+  - `auth_is_customer_service()` helper, mirroring `auth_is_receptionist()`
+    (`20260428000004`) but joining `lng_staff_members` on
+    `is_customer_service = true` and `status = 'active'`.
+  - CS SELECT policies on `lng_visits`, `lng_carts`, `lng_cart_items`,
+    `lng_cart_item_upgrades`, `lng_cart_discounts`, `lng_payments`,
+    `lng_payment_refunds`, `lng_walk_ins`, `lng_appointments`.
+  - Each policy is `TO authenticated`, requires `auth_is_customer_service()`
+    **and** `aal2`, and is **cross-location** (no `auth_location_id()` filter).
+    CS serves every clinic, which is exactly why the receptionist policies
+    cannot be reused.
+  - SELECT only. No INSERT, UPDATE or DELETE for this role on any table.
+  - Verify `lng_visit_paid_status` is readable under the new policies. Views
+    run with the definer's rights by default, so confirm rather than assume.
+- **Modify** `supabase/functions/book-lng-shipment/index.ts` for the
+  `order_name` fix, see §6.
+
+Migration ritual per `CLAUDE.md`: read the latest filename in
+`~/Desktop/meridian-app/supabase/migrations/` first, then shadow
+(`vkgghplhykavklevfhkz`) before Meridian, via the session pooler.
 
 ### Checkpoint repo
 
-- **New** `supabase/functions/lounge-order-bundle/index.ts`, the proxy, mirroring `meridian-patient-bundle`.
+- **Modify** `src/lib/loungeSupabase.js` to add the session-holding staff client.
 - **New** `src/components/LoungeOrderView.jsx`, the read-only order page.
+- **New** `src/lib/loungeOrderQueries.js`, the reads against `loungeSupabase`.
 - **New** `src/lib/printLoungeLwo.js`, LWO reprint ported from Lounge's `printLwo.ts`.
 - **Modify** `src/lib/useGlobalSearch.js` to add the `lounge_order` source and result kind.
 - **Modify** `src/components/SidebarSearch.jsx` to render and route the new result kind.
-- **Modify** `src/pages/Dashboard.jsx` for a `PATH_TO_VIEW` entry plus a branch in the `activeView` switch (~line 2530), gated on a new `lounge_orders` permission.
+- **Modify** `src/pages/Dashboard.jsx` for a `PATH_TO_VIEW` entry plus a branch
+  in the `activeView` switch (~line 2530), gated on a new `lounge_orders`
+  permission.
 
 ### Explicit exclusions
 
+- **Do not grant anon any policy on the order tables.** See §2.
 - **Do not touch `ScanView.jsx`.** It is order-centric: every panel hangs off a
-  Shopify `order` object. A Lounge walk-in has no Shopify order and cannot mount
-  inside it. The file is over 10,000 lines and is not the right home for this.
-- Do not touch `order_arch_slots`, `check_ins`, `check_outs`, or the SLA engine.
-  A Lounge order is not a lab order and must not enter the lab SLA pipeline.
+  Shopify `order` object. A Lounge walk-in has no Shopify order and cannot
+  mount inside it. The file is over 10,000 lines and is not the right home.
+- **Do not add a service role key for the Lounge project to Checkpoint.** It
+  would bypass all RLS on the whole Meridian and Lounge project, not just
+  orders. The whole point of this design is that RLS stays in the path.
+- Do not touch `order_arch_slots`, `check_ins`, `check_outs`, or the SLA
+  engine. A Lounge order is not a lab order and must not enter the lab SLA
+  pipeline.
+- Do not change the existing receptionist or admin policies.
 - Do not write to Lounge from Checkpoint. This surface is read-only in v1.
-- Do not change existing `shipping_queue` cross-post behaviour beyond the `order_name` fix.
-- No new Lounge tables. No `lng_` migration is needed for the read path.
+- No new Lounge tables.
 
 ---
 
-## 3. Data flow
-
-```
-Checkpoint browser (staff, CS or UK team)
-   |  anon key Bearer JWT (module-level EDGE_HEADERS)
-   v
-Checkpoint edge fn  lounge-order-bundle        (project emonsrrhflmwfsuupibj)
-   |  verifies the CALLER's JWT + accounts row   <- see §5, this is the important bit
-   |  then Bearer CROSS_APP_SECRET
-   v
-Lounge edge fn      lng-order-bundle            (project npuvhxakffxqoszytkxw)
-   |  verify_jwt = false, secret compared manually
-   |  service role reads:
-   |    lng_visits, lng_walk_ins, lng_appointments,
-   |    lng_carts, lng_cart_items, lng_cart_item_upgrades,
-   |    lng_cart_discounts, lng_payments, lng_payment_refunds,
-   |    lng_visit_paid_status  (money, never recomputed),
-   |    patients, accounts
-   v
-one JSON order bundle, read-only
-```
-
-Search takes the same path with a `q` lookup instead of a ref, returning
-lightweight rows only (ref, name, date, total, status) with no line items.
-
----
-
-## 4. The bundle contract
-
-Shaped to answer the two questions CS and the UK team actually ask: "what did
-this person buy and what did they pay" and "print it again".
-
-```
-{
-  ok: true,
-  order: {
-    ref, kind: 'walk_in' | 'appointment', status,
-    opened_at, closed_at, location_name, jb_ref,
-    fulfilment_method, service_label, receptionist_name
-  },
-  patient: {
-    internal_ref, first_name, last_name, email, phone,
-    date_of_birth, address
-  },
-  items: [ { qty, name, arch, shade, thickness, category,
-             unit_pence, line_total_pence, upgrades: [...] } ],
-  money: {
-    subtotal_pence, discount_pence, amount_due_pence,
-    amount_paid_pence, balance_pence, currency: 'GBP'
-  },
-  payments: [ { method, journey, amount_pence, status,
-                card_brand, last4, taken_at, taken_by } ],
-  refunds:  [ { amount_pence, reason_category, status, refunded_at, approved_by } ],
-  dispatch: {
-    dispatched_at, dispatched_by, tracking_number, parcel_code,
-    dispatch_ref, shipping_address, label_data
-  } | null,
-  lwo: { /* the exact PrintableLwoItem[] + header printLwo.ts already takes */ }
-}
-```
-
-Rules:
-
-- `money` comes from `lng_visit_paid_status`. The function selects the view; it
-  does not sum payments itself.
-- Every field is either present with a real value or explicitly `null`. No
-  `value || 'default'` anywhere in the assembly, per the no-silent-fallbacks
-  rule. A missing patient row is an error response, not an empty name.
-- `label_data` is passed through so Checkpoint can reprint without a DPD call.
-- Storage URLs are signed on demand if files are ever added to this bundle.
-  None are in v1.
-
----
-
-## 5. Auth model, and a finding worth fixing
-
-`meridian-patient-bundle` performs **no caller authentication**. It is not
-listed in Checkpoint's `supabase/config.toml`, so it takes the gateway default
-`verify_jwt = true`, which the **public anon key satisfies**. The anon key ships
-in the client bundle. Anyone holding it can POST an email address and receive
-that patient's profile and file list.
-
-That posture is already live for patient files. It must not be extended to a
-full order record carrying payment methods, card last-4, refunds and staff names.
-
-**The new proxy copies `checkpoint-jb-check` instead**, which gets this right
-(`supabase/functions/checkpoint-jb-check/index.ts`): it calls
-`auth.getUser(userJwt)` on the presented token and then requires a matching
-`accounts` row before doing any cross-project work. Concretely:
-
-1. Checkpoint's `lounge-order-bundle` verifies the caller's JWT is a real
-   session, resolves the staff row, and checks the `lounge_orders` permission.
-   Anon-key-only callers are rejected with 401.
-2. Only then does it attach `CROSS_APP_SECRET` and call Lounge.
-3. Lounge's `lng-order-bundle` runs `verify_jwt = false` and compares the bearer
-   to `CROSS_APP_SECRET`, following `piranha-customer-orders`: 401 on missing,
-   403 on mismatch. It trusts the proxy for staff identity and never accepts a
-   browser call directly.
-
-Failures are loud: unreachable Lounge or a non-200 from it writes a
-`system_logs` row on the Checkpoint side (as `meridian-patient-bundle` does)
-and a `lng_system_failures` row on the Lounge side, and the panel renders an
-amber notice carrying the ticket id rather than an empty state.
-
-`CROSS_APP_SECRET` already exists on Checkpoint's edge env. It must be added to
-Lounge's.
-
----
-
-## 6. Checkpoint UI
+## 5. Checkpoint UI
 
 A new left-nav destination under Dispatch, and a standalone page at
 `/lounge-order/:ref`. Read-only throughout: no editable field, no save button.
@@ -205,22 +205,27 @@ Sections, top to bottom:
 
 1. **Header.** Patient name, LAP ref, date, status pill, JB ref when set. Two
    actions: Print LWO, Print shipping label. The label button is present only
-   when `dispatch.label_data` is non-null.
+   when the visit carries `label_data`.
 2. **Items.** The cart as the customer bought it, with arch, shade, thickness
    and upgrades. Prices right-aligned.
-3. **Payment.** Amount due, paid, balance. Each payment with method, card brand
-   and last-4, who took it and when. Refunds listed beneath with reason and
-   approver.
+3. **Payment.** Amount due, paid and balance, all read from
+   `lng_visit_paid_status`. Each payment with method, card brand and last-4,
+   who took it and when. Refunds beneath, with reason and approver.
 4. **Dispatch.** Tracking number linked to `track.dpdlocal.co.uk` via
-   `parcel_code`, dispatched by and when, and the address as it was at dispatch.
-   Hidden entirely for collected orders rather than shown empty.
+   `parcel_code`, dispatched by and when, and the address as it was at
+   dispatch. Hidden entirely for collected orders rather than shown empty.
 5. **Origin notice.** One line: "This order was taken in Lounge. It is shown
    here read only." Plain full stop, no dashes, per the UI text rule.
 
 Styling: inline styles only, tokens from `src/lib/loungeTheme.js` (`LNG`),
-Lucide icons only, single accent from the admin theme. Loading, error and
-not-found states are all explicit; the amber failure notice carries the
-`system_logs` ticket id.
+Lucide icons only, single accent from the admin theme.
+
+States, all explicit: loading; loaded; no Lounge session (the connect panel);
+session expired; ref not found; and RLS denial. An RLS denial returns zero rows
+rather than an error, so it must be distinguished from "not found" by checking
+session presence first, and it renders as "Your Lounge account does not have
+access to orders" rather than a misleading empty state. No `value || 'default'`
+anywhere in the assembly, per the no-silent-fallbacks rule.
 
 ### Search
 
@@ -230,6 +235,8 @@ Shopify bucket:
 
 - Skip the Lounge lookup entirely when the query matches `ORDER_NAME_RE` or
   `REF_RE`, which are Shopify and lab shapes.
+- Skip it when no Lounge session is held, rather than firing a query that RLS
+  will empty.
 - Run it for free text, postcodes, LAP refs and tracking numbers.
 - Return `{ kind: 'lounge_order', ref, customer_name, total_price, created_at,
   status, match_field, match_value }`.
@@ -238,13 +245,12 @@ Shopify bucket:
   loader.
 
 The 150ms debounce, `AbortController` and `reqId` staleness guards apply
-unchanged. One added cross-project round trip per keystroke burst is acceptable
-at that debounce; if it proves slow, the fix is a 400ms debounce on the Lounge
-bucket alone, not a mirror.
+unchanged. If the added cross-project round trip proves slow, the fix is a
+400ms debounce on the Lounge bucket alone, not a mirror.
 
 ---
 
-## 7. The `order_name` fix
+## 6. The `order_name` fix
 
 `book-lng-shipment/index.ts` currently writes:
 
@@ -265,60 +271,73 @@ number and postcode as it does today.
 
 ---
 
-## 8. Data protection
+## 7. Data protection
 
-- No new copy of personal data is created. This is the reason to prefer
-  federation, and it should stay true: nothing from the bundle is persisted on
-  the Checkpoint side, including in `localStorage`.
+- No new copy of personal data is created, and nothing from Lounge is persisted
+  on the Checkpoint side, including in `localStorage`. The only thing stored is
+  the Supabase session token under `lounge-staff`.
+- Access is gated twice: the `lounge_orders` permission in Checkpoint controls
+  whether the page and search source exist for that user, and Lounge RLS
+  controls what the data layer will actually return. The second is the one that
+  matters; the first is UI tidiness.
+- Because the reads run as the individual staff member rather than as a service
+  role, Lounge's own audit trail attributes them correctly. This is a real
+  advantage over the edge function design, where every read would have appeared
+  as the same service identity.
 - The recipients section of `docs/02-data-protection.md §2` needs a line:
   Checkpoint staff (UK team, Customer Services) are recipients of Lounge order
   data for after-sales support. Lawful basis Article 6(1)(f), legitimate
   interest in servicing a purchase the customer made.
-- Access is gated on the new `lounge_orders` permission, not granted to all
-  Checkpoint staff by default.
-- Each bundle fetch writes a `patient_events` row on the Lounge side
-  (`event_type = 'order_viewed_checkpoint'`) so a DSAR can answer who looked at
-  the record and when. Patient-axis event, so `patient_events` is correct here,
-  not `lng_event_log`.
+- Each order view writes a `patient_events` row (`event_type =
+  'order_viewed_checkpoint'`) so a DSAR can answer who looked at the record and
+  when. Patient-axis event, so `patient_events` is correct, not `lng_event_log`.
+  This needs a CS INSERT policy on `patient_events` scoped to that event type
+  only; check `20260518000013_lng_patient_events_staff_select.sql` first, which
+  already widened the SELECT side for CS-only accounts.
 - Retention is unchanged: the record lives only in Lounge and inherits the
-  periods already documented in §6 of the data protection doc.
+  periods documented in §6 of the data protection doc.
 
 ---
 
-## 9. Implementation steps
+## 8. Implementation steps
 
 Each step is independently verifiable.
 
-1. Add `CROSS_APP_SECRET` to Lounge's edge env. Confirm it matches Checkpoint's.
-2. Write `lng-order-bundle` on Lounge. Add the `config.toml` entry with
-   `verify_jwt = false`. Deploy and `curl` it: no bearer gives 401, wrong secret
-   gives 403, correct secret with a known LAP ref returns a bundle.
-3. Cross-check the returned `money` block against what Lounge's own VisitDetail
-   shows for the same visit. They must agree to the penny, including on a visit
-   that has a partial refund.
-4. Write Checkpoint's `lounge-order-bundle` proxy with the `checkpoint-jb-check`
-   auth model. Deploy and verify an anon-key-only call is rejected.
-5. Add the `lounge_orders` permission and grant it to CS and the UK team.
-6. Build `LoungeOrderView.jsx` against a real ref. Verify all five states:
-   loading, loaded, Lounge unreachable, ref not found, and a collected order
-   with no dispatch section.
-7. Port `printLoungeLwo.js` from Lounge's `printLwo.ts`. Print one from each app
-   for the same visit and compare the two slips physically.
-8. Wire label reprint from `dispatch.label_data`, reusing `ShippingQueueView`'s
-   existing 4x4 print CSS per `LABEL-PRINT-REFERENCE.md`. Confirm the 28-digit
-   barcode is not cropped and scans.
-9. Add the search source and the `SidebarSearch` result kind. Verify a walk-in
-   is findable by surname, by postcode, by LAP ref and by tracking number, and
-   that typing `VEN12345` still runs no Lounge query.
-10. Fix `order_name` in `book-lng-shipment`. Ship one live dispatch and confirm
+1. Read the latest Meridian migration filename. Write the CS RLS migration.
+   Apply to shadow via the session pooler and verify there, per
+   `docs/runbooks/migration-workflow.md`.
+2. On shadow, prove the policies with three sessions: a CS account at aal2 sees
+   orders across every location; the same account at aal1 sees nothing; a
+   Meridian-only account with no `lng_staff_members` row sees nothing. Confirm
+   `lng_visit_paid_status` returns rows for the CS session.
+3. Apply to Meridian. Re-run the same three checks against production.
+4. Add the session-holding client to `loungeSupabase.js`. Verify the existing
+   anon booker still works unchanged for a staff member with no Lounge account.
+5. Build the connect panel. Verify a full sign-in including TOTP on an account
+   with `require_2fa`, and that the session survives a page reload.
+6. Build `LoungeOrderView.jsx` against a real ref. Verify all six states from
+   §5, including a collected order with no dispatch section.
+7. Cross-check the money block against what Lounge's own VisitDetail shows for
+   the same visit. They must agree to the penny, including on a visit with a
+   partial refund.
+8. Port `printLoungeLwo.js`. Print one from each app for the same visit and
+   compare the two slips physically.
+9. Wire label reprint from the stored ZPL, reusing `ShippingQueueView`'s 4x4
+   print CSS per `LABEL-PRINT-REFERENCE.md`. Confirm the 28-digit barcode is
+   not cropped and scans.
+10. Add the search source and the `SidebarSearch` result kind. Verify a walk-in
+    is findable by surname, postcode, LAP ref and tracking number, that typing
+    `VEN12345` runs no Lounge query, and that no query fires without a session.
+11. Add the `lounge_orders` permission and grant it to CS and the UK team.
+12. Fix `order_name` in `book-lng-shipment`. Ship one live dispatch and confirm
     the `shipping_queue` row carries the LAP ref.
-11. Playwright E2E per the Lounge testing convention. Type-check and lint both
+13. Playwright E2E per the Lounge testing convention. Type-check and lint both
     repos before commit.
-12. Update `docs/02-data-protection.md §2` recipients.
+14. Update `docs/02-data-protection.md §2` recipients.
 
 ---
 
-## 10. Smoke test, in plain English
+## 9. Smoke test, in plain English
 
 A customer walked into Motherwell three weeks ago, paid £199 by card for a
 denture repair, had it posted to them, and has now emailed Customer Services to
@@ -326,49 +345,59 @@ say it arrived cracked.
 
 The CS agent types the customer's surname into Checkpoint's sidebar search. A
 result appears under a Lounge heading. They click it and land on the order page.
+The first time they do this they are asked to sign in to Lounge, with their
+existing Lounge details and their authenticator code. After that it just opens.
+
 They can see the repair that was bought, that £199 was taken on a Visa ending
-4242 by Sarah at 14:32 on the day, that it was posted DPD with a tracking number
-that links through to DPD, and the address it went to. They tell the customer
-what they bought and when it shipped without leaving Checkpoint or phoning
-Motherwell.
+4242 by Sarah at 14:32 on the day, that it was posted DPD with a tracking
+number that links through to DPD, and the address it went to. They tell the
+customer what they bought and when it shipped without leaving Checkpoint or
+phoning Motherwell.
 
 The UK team then opens the same page and prints the LWO so the repair can be
 booked back in, and reprints the shipping label to send the replacement out.
 Both slips come out of the same printer, looking the same as the ones the clinic
 printed on the day.
 
-Nobody can change anything on that page from Checkpoint. The next morning, after
-Motherwell refunds the customer in Lounge, the CS agent refreshes the page and
-the refund is already showing, because Checkpoint never had its own copy.
+Nobody can change anything on that page from Checkpoint. The next morning,
+after Motherwell refunds the customer in Lounge, the CS agent refreshes and the
+refund is already showing, because Checkpoint never had its own copy.
+
+A member of the lab team who has no Lounge account types the same surname and
+sees no Lounge results at all.
 
 ---
 
-## 11. Done when
+## 10. Done when
 
 - A Lounge walk-in order is findable in Checkpoint search by surname, postcode,
-  LAP ref and tracking number.
+  LAP ref and tracking number, for a signed-in CS or UK team member.
+- A staff member with no Lounge account, or holding only an aal1 session, sees
+  nothing, and the existing anon booker still works for them.
 - The order page shows items, prices, discounts, payments with card brand and
   last-4, refunds, and dispatch, matching Lounge to the penny including after a
   partial refund.
 - LWO reprints from Checkpoint and is physically identical to Lounge's.
-- Shipping label reprints from stored ZPL with a scannable barcode and no DPD call.
-- Collected orders render correctly with no dispatch section and no label button.
-- An anon-key-only call to either edge function is rejected.
-- Lounge unreachable renders an amber notice with a ticket id, and a
-  `system_logs` row exists.
-- Every view writes a `patient_events` row.
+- Shipping label reprints from stored ZPL with a scannable barcode and no DPD
+  call.
+- Collected orders render with no dispatch section and no label button.
+- RLS denial and not-found render as distinct, honest states.
+- Every order view writes a `patient_events` row attributed to the individual
+  staff member.
+- The CS role holds no write policy on any `lng_` table.
 - Type-check and lint pass in both repos. Playwright E2E green.
 - Scored 90 or above on all eight brief axes.
 
 ---
 
-## 12. Open risks
+## 11. Open risks
 
 | # | Risk | Mitigation |
 |---|---|---|
-| L1 | `CROSS_APP_SECRET` is a single shared secret granting full order read. A leak means full read of Lounge orders. | The caller-JWT check on the Checkpoint side means the secret alone is not enough from a browser. Rotate on any staff offboarding with edge env access. Consider per-app secrets in v1.5. |
-| L2 | Lounge down makes the panel unavailable, where a mirror would still show stale data. | Accepted, and stated in the panel copy. Same posture the team already accepts for `meridian-patient-bundle`. Stale money on a refund dispute is worse than absent money. |
-| L3 | Search adds a cross-project round trip per keystroke burst. | Shape-gated so Shopify and lab queries skip it. Debounce the Lounge bucket to 400ms if measured latency is poor. |
-| L4 | LWO reprint drifts from Lounge's as `printLwo.ts` changes. | Same lockstep note `LWO-PRINT-REFERENCE.md` already carries for its three render paths. Add Checkpoint's port to that list. |
-| L5 | `meridian-patient-bundle` remains unauthenticated. | Out of scope here, but it is a real exposure of patient data to anyone with the anon key. Raise separately. |
-| L6 | A future writeback request ("let CS refund from Checkpoint"). | Explicitly out of scope. Refunds stay in Lounge where the Stripe keys and the approval ceiling triggers live. |
+| L1 | Two logins for one person. A CS agent signs in to Checkpoint and then again to Lounge. | Once per browser, session persisted and auto-refreshed. Genuine single sign-on across two Supabase projects is a v1.5 question and should not gate this. |
+| L2 | The `aal2` requirement is stricter than Lounge's own receptionist policies, so behaviour differs by role. | Deliberate, and documented in §3. The inconsistency to fix is that receptionist policies do not require it, not that these do. Worth raising as separate work. |
+| L3 | A CS account is deactivated in Lounge but keeps a live session token. | `auth_is_customer_service()` requires `status = 'active'`, evaluated per query, so deactivation takes effect on the next read rather than at token expiry. |
+| L4 | Search adds a cross-project round trip per keystroke burst. | Shape-gated so Shopify and lab queries skip it, and session-gated so it never fires unauthenticated. Debounce the Lounge bucket to 400ms if measured latency is poor. |
+| L5 | LWO reprint drifts from Lounge's as `printLwo.ts` changes. | Same lockstep note `LWO-PRINT-REFERENCE.md` already carries for its three render paths. Add Checkpoint's port to that list. |
+| L6 | `meridian-patient-bundle` has no caller authentication and is reachable with the public anon key, exposing patient profiles and file lists. | Out of scope here. Tracked separately; the fix is the `checkpoint-jb-check` auth model. Not made worse by this slice, which adds no new unauthenticated surface. |
+| L7 | A future writeback request ("let CS refund from Checkpoint"). | Explicitly out of scope. Refunds stay in Lounge where the Stripe keys and the approval ceiling triggers live. The CS role holds SELECT only, so this cannot happen by accident. |
