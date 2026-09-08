@@ -1,8 +1,9 @@
 import { useState } from 'react';
-import { BarChart3, CalendarClock, Megaphone, Settings, Wallet } from 'lucide-react';
+import { BarChart3, CalendarClock, Lock, Megaphone, Settings, Wallet } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../lib/auth.tsx';
 import { useCurrentAccount } from '../../lib/queries/currentAccount.tsx';
+import { useLockControls } from '../../lib/idleLockContext.tsx';
 import { batteryTone, useBattery, type BatteryTone } from '../../lib/useBattery.ts';
 import { useNow } from '../../lib/useNow.ts';
 import { barsFromEffectiveType, useNetwork, type EffectiveType } from '../../lib/useNetwork.ts';
@@ -31,6 +32,7 @@ export const KIOSK_STATUS_BAR_HEIGHT = 32;
 // doesn't carry a phantom 32px gap.
 export function KioskStatusBar() {
   const { user, loading: authLoading, signOut } = useAuth();
+  const { lockNow } = useLockControls();
   const { account } = useCurrentAccount();
   const now = useNow(60_000);
   const { level, charging, supported: batterySupported } = useBattery();
@@ -247,6 +249,10 @@ export function KioskStatusBar() {
         setProfileOpen(false);
         void signOut();
       }}
+      onLock={() => {
+        setProfileOpen(false);
+        lockNow();
+      }}
     />
     </>
   );
@@ -295,6 +301,7 @@ function ProfileSheet({
   canEditOwnAvailability,
   onMyAvailability,
   onSignOut,
+  onLock,
 }: {
   open: boolean;
   onClose: () => void;
@@ -304,6 +311,7 @@ function ProfileSheet({
   canEditOwnAvailability: boolean;
   onMyAvailability: () => void;
   onSignOut: () => void;
+  onLock: () => void;
 }) {
   const label = displayName ?? email ?? 'No account';
   return (
@@ -315,12 +323,23 @@ function ProfileSheet({
         <span style={{ display: 'flex', flexDirection: 'column', gap: theme.space[1] }}>
           <span>{email ?? 'No account'}</span>
           <span style={{ color: theme.color.inkSubtle, fontSize: theme.type.size.sm }}>
-            Tap Sign out below to end the session.
+            Lock to cover the screen without ending the session. Sign out to
+            end it.
           </span>
         </span>
       }
       footer={
-        <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: theme.space[3] }}>
+          {/* Stepping away from the desk is the common case and signing
+              out is the rare one, so the lock is offered right here rather
+              than leaving staff to wait out the idle timer. Secondary, and
+              first, because it is the one with no consequences. */}
+          <Button variant="secondary" onClick={onLock}>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
+              <Lock size={18} aria-hidden />
+              Lock
+            </span>
+          </Button>
           <Button variant="secondary" onClick={onSignOut}>
             Sign out
           </Button>

@@ -91,6 +91,43 @@ export function applyGlobalStyles(): void {
       from { transform: rotate(0deg); }
       to { transform: rotate(360deg); }
     }
+    /* Idle lock screen. Defined here for the same reason as lng-spin:
+       one definition, available wherever the animation is referenced.
+       The fade also ramps the blur, so the app appears to recede rather
+       than being covered by a slab. */
+    @keyframes lng-lock-fade {
+      from { opacity: 0; backdrop-filter: blur(0px); -webkit-backdrop-filter: blur(0px); }
+      to { opacity: 1; }
+    }
+    @keyframes lng-lock-rise {
+      from { opacity: 0; transform: translateY(14px) scale(0.98); }
+      to { opacity: 1; transform: none; }
+    }
+    @keyframes lng-lock-shake {
+      0%, 100% { transform: translateX(0); }
+      20% { transform: translateX(-7px); }
+      40% { transform: translateX(6px); }
+      60% { transform: translateX(-4px); }
+      80% { transform: translateX(2px); }
+    }
+    /* Lock screen clock. Inline styles cannot express a media query, and
+       on a short viewport (a tablet in landscape with the keyboard up)
+       the clock is the part worth losing: the password field must stay
+       on screen without scrolling. */
+    @media (max-height: 560px) {
+      .lng-lock-clock { display: none; }
+    }
+    /* Respect a reduced-motion preference: the lock still appears, it
+       just stops sliding and shaking. */
+    @media (prefers-reduced-motion: reduce) {
+      @keyframes lng-lock-rise {
+        from { opacity: 0; }
+        to { opacity: 1; }
+      }
+      @keyframes lng-lock-shake {
+        0%, 100% { transform: none; }
+      }
+    }
   `;
   document.head.appendChild(style);
 }

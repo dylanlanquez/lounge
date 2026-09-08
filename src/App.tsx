@@ -6,6 +6,7 @@ import {
   useCurrentAccount,
 } from './lib/queries/currentAccount.tsx';
 import { useMfaStatus } from './lib/mfa.ts';
+import { IdleLockProvider } from './lib/idleLockContext.tsx';
 import { theme } from './theme/index.ts';
 import { Button } from './components/Button/Button.tsx';
 import { BottomNav } from './components/BottomNav/BottomNav.tsx';
@@ -107,13 +108,18 @@ export function App() {
           first-paint race against permission gates that produced the
           flicker on CS-only surfaces. */}
       <CurrentAccountProvider>
-        <WalkthroughProvider>
-          <MarketingWalkthroughAutoStart />
-          <KioskStatusBar />
-          <ScrollToTop />
-          <RoutedErrorBoundary />
-          <BottomNav />
-        </WalkthroughProvider>
+        {/* Wraps the chrome as well as the routes: the lock has to cover
+            the status bar and the bottom nav too, and the profile sheet
+            inside KioskStatusBar needs its "Lock" control. */}
+        <IdleLockProvider>
+          <WalkthroughProvider>
+            <MarketingWalkthroughAutoStart />
+            <KioskStatusBar />
+            <ScrollToTop />
+            <RoutedErrorBoundary />
+            <BottomNav />
+          </WalkthroughProvider>
+        </IdleLockProvider>
       </CurrentAccountProvider>
     </AuthProvider>
   );
