@@ -1,5 +1,14 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { Camera, ChevronLeft, ChevronRight, ImageOff, Megaphone, Sparkles, Tag, X } from 'lucide-react';
+import {
+  ArrowLeftRight,
+  Camera,
+  ChevronLeft,
+  ChevronRight,
+  ImageOff,
+  Megaphone,
+  Sparkles,
+  X,
+} from 'lucide-react';
 import { CollapsibleCard } from '../CollapsibleCard/CollapsibleCard.tsx';
 import { useCaptureFlow } from '../CapturePopup/CapturePopup.tsx';
 import { EmptyState } from '../EmptyState/EmptyState.tsx';
@@ -294,7 +303,14 @@ function GalleryCard({
                 ))
               : null}
             {items.map((item, i) => (
-              <PhotoTile key={item.id} item={item} onOpen={() => setOpenIndex(i)} />
+              <PhotoTile
+                key={item.id}
+                item={item}
+                onOpen={() => setOpenIndex(i)}
+                relabelTo={relabelTo}
+                relabelling={relabelling}
+                onRelabel={onRelabel}
+              />
             ))}
             {!showUploads && empty ? (
               <span style={{ gridColumn: '1 / -1', color: theme.color.inkSubtle, fontSize: theme.type.size.sm }}>
@@ -308,14 +324,7 @@ function GalleryCard({
         {tileCount < 0 ? null : null}
       </CollapsibleCard>
 
-      <PhotoLightbox
-        items={items}
-        index={openIndex}
-        onChange={setOpenIndex}
-        relabelTo={readOnly ? [] : relabelTo}
-        relabelling={relabelling}
-        onRelabel={onRelabel}
-      />
+      <PhotoLightbox items={items} index={openIndex} onChange={setOpenIndex} />
 
       {error ? (
         <Toast
@@ -434,9 +443,24 @@ function UploadTile({
   );
 }
 
-function PhotoTile({ item, onOpen }: { item: GalleryItem; onOpen: () => void }) {
+function PhotoTile({
+  item,
+  onOpen,
+  relabelTo = [],
+  relabelling = false,
+  onRelabel,
+}: {
+  item: GalleryItem;
+  onOpen: () => void;
+  relabelTo?: UploadDef[];
+  relabelling?: boolean;
+  onRelabel?: (item: GalleryItem, labelKey: string) => void;
+}) {
   const [url, setUrl] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
+  // Only the label this photo is not already on, so a before/after
+  // photo has exactly one target and the control needs no menu.
+  const swapTo = relabelTo.find((o) => o.labelKey !== item.label_key) ?? null;
 
   useEffect(() => {
     let cancelled = false;
@@ -457,49 +481,138 @@ function PhotoTile({ item, onOpen }: { item: GalleryItem; onOpen: () => void }) 
   }, [item.file_url]);
 
   return (
-    <button
-      type="button"
-      onClick={onOpen}
-      aria-label={`Open photo, uploaded ${formatDateTime(item.uploaded_at)}`}
-      style={{
-        appearance: 'none',
-        position: 'relative',
-        padding: 0,
-        aspectRatio: '1 / 1',
-        borderRadius: theme.radius.card,
-        border: `1px solid ${theme.color.border}`,
-        background: theme.color.bg,
-        cursor: 'pointer',
-        overflow: 'hidden',
-        fontFamily: 'inherit',
-      }}
-    >
-      {url ? (
-        <img
-          src={url}
-          alt=""
-          loading="lazy"
-          style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
-          onError={() => setFailed(true)}
+    <div style={{ position: 'relative' }}>
+      <button
+        type="button"
+        onClick={onOpen}
+        aria-label={`Open photo, uploaded ${formatDateTime(item.uploaded_at)}`}
+        style={{
+          appearance: 'none',
+          position: 'relative',
+          display: 'block',
+          width: '100%',
+          padding: 0,
+          aspectRatio: '1 / 1',
+          borderRadius: theme.radius.card,
+          border: `1px solid ${theme.color.border}`,
+          background: theme.color.bg,
+          cursor: 'pointer',
+          overflow: 'hidden',
+          fontFamily: 'inherit',
+        }}
+      >
+        {url ? (
+          <img
+            src={url}
+            alt=""
+            loading="lazy"
+            style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+            onError={() => setFailed(true)}
+          />
+        ) : failed ? (
+          <span
+            style={{
+              position: 'absolute',
+              inset: 0,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: theme.color.inkSubtle,
+            }}
+          >
+            <ImageOff size={28} aria-hidden />
+          </span>
+        ) : (
+          <Skeleton height="100%" radius={0} />
+        )}
+        {item.variant ? <VariantChip variant={item.variant} /> : null}
+      </button>
+      {swapTo && onRelabel ? (
+        <RelabelButton
+          label={swapTo.label}
+          busy={relabelling}
+          onClick={() => onRelabel(item, swapTo.labelKey)}
         />
-      ) : failed ? (
+      ) : null}
+    </div>
+  );
+}
+
+// The swap control, sat in the corner opposite the Before/After chip.
+// Icon only: the tile is 1/4 of a row on desktop and half a row on a
+// phone, and a worded button either covers the face or shrinks the
+// photo. The word arrives on hover and through the accessible name,
+// and it names the destination ("Mark as after") rather than the
+// current state, so there is nothing to work out before tapping.
+function RelabelButton({
+  label,
+  busy,
+  onClick,
+}: {
+  label: string;
+  busy: boolean;
+  onClick: () => void;
+}) {
+  const [hovered, setHovered] = useState(false);
+  return (
+    <span style={{ position: 'absolute', top: theme.space[2], right: theme.space[2] }}>
+      <button
+        type="button"
+        disabled={busy}
+        aria-label={label}
+        onClick={(e) => {
+          // The whole tile opens the photo. Without this the swap
+          // also launches the lightbox on top of its own toast.
+          e.stopPropagation();
+          onClick();
+        }}
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
+        onFocus={() => setHovered(true)}
+        onBlur={() => setHovered(false)}
+        style={{
+          appearance: 'none',
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          width: 28,
+          height: 28,
+          padding: 0,
+          borderRadius: theme.radius.pill,
+          border: 'none',
+          background: 'rgba(255, 255, 255, 0.92)',
+          color: theme.color.ink,
+          boxShadow: theme.shadow.card,
+          cursor: busy ? 'wait' : 'pointer',
+          opacity: busy ? 0.6 : 1,
+          fontFamily: 'inherit',
+        }}
+      >
+        <ArrowLeftRight size={14} aria-hidden />
+      </button>
+      {hovered ? (
         <span
+          role="tooltip"
           style={{
             position: 'absolute',
-            inset: 0,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            color: theme.color.inkSubtle,
+            top: 'calc(100% + 6px)',
+            right: 0,
+            padding: '4px 8px',
+            borderRadius: theme.radius.pill,
+            background: '#0E1414',
+            color: '#fff',
+            fontSize: 11,
+            fontWeight: theme.type.weight.semibold,
+            whiteSpace: 'nowrap',
+            boxShadow: theme.shadow.card,
+            pointerEvents: 'none',
+            zIndex: 2,
           }}
         >
-          <ImageOff size={28} aria-hidden />
+          {busy ? 'Saving…' : label}
         </span>
-      ) : (
-        <Skeleton height="100%" radius={0} />
-      )}
-      {item.variant ? <VariantChip variant={item.variant} /> : null}
-    </button>
+      ) : null}
+    </span>
   );
 }
 
@@ -531,16 +644,10 @@ function PhotoLightbox({
   items,
   index,
   onChange,
-  relabelTo = [],
-  relabelling = false,
-  onRelabel,
 }: {
   items: GalleryItem[];
   index: number | null;
   onChange: (i: number | null) => void;
-  relabelTo?: UploadDef[];
-  relabelling?: boolean;
-  onRelabel?: (item: GalleryItem, labelKey: string) => void;
 }) {
   const open = index !== null;
   const current = open ? items[index!] ?? null : null;
@@ -584,7 +691,6 @@ function PhotoLightbox({
 
   const hasPrev = index! > 0;
   const hasNext = index! < items.length - 1;
-  const relabelOptions = relabelTo.filter((o) => o.labelKey !== current.label_key);
 
   return (
     <div
@@ -690,51 +796,6 @@ function PhotoLightbox({
           </span>
         </div>
 
-        {/* Label repair. Only the labels this photo is not already on
-            are offered, so the before/after card shows exactly one
-            button and there is nothing to read or decide. */}
-        {onRelabel && relabelOptions.length > 0 ? (
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: theme.space[2],
-              flexWrap: 'wrap',
-              justifyContent: 'center',
-            }}
-          >
-            {relabelOptions.map((opt) => (
-              <button
-                key={opt.labelKey}
-                type="button"
-                disabled={relabelling}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onRelabel(current, opt.labelKey);
-                }}
-                style={{
-                  appearance: 'none',
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: theme.space[2],
-                  padding: `8px ${theme.space[4]}px`,
-                  borderRadius: theme.radius.pill,
-                  border: '1px solid rgba(255, 255, 255, 0.28)',
-                  background: 'rgba(255, 255, 255, 0.12)',
-                  color: '#fff',
-                  fontFamily: 'inherit',
-                  fontSize: theme.type.size.sm,
-                  fontWeight: theme.type.weight.semibold,
-                  cursor: relabelling ? 'wait' : 'pointer',
-                  opacity: relabelling ? 0.6 : 1,
-                }}
-              >
-                <Tag size={15} aria-hidden />
-                {relabelling ? 'Saving…' : opt.label}
-              </button>
-            ))}
-          </div>
-        ) : null}
       </div>
     </div>
   );
