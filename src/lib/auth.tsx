@@ -15,6 +15,7 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
+  const [signedInUserId, setSignedInUserId] = useState<string | null>(null);
 
   useEffect(() => {
     let mounted = true;
@@ -53,20 +54,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return;
       }
       setSession(s);
-      // Record every successful sign-in so Admin > Staff can show
-      // "Last active". Fire-and-forget — a network blip here must
-      // never block sign-in. The RPC is SECURITY DEFINER and
-      // self-scoped (writes only the caller's lng_staff_members
-      // row), so there's no privilege surface to worry about.
-      if (event === 'SIGNED_IN' && s?.user?.id) {
-        void (async () => {
-          try {
-            await supabase.rpc('lng_record_staff_sign_in');
-          } catch {
-            /* never block sign-in on an admin-side write */
-          }
-        })();
-      }
+      // Note the sign-in; do not act on it here. Anything that talks to
+      // Supabase from inside this callback holds the auth lock hostage — see
+      // the effect below for why. setState is safe, it touches nothing.
+      if (event === 'SIGNED_IN' && s?.user?.id) setSignedInUserId(s.user.id);
     });
 
     // Fast-path. Resolves immediately when the session is already in
@@ -101,6 +92,37 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       sub.subscription.unsubscribe();
     };
   }, []);
+
+  // Record every successful sign-in so Admin > Staff can show "Last active".
+  //
+  // This runs in an effect, not in the onAuthStateChange callback where it used
+  // to live, and the distinction is the whole point. gotrue invokes subscriber
+  // callbacks from inside its own lock and awaits them, so a callback runs while
+  // lock:sb-<ref>-auth-token is held. Starting this RPC there enqueued a nested
+  // acquisition on gotrue's pendingInLock, and the lock holder drains that queue
+  // before releasing — so `void`-ing the promise bought nothing, gotrue awaited
+  // it for us and kept the lock for the whole round trip. Past 5000ms every
+  // other waiter steals the lock and its victim's request dies with "Lock broken
+  // by another request with the 'steal' option".
+  //
+  // An effect runs after render, long after the callback returned and the lock
+  // was released. Keyed on the id rather than on the session so a token refresh
+  // does not re-record; set only by the SIGNED_IN event, so restoring a session
+  // on reload is not mistaken for a fresh sign-in.
+  //
+  // Still fire-and-forget: a network blip must never block sign-in. The RPC is
+  // SECURITY DEFINER and self-scoped (writes only the caller's
+  // lng_staff_members row), so there's no privilege surface to worry about.
+  useEffect(() => {
+    if (!signedInUserId) return;
+    void (async () => {
+      try {
+        await supabase.rpc('lng_record_staff_sign_in');
+      } catch {
+        /* never block sign-in on an admin-side write */
+      }
+    })();
+  }, [signedInUserId]);
 
   const signIn: AuthContextValue['signIn'] = async (email, password) => {
     const { error } = await supabase.auth.signInWithPassword({ email, password });
