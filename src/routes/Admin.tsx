@@ -1,7 +1,7 @@
 import { type CSSProperties, Fragment, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useBookingTypeConfigs, bookingTypeRowLabel, type BookingTypeConfigRow } from '../lib/queries/bookingTypes.ts';
 import { Navigate, useNavigate, useParams } from 'react-router-dom';
-import { AlertTriangle, ArchiveRestore, ArrowDown, ArrowUp, BarChart3, Briefcase, CalendarCheck, CalendarClock, Check, ChevronUp, Clock, CreditCard, FileSignature, FlaskConical, GripVertical, Image as ImageIcon, KeyRound, Layers, Mail, Package, Pencil, Plus, RefreshCw, Rocket, RotateCcw, Settings, Link2, PackageCheck, ShieldAlert, ShieldCheck, ShoppingBag, Trash2, UserPlus, Users, Video, Wallet, X } from 'lucide-react';
+import { AlertTriangle, ArchiveRestore, ArrowDown, ArrowUp, BarChart3, Briefcase, CalendarCheck, CalendarClock, Check, ChevronUp, Clock, CreditCard, FileSignature, FlaskConical, GripVertical, Image as ImageIcon, KeyRound, Layers, Lock, Mail, Package, Pencil, Plus, RefreshCw, Rocket, RotateCcw, Settings, Link2, PackageCheck, ShieldAlert, ShieldCheck, ShoppingBag, Trash2, UserPlus, Users, Video, Wallet, X } from 'lucide-react';
 import {
   Button,
   Card,
@@ -56,6 +56,7 @@ import {
   setClinicianCanEditOwnHours,
   setClinicianSelfServe,
   setMarketingWalkthroughEnabled,
+  setIdleLockEnabled,
   setIsAdmin,
   setIsCustomerService,
   setIsManager,
@@ -3013,6 +3014,32 @@ function StaffTab() {
       });
   };
 
+  // Switches the idle lock screen off (or back on) for one staff member.
+  // Optimistic with rollback, same shape as toggleMarketingWalkthrough.
+  // Denylist: on for everyone until switched off here, so the checkbox
+  // reads "Lock the screen ..." and unticking it is the exemption.
+  const toggleIdleLock = (staffMemberId: string, next: boolean) => {
+    const prev = !next;
+    setManaging((cur) =>
+      cur && cur.staff_member_id === staffMemberId
+        ? { ...cur, idle_lock_enabled: next }
+        : cur,
+    );
+    setError(null);
+    setIdleLockEnabled(staffMemberId, next)
+      .then(() => {
+        staff.refresh();
+      })
+      .catch((e) => {
+        setManaging((cur) =>
+          cur && cur.staff_member_id === staffMemberId
+            ? { ...cur, idle_lock_enabled: prev }
+            : cur,
+        );
+        setError(e instanceof Error ? e.message : String(e));
+      });
+  };
+
   // Toggles a single tab key on/off in admin_page_access. The whole
   // array is rewritten on every change rather than diff'd because
   // Postgres' JSONB arrays don't have an efficient "remove one
@@ -3163,6 +3190,11 @@ function StaffTab() {
                           {s.is_manager ? <RolePill tone="neutral">Manager</RolePill> : null}
                           {s.is_customer_service ? <RolePill tone="neutral">Customer Service</RolePill> : null}
                           {s.require_2fa ? <RolePill tone="neutral">2FA required</RolePill> : null}
+                          {/* Only the exemption is worth a pill. Everyone
+                              else is locked, so saying so on every row is
+                              noise; the one person who is not should be
+                              visible without opening their sheet. */}
+                          {!s.idle_lock_enabled ? <RolePill tone="neutral">No lock screen</RolePill> : null}
                           {/* Pending-invite indicator. Three states
                               surface here, all gated on
                               !invite_accepted_at:
@@ -3495,6 +3527,21 @@ function StaffTab() {
                   disabled={!canEditFinancialPerms}
                   disabledReason={canEditFinancialPerms ? undefined : 'Only the super admin can grant Write off access.'}
                   onChange={(v) => togglePerm(managing.staff_member_id, 'writeoff', v)}
+                />
+              </div>
+            </ManageSection>
+
+            <ManageSection
+              title="Screen lock"
+              description="Lounge covers itself with a lock screen after five idle minutes and asks for this person's password again. On for everyone by default."
+              icon={<Lock size={14} aria-hidden />}
+            >
+              <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
+                <PermissionRow
+                  title="Lock the screen when idle"
+                  description="Switch off to exempt this person. Lounge will then stay open on their session until they sign out, so whatever is on screen, a patient's name, date of birth, phone number, payments or photos, stays readable to anyone at the desk. Leave on unless they work somewhere the public cannot see the tablet."
+                  checked={managing.idle_lock_enabled}
+                  onChange={(v) => toggleIdleLock(managing.staff_member_id, v)}
                 />
               </div>
             </ManageSection>

@@ -32,7 +32,7 @@ export const KIOSK_STATUS_BAR_HEIGHT = 32;
 // doesn't carry a phantom 32px gap.
 export function KioskStatusBar() {
   const { user, loading: authLoading, signOut } = useAuth();
-  const { lockNow } = useLockControls();
+  const { lockNow, canLock } = useLockControls();
   const { account } = useCurrentAccount();
   const now = useNow(60_000);
   const { level, charging, supported: batterySupported } = useBattery();
@@ -249,10 +249,10 @@ export function KioskStatusBar() {
         setProfileOpen(false);
         void signOut();
       }}
-      onLock={() => {
+      onLock={canLock ? () => {
         setProfileOpen(false);
         lockNow();
-      }}
+      } : null}
     />
     </>
   );
@@ -311,7 +311,9 @@ function ProfileSheet({
   canEditOwnAvailability: boolean;
   onMyAvailability: () => void;
   onSignOut: () => void;
-  onLock: () => void;
+  // Null when this staff member is exempt from the lock: there is nothing
+  // for the button to do, so it is not offered.
+  onLock: (() => void) | null;
 }) {
   const label = displayName ?? email ?? 'No account';
   return (
@@ -323,8 +325,9 @@ function ProfileSheet({
         <span style={{ display: 'flex', flexDirection: 'column', gap: theme.space[1] }}>
           <span>{email ?? 'No account'}</span>
           <span style={{ color: theme.color.inkSubtle, fontSize: theme.type.size.sm }}>
-            Lock to cover the screen without ending the session. Sign out to
-            end it.
+            {onLock
+              ? 'Lock to cover the screen without ending the session. Sign out to end it.'
+              : 'Sign out to end this session. The lock screen is switched off for this account.'}
           </span>
         </span>
       }
@@ -334,12 +337,14 @@ function ProfileSheet({
               out is the rare one, so the lock is offered right here rather
               than leaving staff to wait out the idle timer. Secondary, and
               first, because it is the one with no consequences. */}
-          <Button variant="secondary" onClick={onLock}>
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
-              <Lock size={18} aria-hidden />
-              Lock
-            </span>
-          </Button>
+          {onLock ? (
+            <Button variant="secondary" onClick={onLock}>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
+                <Lock size={18} aria-hidden />
+                Lock
+              </span>
+            </Button>
+          ) : null}
           <Button variant="secondary" onClick={onSignOut}>
             Sign out
           </Button>

@@ -13,6 +13,23 @@ import { supabase } from '../supabase.ts';
 // practices) must never appear on the Lounge Staff tab. The
 // presence-of-row pattern handles all of that without flag checks.
 
+// Reads lng_staff_members.idle_lock_enabled into a definite boolean.
+//
+// Deliberately not `=== true`, which is how every other flag in this file is
+// read. Those are allowlists where an unknown value means "no extra power",
+// so the safe answer is false. This one is a security control: the safe
+// answer is that the lock is ON, and only a staff member explicitly marked
+// false is exempt. Null, undefined, or a column that is not there yet (the
+// window between deploying this code and applying
+// 20260914000001_lng_staff_idle_lock.sql) all have to leave the lock on.
+//
+// It lives here, once, because the same decision is made at three call sites
+// and flipping any one of them to `=== true` would quietly unlock every
+// tablet in the building. See idleLockEnabledFrom in staff.test.ts.
+export function idleLockEnabledFrom(raw: boolean | null | undefined): boolean {
+  return raw !== false;
+}
+
 export interface StaffRow {
   // lng_staff_members columns
   staff_member_id: string;
@@ -64,6 +81,11 @@ export interface StaffRow {
   // Schedule "Show me how" banner). Allowlist: defaults false, an admin
   // opts each staff member in via the Staff Manage sheet.
   marketing_walkthrough_enabled: boolean;
+  // Per-staff exemption from the idle lock screen. Denylist, the mirror
+  // of the flag above: defaults TRUE so everyone is locked and new staff
+  // are protected by default, and an admin opts one person out in the
+  // Staff Manage sheet. Only an explicit false exempts them.
+  idle_lock_enabled: boolean;
   // Job title FK into lng_staff_roles. Informational only —
   // independent of admin/manager/page permissions. Null = no role
   // assigned yet.
@@ -130,6 +152,7 @@ interface RawJoinedRow {
   require_2fa: boolean | null;
   admin_page_access: string[] | null;
   marketing_walkthrough_enabled: boolean | null;
+  idle_lock_enabled?: boolean | null;
   role_id: string | null;
   role: { id: string; name: string } | { id: string; name: string }[] | null;
   status: 'active' | 'inactive';
@@ -192,6 +215,7 @@ function mapRow(r: RawJoinedRow): StaffRow {
       ? r.admin_page_access.filter((k): k is string => typeof k === 'string')
       : [],
     marketing_walkthrough_enabled: r.marketing_walkthrough_enabled === true,
+    idle_lock_enabled: idleLockEnabledFrom(r.idle_lock_enabled),
     role_id: r.role_id,
     role_name: role?.name ?? null,
     status: r.status,
@@ -214,7 +238,7 @@ function mapRow(r: RawJoinedRow): StaffRow {
 }
 
 const STAFF_SELECT =
-  'id, account_id, is_admin, is_manager, is_customer_service, is_virtual_impression_clinician, clinician_self_serve, clinician_can_edit_own_hours, authorisation_code, can_view_reports, can_view_financials, can_count_cash, can_write_off, can_view_safe, is_safe_witness, require_2fa, admin_page_access, marketing_walkthrough_enabled, role_id, status, hired_at, deactivated_at, invite_sent_at, invite_expires_at, invite_accepted_at, last_sign_in_at, account:accounts!account_id(id, first_name, last_name, name, login_email, location_id, location:locations!location_id(id, name, type, city)), role:lng_staff_roles!role_id(id, name)';
+  'id, account_id, is_admin, is_manager, is_customer_service, is_virtual_impression_clinician, clinician_self_serve, clinician_can_edit_own_hours, authorisation_code, can_view_reports, can_view_financials, can_count_cash, can_write_off, can_view_safe, is_safe_witness, require_2fa, admin_page_access, marketing_walkthrough_enabled, idle_lock_enabled, role_id, status, hired_at, deactivated_at, invite_sent_at, invite_expires_at, invite_accepted_at, last_sign_in_at, account:accounts!account_id(id, first_name, last_name, name, login_email, location_id, location:locations!location_id(id, name, type, city)), role:lng_staff_roles!role_id(id, name)';
 
 // Lists every staff member, active and inactive, sorted alphabetically
 // by display name. Inactive rows render with a "Deactivated" badge in
@@ -450,6 +474,24 @@ export async function setMarketingWalkthroughEnabled(
   const { error } = await supabase
     .from('lng_staff_members')
     .update({ marketing_walkthrough_enabled: value })
+    .eq('id', staffMemberId);
+  if (error) throw new Error(error.message);
+}
+
+// Exempts one staff member from the idle lock screen, or puts them back
+// under it. Denylist: true is the default and means Lounge locks after
+// five idle minutes as usual; false means it never auto-locks for them.
+//
+// This switches off a security control on a tablet that sits in a public
+// room showing patient records, so it is deliberately a per-person call an
+// admin has to make by name rather than a setting with a blast radius.
+export async function setIdleLockEnabled(
+  staffMemberId: string,
+  value: boolean,
+): Promise<void> {
+  const { error } = await supabase
+    .from('lng_staff_members')
+    .update({ idle_lock_enabled: value })
     .eq('id', staffMemberId);
   if (error) throw new Error(error.message);
 }
@@ -1113,6 +1155,9 @@ export interface CurrentStaffMembership {
   // Per-staff marketing-content walkthrough gate (allowlist, default
   // false). Read by the walkthrough auto-start + Schedule banner.
   marketing_walkthrough_enabled: boolean;
+  // Per-staff idle-lock exemption (denylist, default true). Read by
+  // IdleLockProvider. False means Lounge never auto-locks for them.
+  idle_lock_enabled: boolean;
   // Job-title FK + resolved display name from lng_staff_roles. Both
   // nullable: a staff member without a role assigned, or with a role
   // that's been archived since assignment, lands here with null
@@ -1134,7 +1179,7 @@ export async function fetchCurrentStaffMembership(
   // entire auth gate. Two cheap round-trips, no schema-cache risk.
   const { data, error } = await supabase
     .from('lng_staff_members')
-    .select('id, is_admin, is_manager, is_customer_service, is_virtual_impression_clinician, clinician_can_edit_own_hours, can_view_reports, can_view_financials, can_count_cash, can_write_off, can_view_safe, require_2fa, admin_page_access, marketing_walkthrough_enabled, role_id, status')
+    .select('id, is_admin, is_manager, is_customer_service, is_virtual_impression_clinician, clinician_can_edit_own_hours, can_view_reports, can_view_financials, can_count_cash, can_write_off, can_view_safe, require_2fa, admin_page_access, marketing_walkthrough_enabled, idle_lock_enabled, role_id, status')
     .eq('account_id', accountId)
     .maybeSingle();
   if (error) {
@@ -1180,6 +1225,8 @@ export async function fetchCurrentStaffMembership(
         require_2fa: l.require_2fa === true,
         admin_page_access: [],
         marketing_walkthrough_enabled: false,
+        // Nothing here says this person is exempt, so they are not.
+        idle_lock_enabled: true,
         role_id: null,
         role_name: null,
         status: l.status,
@@ -1203,6 +1250,7 @@ export async function fetchCurrentStaffMembership(
     require_2fa: boolean | null;
     admin_page_access: unknown;
     marketing_walkthrough_enabled: boolean | null;
+    idle_lock_enabled?: boolean | null;
     role_id: string | null;
     status: 'active' | 'inactive';
   };
@@ -1240,6 +1288,7 @@ export async function fetchCurrentStaffMembership(
       ? r.admin_page_access.filter((k): k is string => typeof k === 'string')
       : [],
     marketing_walkthrough_enabled: r.marketing_walkthrough_enabled === true,
+    idle_lock_enabled: idleLockEnabledFrom(r.idle_lock_enabled),
     role_id: r.role_id,
     role_name: roleName,
     status: r.status,

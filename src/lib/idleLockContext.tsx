@@ -22,6 +22,11 @@ import { useIdleLock } from './idleLock.ts';
 
 interface LockControls {
   lockNow: () => void;
+  // False when this staff member is exempt from the lock. The chrome hides
+  // its "Lock" button rather than offering one that cannot do anything:
+  // lockNow is a no-op while the lock is disabled, and a button that looks
+  // like it works and does not is worse than no button.
+  canLock: boolean;
 }
 
 const LockContext = createContext<LockControls | null>(null);
@@ -42,13 +47,20 @@ export function IdleLockProvider({ children }: { children: ReactNode }) {
   const { account } = useCurrentAccount();
   const { pathname } = useLocation();
   const exempt = LOCK_EXEMPT_PATHS.has(pathname) || pathname.startsWith('/auth/');
+  // Per-staff exemption, set in Admin > Staff > Manage. Only an explicit
+  // false lifts the lock: while the account row is still loading, or if the
+  // read failed, `account` is undefined and the lock stays on. A security
+  // control must not be switched off by a question nobody answered yet.
+  const staffExempt = account?.idle_lock_enabled === false;
   // `loading` counts as enabled. While the session is being restored from
   // storage, `user` is null and is indistinguishable from signed out, and a
   // disabled lock clears the stamp, so on every reload of a locked tablet the
   // bootstrap itself would unlock it. Holding through bootstrap keeps the
   // stamp; nothing renders over the app until `user` lands anyway, and
   // RequireStaff is showing its fallback for the whole of it.
-  const { locked, unlock, lockNow } = useIdleLock({ enabled: loading || (!!user && !exempt) });
+  const { locked, unlock, lockNow } = useIdleLock({
+    enabled: loading || (!!user && !exempt && !staffExempt),
+  });
 
   // The account row carries the readable name; the session always carries the
   // email, and the email is what the password is checked against. A lock that
@@ -67,7 +79,7 @@ export function IdleLockProvider({ children }: { children: ReactNode }) {
   }
 
   return (
-    <LockContext.Provider value={{ lockNow }}>
+    <LockContext.Provider value={{ lockNow, canLock: !staffExempt }}>
       {children}
       {shouldLock && email ? (
         <LockScreen
@@ -88,5 +100,5 @@ export function IdleLockProvider({ children }: { children: ReactNode }) {
 // rendered in isolation (Storybook, a unit test) does not have to build the
 // whole auth tree to render a button it is not testing.
 export function useLockControls(): LockControls {
-  return useContext(LockContext) ?? { lockNow: () => {} };
+  return useContext(LockContext) ?? { lockNow: () => {}, canLock: false };
 }

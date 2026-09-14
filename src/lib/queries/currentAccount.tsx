@@ -9,7 +9,7 @@ import {
 } from 'react';
 import { supabase } from '../supabase.ts';
 import { useAuth } from '../auth.tsx';
-import { fetchCurrentStaffMembership } from './staff.ts';
+import { fetchCurrentStaffMembership, idleLockEnabledFrom } from './staff.ts';
 import { isConnectivityError } from '../connectivity.ts';
 import { setTelemetryUser } from '../telemetry/index.js';
 
@@ -90,6 +90,10 @@ export interface CurrentAccount {
   // how" banner both read this. Off for everyone until an admin opts a
   // staff member in.
   marketing_walkthrough_enabled: boolean;
+  // Per-staff idle-lock exemption (denylist, default true). False means
+  // this person is exempt and Lounge never auto-locks on their session.
+  // Read by IdleLockProvider.
+  idle_lock_enabled: boolean;
   // Job title (Receptionist, Hygienist, etc.) from lng_staff_roles.
   // Informational only — shown on the profile sheet and anywhere we
   // attribute work to a staff member. Null when no role is assigned
@@ -310,6 +314,13 @@ export function CurrentAccountProvider({ children }: { children: ReactNode }) {
           admin_page_access: isActiveStaff ? (membership?.admin_page_access ?? []) : [],
           marketing_walkthrough_enabled:
             isActiveStaff && membership?.marketing_walkthrough_enabled === true,
+          // Inverted against the line above on purpose. The walkthrough is
+          // an allowlist, so an unknown membership means "no tour". The lock
+          // is a security control, so an unknown membership has to mean
+          // "locked": only an active staff member with an explicit false is
+          // exempt. Anything else (loading, no row, a read that failed) keeps
+          // the lock on.
+          idle_lock_enabled: !isActiveStaff || idleLockEnabledFrom(membership?.idle_lock_enabled),
           role_name: isActiveStaff ? (membership?.role_name ?? null) : null,
           // Super admin is exempt from the require_2fa gate so a
           // brand-new install can never lock itself out. Every other
