@@ -26,7 +26,56 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 //      and the scroll position are all still there afterwards, which is what
 //      makes the lock cheap enough to have a short timeout. (Cf. the tab
 //      switch bug where a remount silently discarded exactly that state.)
+//
+//   3. The deadline survives a reload. React state does not, so a refresh,
+//      a closed and reopened tab, or a crashed and restored one all used to
+//      hand back an unlocked tablet and a fresh five minutes. Anyone at the
+//      desk could tap reload to walk straight past the lock, which is not a
+//      lock. The stamp lives in localStorage and the lock is derived from it
+//      on mount, so the only ways out are the password and signing out.
 export const IDLE_LOCK_MS = 5 * 60 * 1000;
+
+// The last interaction, as a wall-clock stamp. Written at most once a tick
+// rather than on every keystroke, because a few seconds of drift against a
+// five-minute deadline changes nothing and a write per `wheel` event is a
+// cost for nothing.
+const STORAGE_KEY = 'lng.idle-lock.last-active';
+
+// 0 is the locked sentinel: an epoch stamp is always older than any timeout,
+// so "locked" and "idle past the deadline" are one state and one check.
+//
+// ponytail: one stamp for the whole origin, so two tabs share a deadline and
+// an active tab keeps overwriting a locked sibling's sentinel. Lounge is a
+// one-tab kiosk, so this is invisible; if tabs ever matter, key the stamp per
+// tab and sync locks over the `storage` event instead.
+const LOCKED_STAMP = 0;
+
+// Null means no stamp has ever been written on this device, which is a real
+// state (first ever load, cleared site data) and not a missing value to paper
+// over. Storage itself throwing is a different matter and is logged.
+function readStamp(): number | null {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw === null) return null;
+    const stamp = Number(raw);
+    if (!Number.isFinite(stamp)) {
+      console.error('[idle-lock] discarding unparseable stored stamp', raw);
+      return null;
+    }
+    return stamp;
+  } catch (err) {
+    console.error('[idle-lock] localStorage unreadable; the lock will not survive a reload', err);
+    return null;
+  }
+}
+
+function writeStamp(stamp: number): void {
+  try {
+    localStorage.setItem(STORAGE_KEY, String(stamp));
+  } catch (err) {
+    console.error('[idle-lock] localStorage unwritable; the lock will not survive a reload', err);
+  }
+}
 
 // How often the wall clock is checked. Fine-grained enough that the lock
 // arrives within a few seconds of the deadline, cheap enough to be invisible.
@@ -54,8 +103,14 @@ export function useIdleLock(args: {
   timeoutMs?: number;
 }): IdleLockResult {
   const { enabled, timeoutMs = IDLE_LOCK_MS } = args;
-  const [locked, setLocked] = useState(false);
-  const lastActiveRef = useRef(Date.now());
+  // Read once, on mount: the stored stamp is what a reload has to answer to.
+  const [storedStamp] = useState(readStamp);
+  const [locked, setLocked] = useState(
+    () => storedStamp !== null && Date.now() - storedStamp >= timeoutMs,
+  );
+  // No stamp at all means nobody has used this device yet, so the countdown
+  // starts now rather than resuming something that never happened.
+  const lastActiveRef = useRef(storedStamp ?? Date.now());
   // Read inside the listeners so they can be registered once and still see
   // the current value. A locked screen must not treat the typing in its own
   // password field as activity that would extend the session behind it.
@@ -64,21 +119,25 @@ export function useIdleLock(args: {
 
   const unlock = useCallback(() => {
     lastActiveRef.current = Date.now();
+    writeStamp(lastActiveRef.current);
     setLocked(false);
   }, []);
 
   const lockNow = useCallback(() => {
     if (!enabled) return;
+    writeStamp(LOCKED_STAMP);
     setLocked(true);
   }, [enabled]);
 
   useEffect(() => {
     if (!enabled) {
+      // Nothing behind the lock to protect, and the next person to sign in
+      // must not inherit the last person's expired deadline.
+      lastActiveRef.current = Date.now();
+      writeStamp(lastActiveRef.current);
       setLocked(false);
       return;
     }
-
-    lastActiveRef.current = Date.now();
 
     const markActive = () => {
       if (lockedRef.current) return;
@@ -87,7 +146,14 @@ export function useIdleLock(args: {
 
     const check = () => {
       if (lockedRef.current) return;
-      if (Date.now() - lastActiveRef.current >= timeoutMs) setLocked(true);
+      if (Date.now() - lastActiveRef.current >= timeoutMs) {
+        writeStamp(LOCKED_STAMP);
+        setLocked(true);
+        return;
+      }
+      // Mirror here rather than in markActive: one write a tick instead of
+      // one per keystroke, and at most TICK_MS of drift on a 5 minute clock.
+      writeStamp(lastActiveRef.current);
     };
 
     for (const evt of ACTIVITY_EVENTS) {

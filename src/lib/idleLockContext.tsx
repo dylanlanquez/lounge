@@ -38,11 +38,17 @@ const LOCK_EXEMPT_PATHS = new Set([
 ]);
 
 export function IdleLockProvider({ children }: { children: ReactNode }) {
-  const { user, signOut } = useAuth();
+  const { user, loading, signOut } = useAuth();
   const { account } = useCurrentAccount();
   const { pathname } = useLocation();
   const exempt = LOCK_EXEMPT_PATHS.has(pathname) || pathname.startsWith('/auth/');
-  const { locked, unlock, lockNow } = useIdleLock({ enabled: !!user && !exempt });
+  // `loading` counts as enabled. While the session is being restored from
+  // storage, `user` is null and is indistinguishable from signed out, and a
+  // disabled lock clears the stamp, so on every reload of a locked tablet the
+  // bootstrap itself would unlock it. Holding through bootstrap keeps the
+  // stamp; nothing renders over the app until `user` lands anyway, and
+  // RequireStaff is showing its fallback for the whole of it.
+  const { locked, unlock, lockNow } = useIdleLock({ enabled: loading || (!!user && !exempt) });
 
   // The account row carries the readable name; the session always carries the
   // email, and the email is what the password is checked against. A lock that

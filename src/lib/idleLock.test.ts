@@ -10,6 +10,9 @@ import { IDLE_LOCK_MS, useIdleLock } from './idleLock.ts';
 
 beforeEach(() => {
   vi.useFakeTimers();
+  // The stamp is device-wide and outlives a render, which is the point of
+  // it. Tests have to start from a device nobody has touched.
+  localStorage.clear();
 });
 
 afterEach(() => {
@@ -105,5 +108,80 @@ describe('useIdleLock', () => {
     const { result } = renderHook(() => useIdleLock({ enabled: true }));
     act(() => result.current.lockNow());
     expect(result.current.locked).toBe(true);
+  });
+
+  // ── Surviving a reload ─────────────────────────────────────────────────
+  //
+  // A remount is every way out of the lock that is not the password: F5, a
+  // hard refresh, closing the tab and reopening it, the tablet restoring the
+  // session after a crash. All of them have to come back locked, or the lock
+  // is decoration.
+
+  it('is still locked after a reload', async () => {
+    const first = renderHook(() => useIdleLock({ enabled: true }));
+    await idleFor(IDLE_LOCK_MS + 1_000);
+    expect(first.result.current.locked).toBe(true);
+    first.unmount();
+
+    const second = renderHook(() => useIdleLock({ enabled: true }));
+    expect(second.result.current.locked).toBe(true);
+  });
+
+  it('is still locked after a reload when it was locked by hand', async () => {
+    const first = renderHook(() => useIdleLock({ enabled: true }));
+    act(() => first.result.current.lockNow());
+    first.unmount();
+
+    const second = renderHook(() => useIdleLock({ enabled: true }));
+    expect(second.result.current.locked).toBe(true);
+  });
+
+  it('locks on load when the deadline passed while the tab was closed', async () => {
+    const first = renderHook(() => useIdleLock({ enabled: true }));
+    await idleFor(60_000);
+    expect(first.result.current.locked).toBe(false);
+    first.unmount();
+
+    // Tablet off overnight, then opened again.
+    vi.setSystemTime(Date.now() + 8 * 60 * 60 * 1000);
+    const second = renderHook(() => useIdleLock({ enabled: true }));
+    expect(second.result.current.locked).toBe(true);
+  });
+
+  it('resumes the countdown across a reload rather than restarting it', async () => {
+    const first = renderHook(() => useIdleLock({ enabled: true }));
+    await idleFor(IDLE_LOCK_MS - 30_000);
+    first.unmount();
+
+    // Reloading is not interaction. The 30 seconds that were left are still
+    // the 30 seconds that are left, otherwise a reload loop never locks.
+    const second = renderHook(() => useIdleLock({ enabled: true }));
+    expect(second.result.current.locked).toBe(false);
+    await idleFor(40_000);
+    expect(second.result.current.locked).toBe(true);
+  });
+
+  it('comes back unlocked after a reload once the password was accepted', async () => {
+    const first = renderHook(() => useIdleLock({ enabled: true }));
+    await idleFor(IDLE_LOCK_MS + 1_000);
+    act(() => first.result.current.unlock());
+    first.unmount();
+
+    const second = renderHook(() => useIdleLock({ enabled: true }));
+    expect(second.result.current.locked).toBe(false);
+  });
+
+  it('does not hand the next person to sign in an expired deadline', async () => {
+    const first = renderHook(() => useIdleLock({ enabled: true }));
+    await idleFor(IDLE_LOCK_MS + 1_000);
+    expect(first.result.current.locked).toBe(true);
+    // Signing out from the lock screen drops to a lock-exempt surface.
+    first.rerender();
+    const signedOut = renderHook(() => useIdleLock({ enabled: false }));
+    signedOut.unmount();
+    first.unmount();
+
+    const next = renderHook(() => useIdleLock({ enabled: true }));
+    expect(next.result.current.locked).toBe(false);
   });
 });
