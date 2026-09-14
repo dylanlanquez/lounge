@@ -6,7 +6,7 @@
 
 import { act, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { IDLE_LOCK_MS, useIdleLock } from './idleLock.ts';
+import { IDLE_LOCK_MS, isLockedOrIdle, useIdleLock } from './idleLock.ts';
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -169,6 +169,37 @@ describe('useIdleLock', () => {
 
     const second = renderHook(() => useIdleLock({ enabled: true }));
     expect(second.result.current.locked).toBe(false);
+  });
+
+  // ── Safe to reload ─────────────────────────────────────────────────────
+  //
+  // The service-worker updater in src/main.tsx asks this before reloading a
+  // kiosk out from under whoever is standing at it.
+
+  it('is not safe to reload while somebody is working', async () => {
+    const { result } = renderHook(() => useIdleLock({ enabled: true }));
+    await interact();
+    await idleFor(10_000);
+    expect(result.current.locked).toBe(false);
+    expect(isLockedOrIdle()).toBe(false);
+  });
+
+  it('is safe to reload once the screen is locked', async () => {
+    const { result } = renderHook(() => useIdleLock({ enabled: true }));
+    act(() => result.current.lockNow());
+    expect(isLockedOrIdle()).toBe(true);
+  });
+
+  it('is safe to reload on a tablet that has gone quiet', async () => {
+    renderHook(() => useIdleLock({ enabled: true }));
+    await idleFor(IDLE_LOCK_MS + 1_000);
+    expect(isLockedOrIdle()).toBe(true);
+  });
+
+  it('is safe to reload a device that has no stamp at all', () => {
+    // Storage blocked, or nobody has ever used this tablet. Nothing says
+    // somebody is mid-task, and a kiosk stranded on an old bundle is worse.
+    expect(isLockedOrIdle()).toBe(true);
   });
 
   it('does not hand the next person to sign in an expired deadline', async () => {

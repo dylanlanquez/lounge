@@ -95,6 +95,27 @@ export interface IdleLockResult {
   lockNow: () => void;
 }
 
+// Is the tablet safe to reload out from under whoever is standing at it?
+//
+// Used by the service-worker updater in src/main.tsx. A deploy reloads open
+// kiosks so they stop running a stale bundle, and a reload throws away a
+// half-typed walk-in, an open sheet and the scroll position. Waiting for the
+// lock is what makes that affordable: behind the lock nobody is mid-anything,
+// and the lock itself now survives a reload, so the reload is invisible.
+//
+// One comparison covers both cases worth reloading in, because the locked
+// sentinel is an epoch stamp: the screen is locked, or it has been quiet for
+// longer than the lock's own timeout (a signed-out tablet parked on /sign-in
+// never locks, and must still get updates).
+export function isLockedOrIdle(): boolean {
+  const stamp = readStamp();
+  // No stamp means storage is blocked or nobody has touched this device yet,
+  // so there is nothing to say somebody is mid-task. A kiosk stuck on an old
+  // bundle forever is the worse of the two failures.
+  if (stamp === null) return true;
+  return Date.now() - stamp >= IDLE_LOCK_MS;
+}
+
 export function useIdleLock(args: {
   // False on the surfaces where a lock makes no sense (signed out, the
   // sign-in and 2FA screens, the public connect pages). Flipping this to

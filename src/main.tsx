@@ -4,6 +4,7 @@ import { BrowserRouter } from 'react-router-dom';
 import { App } from './App.tsx';
 import { applyGlobalStyles } from './theme/globalStyles.ts';
 import { installScrollGuard } from './lib/installScrollGuard.ts';
+import { isLockedOrIdle } from './lib/idleLock.ts';
 import { ErrorBoundary, initTelemetry } from './lib/telemetry/index.js';
 
 // ── Telemetry ────────────────────────────────────────────────────────────────
@@ -49,10 +50,27 @@ installScrollGuard();
 // foreground (the browser's own 24h check is far too slow for a kiosk).
 if ('serviceWorker' in navigator && import.meta.env.PROD) {
   let reloading = false;
+
+  // Reload when the desk is not in the middle of something. sw.js is now
+  // stamped with the commit on every build (scripts/stamp-sw-version.mjs), so
+  // this fires on every deploy rather than on the rare hand-bumped one, and a
+  // reload throws away a half-typed walk-in form. Behind the lock there is
+  // nobody to interrupt, and the lock survives the reload, so the update lands
+  // invisibly. A tablet in constant use updates at its next quiet five
+  // minutes, which is the correct trade: never interrupt a receptionist
+  // mid-patient to ship a bundle.
+  const reloadWhenSafe = () => {
+    if (isLockedOrIdle()) {
+      window.location.reload();
+      return;
+    }
+    window.setTimeout(reloadWhenSafe, 10_000);
+  };
+
   navigator.serviceWorker.addEventListener('controllerchange', () => {
     if (reloading) return;
     reloading = true;
-    window.location.reload();
+    reloadWhenSafe();
   });
   window.addEventListener('load', () => {
     navigator.serviceWorker

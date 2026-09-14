@@ -7,16 +7,21 @@
 // Uses skipWaiting + clients.claim so a deploy takes effect on next
 // page reload without the old SW lingering.
 
-// Bump this to force every device onto the latest deploy. The
-// kiosk auto-update chain in src/main.tsx only reloads a running tab
-// when the bytes of this file change (new worker -> controllerchange
-// -> reload). A normal code deploy leaves sw.js untouched, so an
-// always-on tablet keeps its old in-memory bundle indefinitely until
-// this VERSION changes. Bump it on any deploy that must reach the
-// kiosks (a correctness fix, not just icon-manifest changes). Also
-// paired with the ?v= query string on favicons in index.html /
+// Placeholder. scripts/stamp-sw-version.mjs rewrites this line in
+// dist/sw.js at build time with the commit being deployed, so do not
+// hand-bump it and do not rename it (the script fails the build if the
+// line stops matching).
+//
+// The kiosk auto-update chain in src/main.tsx only reloads a running
+// tab when the bytes of this file change (new worker -> controllerchange
+// -> reload). While this was a hand-maintained constant a normal deploy
+// left sw.js untouched, so an always-on tablet kept its old in-memory
+// bundle until somebody remembered to bump it, and nobody did. Stamping
+// the SHA means every deploy reaches every kiosk on its own.
+//
+// Still paired with the ?v= query string on favicons in index.html /
 // manifest.webmanifest to force a fresh favicon fetch.
-const VERSION = 'v9';
+const VERSION = 'dev';
 
 self.addEventListener('install', (event) => {
   event.waitUntil(self.skipWaiting());
