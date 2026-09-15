@@ -262,7 +262,11 @@ export function NewBookingSheet({
     setPatient(null);
     setPatientCreate(null);
     setCreatePatientError(null);
-    setServiceType('');
+    // A pinned service (Voice call mode) survives the reset: clearing
+    // it here left the sheet with no service, so the config never
+    // loaded, the When section never rendered and Book it stayed
+    // disabled (Dylan, 15 Sep 2026).
+    setServiceType(lockedServiceType ?? '');
     setAxisValues({ repair_variant: null, product_key: null, arch: null });
     setAxisOptions({});
     setAxisOptionsLoading(false);
@@ -279,7 +283,7 @@ export function NewBookingSheet({
     setConfigError(null);
     setConflicts([]);
     setConflictError(null);
-  }, [open, initialIso]);
+  }, [open, initialIso, lockedServiceType]);
 
   // Re-derive sendEmail default from patient's email on file, but
   // only if the operator hasn't flipped it manually yet.

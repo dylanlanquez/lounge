@@ -425,8 +425,11 @@ export function Schedule() {
       }}
     >
       <div style={{ maxWidth: theme.layout.pageMaxWidth, margin: '0 auto' }}>
-        <CashCountDueBanner />
-        <MarketingCampaignBanner />
+        {/* Clinic-floor notices. Voice call mode is an agent's phone
+            diary: cash counts and marketing photos are not their job,
+            so neither banner is shown there. */}
+        {!voiceMode ? <CashCountDueBanner /> : null}
+        {!voiceMode ? <MarketingCampaignBanner /> : null}
         {/* Header structure (top → bottom):
             Row 1: month label centred.
             Row 2: chevrons flank the WeekStrip (40px / 1fr / 40px grid).
