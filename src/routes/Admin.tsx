@@ -3491,7 +3491,7 @@ function StaffTab() {
                 />
                 <PermissionRow
                   title="Voice call agent"
-                  description="Takes booked voice calls. Adds the Clinic / Voice calls switch to their top bar: in Voice call mode the schedule shows their calls only, the nav drops to Schedule, Patients and Ledger, and the bell shows call notifications only. Also counts them in the Voice call agent pool (Conflicts) so voice call capacity follows the team."
+                  description="Takes booked voice calls. Counts them in the Voice call agent pool (Conflicts) so voice call capacity follows the team, and adds the Clinic / Voice calls switch to their top bar: in Voice call mode the schedule shows calls only, the nav drops to Schedule, Patients and Ledger, and the bell shows call notifications only. Admins have the switch regardless, without counting as capacity."
                   checked={managing.is_voice_call_agent}
                   onChange={(v) => toggleVoiceCallAgent(managing.staff_member_id, v)}
                 />

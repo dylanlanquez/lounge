@@ -634,7 +634,7 @@ async function fetchAppointmentPhases(
 ): Promise<AppointmentPhase[]> {
   const { data, error } = await admin
     .from('lng_appointment_phases')
-    .select('phase_index, label, patient_required, start_at, end_at')
+    .select('phase_index, label, patient_required, is_buffer, start_at, end_at')
     .eq('appointment_id', appointmentId)
     .order('phase_index', { ascending: true });
   if (error || !Array.isArray(data)) return [];

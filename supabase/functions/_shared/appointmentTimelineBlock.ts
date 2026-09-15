@@ -36,6 +36,10 @@ interface Phase {
   phase_index: number;
   label: string;
   patient_required: boolean;
+  // Held time after the booking (agent wrap-up, room reset). Never
+  // shown to the patient: it is dropped before rendering, so the
+  // finish row lands at the end of the last real phase.
+  is_buffer?: boolean | null;
   start_at: string;
   end_at: string;
 }
@@ -60,7 +64,10 @@ export function composeAppointmentTimelineBlock(phases: Phase[]): string {
   // array. The materialiser writes phase_index in ascending order
   // already, but the SELECT-side ordering can drop if the query is
   // changed later.
-  const sorted = [...phases].sort((a, b) => a.phase_index - b.phase_index);
+  const sorted = [...phases]
+    .filter((p) => p.is_buffer !== true)
+    .sort((a, b) => a.phase_index - b.phase_index);
+  if (sorted.length === 0) return '';
   const finishAt = sorted[sorted.length - 1]?.end_at ?? null;
 
   const rows: string[] = [];

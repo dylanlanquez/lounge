@@ -1,4 +1,4 @@
-import { Hourglass, Pencil, Plus, UserRound } from 'lucide-react';
+import { Hourglass, Pencil, Plus, Timer, UserRound } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { theme } from '../../theme/index.ts';
 
@@ -30,6 +30,9 @@ export interface PhaseRibbonPhase {
   phase_index: number;
   label: string;
   patient_required: boolean;
+  // Trailing buffer: held time after the booking. Drawn as a dashed
+  // outline so it reads as "held, not work", never solid.
+  is_buffer?: boolean;
   // Duration shown on the chip and used to size it proportionally.
   duration_minutes: number;
   // Optional pool ids to show as a small subscript chip-set.
@@ -429,7 +432,8 @@ function PhaseChip({
   ) => void;
 }) {
   const passive = !phase.patient_required;
-  const Icon = phase.patient_required ? UserRound : Hourglass;
+  const buffer = phase.is_buffer === true;
+  const Icon = buffer ? Timer : phase.patient_required ? UserRound : Hourglass;
 
   const interactive = !!onClick;
   // Track the pointer-down position so we can distinguish a click
@@ -465,7 +469,7 @@ function PhaseChip({
       }}
       disabled={!interactive && !draggable}
       aria-label={`${phase.label}, ${phase.duration_minutes} minutes, ${
-        phase.patient_required ? 'patient required' : 'patient may leave'
+        buffer ? 'buffer, resources held after the booking' : phase.patient_required ? 'patient required' : 'patient may leave'
       }`}
       style={{
         flex: `1 1 ${flexBasis}`,
@@ -483,7 +487,9 @@ function PhaseChip({
         alignItems: 'center',
         padding: compact ? `0 ${theme.space[2]}px` : `${theme.space[1]}px ${theme.space[2]}px`,
         borderRadius: theme.radius.input - 4,
-        border: 'none',
+        // A buffer is drawn hollow with a dashed edge: still part of
+        // the booking's footprint, but nothing happens in it.
+        border: buffer ? `1.5px dashed ${theme.color.accent}` : 'none',
         cursor: isDragging
           ? 'grabbing'
           : draggable
@@ -496,7 +502,7 @@ function PhaseChip({
         // lower saturation signals "patient not here right now".
         // No diagonal hatch — that pattern reads as "pending /
         // warning state" rather than "wait time".
-        backgroundColor: passive ? theme.color.accentBg : theme.color.accent,
+        backgroundColor: buffer ? 'transparent' : passive ? theme.color.accentBg : theme.color.accent,
         // Text colour flips for legibility on the pale background.
         color: passive ? theme.color.accent : '#FFFFFF',
         textAlign: 'center',

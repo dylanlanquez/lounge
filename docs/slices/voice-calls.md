@@ -2,9 +2,14 @@
 
 **Status:** Built, type-checked, unit-tested. Migration applied to shadow and to Meridian (15 Sep 2026, dry-run then apply, post-verified). Awaiting frontend deploy.
 **Phase:** Cross-cutting (schedule, staff, notifications). First of the voice call slices; the Twilio call surface and the voice call visit page follow.
-**Migration (this slice):** `20260915000001_lng_voice_calls.sql` (applied and verified on shadow and Meridian)
+**Migrations (this slice):** `20260915000001_lng_voice_calls.sql` and `20260915000002_lng_phase_buffer.sql` (both applied and verified on shadow and Meridian)
 
 **Touched files:**
+- `supabase/migrations/20260915000002_lng_phase_buffer.sql` — `is_buffer` on booking type phases and appointment phases, buffer-is-passive check, one buffer per config, resolver + materialiser carry the flag
+- `src/routes/AdminBookingTypesTab.tsx` — "Buffer after each call/booking" control under every phase ribbon; buffer kept last on add and reorder
+- `src/components/PhaseEditor/PhaseEditor.tsx` — booking-type vocabulary ("Is the patient on the call?" for voice and video calls) and a reduced buffer mode
+- `src/components/PhaseRibbon/PhaseRibbon.tsx` — dashed hollow buffer chip
+- `supabase/functions/_shared/appointmentTimelineBlock.ts`, `send-appointment-confirmation`, `send-appointment-reminders` — buffer phases never appear in patient emails
 - `supabase/migrations/20260915000001_lng_voice_calls.sql` — `lng_staff_members.is_voice_call_agent`, the `voice-call-agent` staff-role pool with two-way flag/pool sync triggers, `voice_call` in every service_type check, closures rule, parent config + "Voice call" phase, four patient email overrides
 - `src/lib/voiceCall.ts` — shared vocabulary: `VOICE_CALL_SERVICE_TYPE`, `VOICE_CALL_POOL`, `isVoiceCall`, `voiceCallIsLive`, `telHref`
 - `src/lib/voiceCallMode.tsx` — `VoiceCallModeProvider` / `useVoiceCallMode`, remembered per staff member per device
@@ -38,7 +43,8 @@
 - **One fact, two homes.** `is_voice_call_agent` on the staff member and membership of the pool are kept identical by two triggers (flag → assignment, assignment → flag) with a transaction-local guard against recursion.
 - **`voice_call` is a first-class service type** with a parent config row (Mon-Fri 9-18, Sat 10-16), a 15 min "Voice call" phase, and its own patient emails (confirmation, reschedule, cancellation, reminder) that never print the clinic address.
 - **Remote team rule.** Whole-clinic closures do not block voice calls, exactly as they do not block virtual impressions. A `voice_call` closure does.
-- **Mode is a view, not a permission.** The switch only exists for agents. A pure agent (no admin/manager) starts in Voice call mode; an admin who also takes calls starts in Clinic mode. The choice is stored per staff member on the device (`lng.voiceCallMode.<staff_member_id>`), so a shared iPad does not leak one person's mode onto the next. Every route keeps enforcing its real permission flags.
+- **Buffer after each call.** Admin → Booking types → Voice call → "Buffer after each call": None, 5, 10, 15, 20 or 30 min. It is the trailing phase flagged `is_buffer`: patient never present, holds what the last working phase held (the agent), always last. The conflict checker, both slot scanners and the Down time sheet treat it as any other phase, so the next call cannot start until the buffer has run; the patient-facing duration and the email timeline leave it out. Available on every booking type, not just calls. Whether a phase is a buffer is structural (read from the parent); children can only change its length.
+- **Mode is a view, not a permission.** The switch exists for agents and for admins (admins never count as capacity). A pure agent (no admin/manager) starts in Voice call mode; an admin who also takes calls starts in Clinic mode. The choice is stored per staff member on the device (`lng.voiceCallMode.<staff_member_id>`), so a shared iPad does not leak one person's mode onto the next. Every route keeps enforcing its real permission flags.
 - **Voice call mode, concretely:** Schedule lists voice calls only (week strip dots count calls only), the Filter and Down time pills go, the next-call hero and counts arrive, New booking becomes New voice call with the service pinned, the detail sheet's primary action is Call patient (`tel:` link until Twilio), the bottom nav is Schedule · Patients · Ledger, the tray hides Cash counts / Reports / Marketing / Admin / My availability, and the bell scopes to rows whose booking is a voice call.
 
 ---
@@ -57,6 +63,11 @@
 10. Sign in as a non-agent on the same device: no switch, no voice mode.
 11. Admin → Closures: add a whole-clinic closure; voice calls on that date still book. Add a Voice calls closure; they do not.
 12. Phone width: the switch shows icons only; the hero stacks counts under the headline; pills stay on one row.
+13. Admin → Booking types → Voice call: under the ribbon, "Buffer after each call" reads None. Pick 5 min: a dashed "Buffer 5m" chip appears after "Voice call", Operational reads 20 min, Patient in and Telling patient stay 15. Tap the chip: the editor opens as "Edit buffer" with no patient question. Tap "Voice call": the question reads "Is the patient on the call?" with "Patient on the call / Patient off the call".
+14. With one agent and a call at 10:00, the New voice call time list skips 10:15 and offers 10:30. Book at 10:30: the confirmation email's timeline (where used) shows no Buffer row.
+15. Add a phase with "+ Add" while a buffer exists: the new phase lands before the buffer. Drag the buffer earlier: it snaps back to the end.
+16. Set the buffer back to None: the chip disappears and 10:15 is bookable again.
+17. Sign in as an admin who is not an agent: the Clinic | Voice calls switch is present; the Voice call agent pool in Conflicts does not list them.
 
 ---
 

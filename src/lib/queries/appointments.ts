@@ -28,6 +28,8 @@ export interface AppointmentPhaseSummary {
   phase_index: number;
   label: string;
   patient_required: boolean;
+  /** Held time after the booking (see lng_booking_type_phases.is_buffer). */
+  is_buffer: boolean;
   start_at: string;
   end_at: string;
   status: 'pending' | 'in_progress' | 'complete' | 'skipped';

@@ -20,10 +20,11 @@ import { useCurrentAccount } from './queries/currentAccount.tsx';
 //   * the top bar hides every admin and money destination;
 //   * the notifications bell shows voice call notifications only.
 //
-// The switch lives in the top bar and only exists for staff flagged
-// is_voice_call_agent. An agent with no other permissions starts in
-// voice call mode; an admin or manager who also takes calls starts in
-// clinic mode and switches when they sit down to the phones. The choice
+// The switch lives in the top bar for staff flagged is_voice_call_agent
+// and for admins (Dylan, 15 Sep 2026: admins get the toggle too, so
+// they can see the agents' view without being counted as capacity). An
+// agent with no other permissions starts in voice call mode; an admin
+// starts in clinic mode and switches when they sit down to the phones. The choice
 // is remembered per staff member on this device, so a shared iPad does
 // not leak one person's mode onto the next.
 //
@@ -68,7 +69,8 @@ function writeStored(staffMemberId: string, value: boolean): void {
 export function VoiceCallModeProvider({ children }: { children: ReactNode }) {
   const { account } = useCurrentAccount();
   const staffMemberId = account?.staff_member_id ?? null;
-  const available = account?.is_voice_call_agent === true;
+  const available =
+    account?.is_voice_call_agent === true || account?.is_admin === true || account?.is_super_admin === true;
   const defaultOn = account?.is_voice_call_only === true;
   // Bumped on every write so the memo below re-reads storage. Reading
   // synchronously (rather than in an effect) means the first paint

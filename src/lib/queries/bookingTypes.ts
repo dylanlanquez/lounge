@@ -137,6 +137,9 @@ export interface ResolvedPhase {
   phase_index: number;
   label: string;
   patient_required: boolean;
+  // Trailing buffer: resources stay held after the booking, the
+  // patient is never present, never shown to the patient.
+  is_buffer: boolean;
   duration_min: number | null;
   duration_max: number | null;
   duration_default: number | null;
@@ -649,6 +652,9 @@ export interface BookingTypePhaseRow {
   // semantics — when a child phase row exists, all its fields win).
   label: string;
   patient_required: boolean;
+  // Trailing buffer phase (see migration 20260915000002). At most one
+  // per config; always passive; holds the previous phase's pools.
+  is_buffer: boolean;
   duration_min: number | null;
   duration_max: number | null;
   duration_default: number | null;
@@ -750,6 +756,7 @@ export async function upsertBookingTypePhase(input: {
   phase_index: number;
   label: string;
   patient_required: boolean;
+  is_buffer?: boolean;
   duration_min?: number | null;
   duration_max?: number | null;
   duration_default?: number | null;
@@ -760,6 +767,7 @@ export async function upsertBookingTypePhase(input: {
     phase_index: input.phase_index,
     label: input.label,
     patient_required: input.patient_required,
+    is_buffer: input.is_buffer ?? false,
     duration_min: input.duration_min ?? null,
     duration_max: input.duration_max ?? null,
     duration_default: input.duration_default ?? null,

@@ -71,6 +71,7 @@ interface RawRow {
         phase_index: number;
         label: string;
         patient_required: boolean;
+        is_buffer?: boolean | null;
         start_at: string;
         end_at: string;
         status: 'pending' | 'in_progress' | 'complete' | 'skipped';
@@ -86,7 +87,7 @@ interface RawRow {
 // yet — the renderer falls back to a single implicit phase in that
 // case so legacy rows still display.
 const PHASE_SELECT =
-  'phases:lng_appointment_phases ( phase_index, label, patient_required, start_at, end_at, status, pool_ids )';
+  'phases:lng_appointment_phases ( phase_index, label, patient_required, is_buffer, start_at, end_at, status, pool_ids )';
 // Who was actually on the video call, and when. The host rows are the
 // clinician's real time on the call; the Down time sheet measures the
 // virtual impression clinician from these rather than the booked slot.
@@ -164,6 +165,7 @@ function mapRows(rows: unknown[]): AppointmentRow[] {
           phase_index: p.phase_index,
           label: p.label,
           patient_required: p.patient_required,
+          is_buffer: p.is_buffer === true,
           start_at: p.start_at,
           end_at: p.end_at,
           status: p.status,

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { Trash2 } from 'lucide-react';
+import { Timer, Trash2 } from 'lucide-react';
 import {
   BottomSheet,
   Button,
@@ -8,9 +8,58 @@ import {
 } from '../index.ts';
 import { theme } from '../../theme/index.ts';
 import {
+  type BookingServiceType,
   type BookingTypePhaseRow,
   type ResourcePoolRow,
 } from '../../lib/queries/bookingTypes.ts';
+
+// The editor speaks the booking type's own language. "Patient in
+// chair" is right for a clinic visit and wrong for a phone call
+// (Dylan, 15 Sep 2026): a voice call agent needs "on the call".
+interface PhaseVocabulary {
+  presenceTitle: string;
+  presenceSubtitle: string;
+  activeLabel: string;
+  passiveLabel: string;
+  labelPlaceholder: string;
+  needsSubtitle: string;
+}
+
+function vocabularyFor(serviceType: BookingServiceType | undefined): PhaseVocabulary {
+  if (serviceType === 'voice_call') {
+    return {
+      presenceTitle: 'Is the patient on the call?',
+      presenceSubtitle:
+        'Active phases hold the agent while the patient is on the line. Passive phases free the patient; whatever the phase holds stays busy.',
+      activeLabel: 'Patient on the call',
+      passiveLabel: 'Patient off the call',
+      labelPlaceholder: 'Voice call',
+      needsSubtitle:
+        'Pick the staff this phase holds. The conflict checker uses this list to know who is busy when.',
+    };
+  }
+  if (serviceType === 'virtual_impression_appointment') {
+    return {
+      presenceTitle: 'Is the patient on the video call?',
+      presenceSubtitle:
+        'Active phases hold the clinician while the patient is on the call. Passive phases free the patient; whatever the phase holds stays busy.',
+      activeLabel: 'Patient on the call',
+      passiveLabel: 'Patient off the call',
+      labelPlaceholder: 'Video call',
+      needsSubtitle:
+        'Pick the staff this phase holds. The conflict checker uses this list to know who is busy when.',
+    };
+  }
+  return {
+    presenceTitle: 'Is the patient here?',
+    presenceSubtitle: 'Active phases hold the chair and the clinician. Passive phases free the patient to leave.',
+    activeLabel: 'Patient in chair',
+    passiveLabel: 'Patient may leave',
+    labelPlaceholder: 'Sign in & assess',
+    needsSubtitle:
+      "Pick the chairs, rooms, lab benches or staff this phase holds. The conflict checker uses this list to know what's busy when.",
+  };
+}
 
 // PhaseEditor — bottom sheet (matches the rest of the tablet UI)
 // for adding or editing one phase of a booking type. Three things
@@ -59,6 +108,10 @@ export interface PhaseEditorValues {
   phase_index: number;
   label: string;
   patient_required: boolean;
+  // Carried through unchanged from the row being edited: the editor
+  // never turns a phase into a buffer or back (that is the "Buffer
+  // after" control on the booking type card).
+  is_buffer: boolean;
   duration_default: number;
   duration_min: number | null;
   duration_max: number | null;
@@ -76,6 +129,8 @@ export interface PhaseEditorProps {
   // remove the row (parent edit deletes the phase entirely; child
   // override deletes just the override row, reverting to inherit).
   onDelete?: (phaseId: string) => Promise<void>;
+  // Which booking type the phase belongs to; picks the wording.
+  serviceType?: BookingServiceType;
 }
 
 export function PhaseEditor({
@@ -85,7 +140,17 @@ export function PhaseEditor({
   onClose,
   onSave,
   onDelete,
+  serviceType,
 }: PhaseEditorProps) {
+  const words = vocabularyFor(serviceType);
+  // Buffer phases are edited in a reduced form: no presence question
+  // (a buffer never has the patient) and a plain explanation instead.
+  const isBuffer =
+    target?.kind === 'edit'
+      ? target.phase.is_buffer
+      : target?.kind === 'child-override'
+        ? target.parentPhase.is_buffer
+        : false;
   const [label, setLabel] = useState('');
   const [patientRequired, setPatientRequired] = useState(true);
   const [durationDefault, setDurationDefault] = useState<string>('');
@@ -150,7 +215,8 @@ export function PhaseEditor({
           config_id: target.phase.config_id,
           phase_index: target.phase.phase_index,
           label: label.trim(),
-          patient_required: patientRequired,
+          patient_required: isBuffer ? false : patientRequired,
+          is_buffer: target.phase.is_buffer,
           duration_default: dDefault,
           duration_min: null,
           duration_max: null,
@@ -164,6 +230,7 @@ export function PhaseEditor({
           phase_index: target.next_phase_index,
           label: label.trim(),
           patient_required: patientRequired,
+          is_buffer: false,
           duration_default: dDefault,
           duration_min: null,
           duration_max: null,
@@ -180,7 +247,8 @@ export function PhaseEditor({
           config_id: target.childConfigId,
           phase_index: target.parentPhase.phase_index,
           label: label.trim(),
-          patient_required: patientRequired,
+          patient_required: isBuffer ? false : patientRequired,
+          is_buffer: target.parentPhase.is_buffer,
           duration_default: dDefault,
           duration_min: null,
           duration_max: null,
@@ -226,10 +294,14 @@ export function PhaseEditor({
 
   const sheetTitle =
     target.kind === 'edit'
-      ? `Edit phase ${target.phase.phase_index}`
+      ? isBuffer
+        ? 'Edit buffer'
+        : `Edit phase ${target.phase.phase_index}`
       : target.kind === 'create'
         ? 'Add phase'
-        : `Override duration · phase ${target.parentPhase.phase_index}`;
+        : isBuffer
+          ? 'Override buffer'
+          : `Override duration · phase ${target.parentPhase.phase_index}`;
   const isChildOverride = target.kind === 'child-override';
   const showDelete =
     (target.kind === 'edit' && !!onDelete) ||
@@ -295,24 +367,25 @@ export function PhaseEditor({
           <Input
             value={label}
             onChange={(e) => setLabel(e.target.value)}
-            placeholder="Sign in & assess"
+            placeholder={isBuffer ? 'Buffer' : words.labelPlaceholder}
             autoFocus
           />
         </Section>
 
-        <Section
-          title="Is the patient here?"
-          subtitle="Active phases hold the chair and the clinician. Passive phases free the patient to leave."
-        >
-          <SegmentedControl
-            value={patientRequired ? 'active' : 'passive'}
-            onChange={(v) => setPatientRequired(v === 'active')}
-            options={[
-              { value: 'active', label: 'Patient in chair' },
-              { value: 'passive', label: 'Patient may leave' },
-            ]}
-          />
-        </Section>
+        {isBuffer ? (
+          <BufferNote />
+        ) : (
+          <Section title={words.presenceTitle} subtitle={words.presenceSubtitle}>
+            <SegmentedControl
+              value={patientRequired ? 'active' : 'passive'}
+              onChange={(v) => setPatientRequired(v === 'active')}
+              options={[
+                { value: 'active', label: words.activeLabel },
+                { value: 'passive', label: words.passiveLabel },
+              ]}
+            />
+          </Section>
+        )}
 
         <Section title="How long?" subtitle="In minutes.">
           <div style={{ maxWidth: 200 }}>
@@ -331,8 +404,12 @@ export function PhaseEditor({
         </Section>
 
         <Section
-          title="What does this phase need?"
-          subtitle="Pick the chairs, rooms, lab benches or staff this phase holds. The conflict checker uses this list to know what's busy when."
+          title={isBuffer ? 'What stays held?' : 'What does this phase need?'}
+          subtitle={
+            isBuffer
+              ? 'What the buffer keeps busy after the booking, so the next one cannot start straight away.'
+              : words.needsSubtitle
+          }
         >
           {pools.length === 0 ? (
             <div
@@ -413,6 +490,34 @@ function Section({
 // Tells the admin where the defaults came from. Editable fields
 // below are pre-filled with the parent's values so changing one
 // just diverges from the parent for this variant.
+// Replaces the presence question on a buffer phase. Nothing happens
+// with the patient in a buffer; the sentence says exactly that so an
+// admin never wonders which option to pick.
+function BufferNote() {
+  return (
+    <div
+      role="note"
+      style={{
+        display: 'flex',
+        alignItems: 'flex-start',
+        gap: theme.space[3],
+        padding: `${theme.space[3]}px ${theme.space[4]}px`,
+        borderRadius: theme.radius.input,
+        border: `1.5px dashed ${theme.color.accent}`,
+        color: theme.color.ink,
+        fontSize: theme.type.size.sm,
+        lineHeight: theme.type.leading.snug,
+      }}
+    >
+      <Timer size={18} aria-hidden style={{ color: theme.color.accent, flexShrink: 0, marginTop: 1 }} />
+      <span>
+        <strong>Buffer.</strong> The patient is never here. What this phase holds stays busy after the
+        booking ends, so the next booking of this kind cannot start straight away. Patients never see it.
+      </span>
+    </div>
+  );
+}
+
 function InheritsFromBanner({ parentLabel }: { parentLabel: string }) {
   return (
     <div

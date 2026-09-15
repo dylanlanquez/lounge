@@ -132,6 +132,7 @@ function projectPhasesOntoAppointment(
     phase_index: number;
     label: string;
     patient_required: boolean;
+    is_buffer?: boolean;
     duration_default: number | null;
   }>,
   startAtIso: string,
@@ -152,6 +153,7 @@ function projectPhasesOntoAppointment(
       phase_index: phase.phase_index,
       label: phase.label,
       patient_required: phase.patient_required,
+      is_buffer: phase.is_buffer === true,
       start_at: new Date(entryStartMs).toISOString(),
       end_at: new Date(cursorMs).toISOString(),
       // Status / pool_ids are materialised-only concerns. The live

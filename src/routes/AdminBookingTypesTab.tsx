@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ChevronRight, Clock, Plus, Settings2, Sparkles, Trash2 } from 'lucide-react';
+import { ChevronRight, Clock, Plus, Settings2, Sparkles, Timer, Trash2 } from 'lucide-react';
 import {
   BottomSheet,
   Button,
@@ -220,6 +220,7 @@ export function AdminBookingTypesTab() {
                 }}
                 onPhaseDeleted={() => setToast({ tone: 'success', title: 'Phase deleted' })}
                 onPhaseError={(msg) => setToast({ tone: 'error', title: msg })}
+                onBufferChanged={(title) => setToast({ tone: 'success', title })}
               />
             );
           })}
@@ -309,6 +310,7 @@ function ServiceNode({
   onPhaseReordered,
   onPhaseDeleted,
   onPhaseError,
+  onBufferChanged,
 }: {
   serviceLabel: string;
   serviceType: BookingServiceType;
@@ -326,9 +328,15 @@ function ServiceNode({
   onPhaseReordered: () => void;
   onPhaseDeleted: () => void;
   onPhaseError: (msg: string) => void;
+  /** Toast-only: the buffer phase changed (no config refetch needed). */
+  onBufferChanged: (title: string) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const phases = useBookingTypePhases(parent.id);
+  // The trailing buffer phase, if the admin has set one. Kept last
+  // whatever else happens to the sequence.
+  const bufferPhase = useMemo(() => phases.data.find((p) => p.is_buffer) ?? null, [phases.data]);
+  const [bufferSaving, setBufferSaving] = useState(false);
   const [phaseEditorTarget, setPhaseEditorTarget] = useState<PhaseEditorTarget | null>(null);
   const [patientFacingOpen, setPatientFacingOpen] = useState(false);
 
@@ -341,6 +349,7 @@ function ServiceNode({
         phase_index: p.phase_index,
         label: p.label,
         patient_required: p.patient_required,
+        is_buffer: p.is_buffer,
         duration_minutes: p.duration_default ?? 0,
         pool_ids: p.pool_ids,
       })),
@@ -373,12 +382,23 @@ function ServiceNode({
         phase_index: values.phase_index,
         label: values.label,
         patient_required: values.patient_required,
+        is_buffer: values.is_buffer,
         duration_default: values.duration_default,
         duration_min: values.duration_min,
         duration_max: values.duration_max,
         notes: values.notes,
       });
       await setPhasePoolIds(phaseId, values.pool_ids);
+      // A brand-new phase lands after the buffer (next index); the
+      // buffer must stay the last thing in the booking, so renumber.
+      if (!values.id && bufferPhase && !values.is_buffer) {
+        const ordered = [
+          ...phases.data.filter((p) => !p.is_buffer).map((p) => p.id),
+          phaseId,
+          bufferPhase.id,
+        ];
+        await reorderBookingTypePhases(parent.id, ordered);
+      }
       phases.reload();
       onPhaseSaved();
     } catch (e) {
@@ -517,7 +537,12 @@ function ServiceNode({
               // (collapsing the override dropdown + scrolling the
               // page back to the top — what operators were seeing).
               try {
-                await reorderBookingTypePhases(parent.id, orderedKeys);
+                // The buffer is always the tail of the booking: a
+                // drag that moves it is snapped back to the end.
+                const keys = bufferPhase
+                  ? [...orderedKeys.filter((k) => k !== bufferPhase.id), bufferPhase.id]
+                  : orderedKeys;
+                await reorderBookingTypePhases(parent.id, keys);
                 phases.reload();
                 onPhaseReordered();
               } catch (e) {
@@ -529,6 +554,58 @@ function ServiceNode({
             onEditPatientFacing={() => setPatientFacingOpen(true)}
           />
         )}
+        {!phases.loading && phases.data.some((p) => !p.is_buffer) ? (
+          <BufferAfterRow
+            serviceType={serviceType}
+            minutes={bufferPhase?.duration_default ?? 0}
+            heldPoolNames={(() => {
+              const last = [...phases.data].filter((p) => !p.is_buffer).sort((a, b) => b.phase_index - a.phase_index)[0];
+              const ids = bufferPhase?.pool_ids ?? last?.pool_ids ?? [];
+              return ids.map((id) => pools.find((p) => p.id === id)?.display_name ?? id);
+            })()}
+            saving={bufferSaving}
+            onChange={async (minutes) => {
+              setBufferSaving(true);
+              try {
+                if (minutes === 0) {
+                  if (bufferPhase) await deleteBookingTypePhase(bufferPhase.id);
+                } else if (bufferPhase) {
+                  await upsertBookingTypePhase({
+                    id: bufferPhase.id,
+                    config_id: parent.id,
+                    phase_index: bufferPhase.phase_index,
+                    label: bufferPhase.label,
+                    patient_required: false,
+                    is_buffer: true,
+                    duration_default: minutes,
+                    duration_min: null,
+                    duration_max: null,
+                    notes: bufferPhase.notes,
+                  });
+                } else {
+                  // New buffer: last in the sequence, holding what the
+                  // final working phase holds.
+                  const working = [...phases.data].sort((a, b) => b.phase_index - a.phase_index)[0];
+                  const id = await upsertBookingTypePhase({
+                    config_id: parent.id,
+                    phase_index: (working?.phase_index ?? 0) + 1,
+                    label: 'Buffer',
+                    patient_required: false,
+                    is_buffer: true,
+                    duration_default: minutes,
+                  });
+                  await setPhasePoolIds(id, working?.pool_ids ?? []);
+                }
+                phases.reload();
+                onBufferChanged(minutes === 0 ? 'Buffer removed' : `Buffer set to ${minutes} min`);
+              } catch (e) {
+                onPhaseError(e instanceof Error ? e.message : 'Could not save the buffer');
+              } finally {
+                setBufferSaving(false);
+              }
+            }}
+          />
+        ) : null}
       </div>
 
       <OverridesDisclosure
@@ -596,6 +673,7 @@ function ServiceNode({
         onClose={() => setPhaseEditorTarget(null)}
         onSave={handlePhaseSave}
         onDelete={handlePhaseDelete}
+        serviceType={serviceType}
       />
 
       <PatientFacingDurationEditor
@@ -903,6 +981,8 @@ function ChildRow({
         phase_index: parentPhase.phase_index,
         label: effective.label,
         patient_required: effective.patient_required,
+        // Structural: a child cannot turn a phase into a buffer.
+        is_buffer: parentPhase.is_buffer,
         duration_minutes: effective.duration_default ?? 0,
         pool_ids: effective.pool_ids,
       } satisfies PhaseRibbonPhase;
@@ -914,6 +994,7 @@ function ChildRow({
         phase_index: cp.phase_index,
         label: cp.label,
         patient_required: cp.patient_required,
+        is_buffer: cp.is_buffer,
         duration_minutes: cp.duration_default ?? 0,
         pool_ids: cp.pool_ids,
       }));
@@ -940,6 +1021,7 @@ function ChildRow({
         phase_index: values.phase_index,
         label: values.label,
         patient_required: values.patient_required,
+        is_buffer: values.is_buffer,
         duration_default: values.duration_default,
         duration_min: values.duration_min,
         duration_max: values.duration_max,
@@ -1152,6 +1234,7 @@ function ChildRow({
         onClose={() => setPhaseEditorTarget(null)}
         onSave={handleChildPhaseSave}
         onDelete={handleChildPhaseDelete}
+        serviceType={row.service_type}
       />
 
       <PatientFacingDurationEditor
@@ -2298,6 +2381,93 @@ export function TimeField({
         height: 36,
       }}
     />
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BufferAfterRow — the "Buffer after" option under a booking type's
+// phase ribbon (Dylan, 15 Sep 2026: "buffer option between calls").
+//
+// One dropdown, no sheet: None, 5, 10, 15, 20 or 30 minutes. Under the
+// hood it is the trailing buffer phase (is_buffer), so the conflict
+// checker, the slot scanners and the Down time sheet hold the same
+// resources the final working phase held, for that long, after every
+// booking. The row says in words what is held, so a passer-by reads
+// "Holds Voice call agent for 5 min after each call" and understands.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const BUFFER_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
+  { value: '0', label: 'None' },
+  { value: '5', label: '5 min' },
+  { value: '10', label: '10 min' },
+  { value: '15', label: '15 min' },
+  { value: '20', label: '20 min' },
+  { value: '30', label: '30 min' },
+];
+
+function BufferAfterRow({
+  serviceType,
+  minutes,
+  heldPoolNames,
+  saving,
+  onChange,
+}: {
+  serviceType: BookingServiceType;
+  minutes: number;
+  heldPoolNames: string[];
+  saving: boolean;
+  onChange: (minutes: number) => void;
+}) {
+  const noun = serviceType === 'voice_call' ? 'call' : 'booking';
+  const held = heldPoolNames.length > 0 ? heldPoolNames.join(', ') : null;
+  const isSet = minutes > 0;
+  // Offer the current value even when it is not one of the presets
+  // (an admin may have typed 7 in the phase editor).
+  const options = BUFFER_OPTIONS.some((o) => o.value === String(minutes))
+    ? BUFFER_OPTIONS
+    : [...BUFFER_OPTIONS, { value: String(minutes), label: `${minutes} min` }].sort(
+        (a, b) => Number(a.value) - Number(b.value),
+      );
+  return (
+    <div
+      style={{
+        marginTop: theme.space[3],
+        display: 'flex',
+        alignItems: 'center',
+        gap: theme.space[3],
+        padding: `${theme.space[2]}px ${theme.space[3]}px ${theme.space[2]}px ${theme.space[3]}px`,
+        borderRadius: theme.radius.input,
+        border: `1.5px dashed ${isSet ? theme.color.accent : theme.color.border}`,
+        background: theme.color.surface,
+        transition: `border-color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+      }}
+    >
+      <Timer size={18} aria-hidden style={{ color: isSet ? theme.color.accent : theme.color.inkSubtle, flexShrink: 0 }} />
+      <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
+        <span style={{ fontSize: theme.type.size.sm, fontWeight: theme.type.weight.semibold, color: theme.color.ink }}>
+          Buffer after each {noun}
+        </span>
+        <span style={{ fontSize: theme.type.size.xs, color: theme.color.inkMuted, lineHeight: theme.type.leading.snug }}>
+          {isSet
+            ? held
+              ? `Holds ${held} for ${minutes} min after each ${noun}, so the next one cannot start straight away. Patients never see it.`
+              : `Holds nothing yet: set what the last phase needs, then the buffer keeps it for ${minutes} min.`
+            : `Time to hold ${held ?? 'this booking\'s resources'} after each ${noun} before the next one can start. Patients never see it.`}
+        </span>
+      </div>
+      <div style={{ flexShrink: 0, width: 132 }}>
+        <DropdownSelect<string>
+          ariaLabel={`Buffer after each ${noun}`}
+          value={String(minutes)}
+          options={options}
+          disabled={saving}
+          onChange={(v) => {
+            const next = Number.parseInt(v, 10);
+            if (Number.isFinite(next) && next !== minutes) onChange(next);
+          }}
+        />
+      </div>
+    </div>
   );
 }
 
