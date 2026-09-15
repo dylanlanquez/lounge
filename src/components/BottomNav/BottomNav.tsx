@@ -8,6 +8,7 @@ import { useKeyboardOpen } from '../../lib/useKeyboardOpen.ts';
 import { CalendarIcon } from '../Icons/CalendarIcon.tsx';
 import { ToothIcon } from '../Icons/ToothIcon.tsx';
 import { useActiveVisitCount } from '../../lib/queries/clinicBoard.ts';
+import { useVoiceCallMode } from '../../lib/voiceCallMode.tsx';
 
 // Returns true when the bottom nav should render. Pulled out as a named
 // helper so App can apply the matching bottom padding to its routes
@@ -59,7 +60,12 @@ export function BottomNav() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const navVisible = shouldShowBottomNav(location.pathname, !!user);
-  const inClinicCount = useActiveVisitCount(navVisible);
+  // Voice call mode: an agent's phone-first view. The clinic-floor
+  // tabs (Walk-in, In clinic, Quick sale) come off the bar and the
+  // in-clinic badge stops polling; what stays is Schedule (their
+  // calls), Patients and Ledger.
+  const voiceCallMode = useVoiceCallMode().active;
+  const inClinicCount = useActiveVisitCount(navVisible && !voiceCallMode);
 
   // Hide the floating pill while the iPad on-screen keyboard is up.
   // Shared hook with the arrival ActionBar so every fixed-bottom
@@ -123,12 +129,20 @@ export function BottomNav() {
     { label: 'Quick sale', icon: <ShoppingBag size={22} />, active: isQuickSale, onClick: onQuickSale },
   ];
 
-  const barTabs = compact ? primaryTabs : [...primaryTabs, ...overflowTabs];
-  const columns = compact ? primaryTabs.length + 1 : barTabs.length;
+  // Voice call mode keeps three destinations and never needs the More
+  // menu: three tabs fit at every width.
+  const voiceTabs: TabDef[] = [
+    { label: 'Schedule', icon: <CalendarIcon size={22} />, active: isSchedule, onClick: onSchedule },
+    { label: 'Patients', icon: <Users size={22} />, active: isPatients, onClick: onPatients },
+    { label: 'Ledger', icon: <BookMarked size={22} />, active: isLedger, onClick: onLedger },
+  ];
+  const showMore = compact && !voiceCallMode;
+  const barTabs = voiceCallMode ? voiceTabs : compact ? primaryTabs : [...primaryTabs, ...overflowTabs];
+  const columns = showMore ? primaryTabs.length + 1 : barTabs.length;
 
   return (
     <>
-      {compact && moreOpen ? (
+      {showMore && moreOpen ? (
         // Full-screen catcher closes the menu on an outside tap; the
         // panel floats just above the bar, near the More tab.
         <div
@@ -258,7 +272,7 @@ export function BottomNav() {
                 />
               </li>
             ))}
-            {compact && (
+            {showMore && (
               <li style={{ display: 'flex' }}>
                 <NavTab
                   label="More"

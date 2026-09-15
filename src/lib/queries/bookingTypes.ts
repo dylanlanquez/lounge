@@ -23,6 +23,7 @@ export type BookingServiceType =
   | 'same_day_appliance'
   | 'impression_appointment'
   | 'virtual_impression_appointment'
+  | 'voice_call'
   | 'other';
 
 export const BOOKING_SERVICE_TYPES: { value: BookingServiceType; label: string }[] = [
@@ -31,6 +32,9 @@ export const BOOKING_SERVICE_TYPES: { value: BookingServiceType; label: string }
   { value: 'same_day_appliance', label: 'Same-day appliance' },
   { value: 'impression_appointment', label: 'Impression appointment' },
   { value: 'virtual_impression_appointment', label: 'Virtual impression appointment' },
+  // A booked phone call with a voice call agent. No chair, no lab, no
+  // Meet link. See src/lib/voiceCall.ts for the shared helpers.
+  { value: 'voice_call', label: 'Voice call' },
   { value: 'other', label: 'Other' },
 ];
 

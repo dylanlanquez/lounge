@@ -14,6 +14,8 @@ import { Avatar } from '../Avatar/Avatar.tsx';
 import { BottomSheet } from '../BottomSheet/BottomSheet.tsx';
 import { Button } from '../Button/Button.tsx';
 import { NotificationBell } from '../Notifications/NotificationBell.tsx';
+import { VoiceCallModeSwitch } from '../VoiceCallModeSwitch/VoiceCallModeSwitch.tsx';
+import { useVoiceCallMode } from '../../lib/voiceCallMode.tsx';
 
 // Reserved height pages add as paddingTop so content doesn't slip
 // underneath the fixed bar.
@@ -41,6 +43,7 @@ export function KioskStatusBar() {
   const { pathname } = useLocation();
   const [profileOpen, setProfileOpen] = useState(false);
   const isMobile = useIsMobile(640);
+  const voiceCallMode = useVoiceCallMode();
 
   // Customer-facing widget routes never see the staff status bar,
   // even when the staff happen to be signed in to Lounge in this
@@ -51,10 +54,15 @@ export function KioskStatusBar() {
   if (pathname.startsWith('/widget/')) return null;
 
   if (authLoading || !user) return null;
-  const showAdminButton = !!account && (account.is_admin || account.is_super_admin);
-  const showReportsButton = !!account && account.can_view_reports;
+  // Voice call mode (an agent's phone-first view) hides every admin,
+  // money and marketing destination from the tray, so the bar reads
+  // as: mode switch, network, bell, battery, clock, profile. Mode is a
+  // view preference only; the routes keep enforcing the permissions.
+  const showAdminButton =
+    !voiceCallMode.active && !!account && (account.is_admin || account.is_super_admin);
+  const showReportsButton = !voiceCallMode.active && !!account && account.can_view_reports;
   const showCashCountsButton =
-    !!account && (account.can_count_cash || account.can_view_safe);
+    !voiceCallMode.active && !!account && (account.can_count_cash || account.can_view_safe);
   // A virtual impression clinician whose admin has switched on self-edit
   // gets a direct top-bar shortcut to their own availability editor —
   // the same destination buried in the profile sheet, surfaced as a
@@ -62,12 +70,15 @@ export function KioskStatusBar() {
   // their own hours is something they're allowed to do. Same gate as
   // the profile-sheet entry; the /my-availability route enforces it too.
   const showMyAvailabilityButton =
+    !voiceCallMode.active &&
     !!account &&
     account.is_virtual_impression_clinician === true &&
     account.clinician_can_edit_own_hours === true;
-  // Marketing content is open to every signed-in staff member, so there
-  // is always at least one destination button before the system tray.
-  const showAnyDestinationButton = true;
+  // Marketing content is open to every signed-in staff member in clinic
+  // mode, so there is always at least one destination button before the
+  // system tray. In voice call mode the switch itself fills that slot.
+  const showMarketingButton = !voiceCallMode.active;
+  const showAnyDestinationButton = showMarketingButton || voiceCallMode.available;
 
   // Wall clock pinned to the clinic's timezone so a kiosk plugged in
   // anywhere always reads as UK time. Zone suffix (BST/GMT) sits in
@@ -142,6 +153,10 @@ export function KioskStatusBar() {
           gap: isMobile ? theme.space[2] : theme.space[3],
         }}
       >
+        {/* Clinic / Voice calls switch. Leads the tray so it is the
+            first thing an agent reaches for, and so the mode is the
+            first thing a passer-by reads on the bar. */}
+        <VoiceCallModeSwitch compact={isMobile} />
         {showMyAvailabilityButton ? (
           <KioskIconButton label="My availability" tone="accent" onClick={() => navigate('/my-availability')}>
             <CalendarClock size={15} />
@@ -157,11 +172,13 @@ export function KioskStatusBar() {
             <BarChart3 size={15} />
           </KioskIconButton>
         ) : null}
-        <span data-tour="nav-marketing" style={{ display: 'inline-flex' }}>
-          <KioskIconButton label="Marketing content" onClick={() => navigate('/marketing')}>
-            <Megaphone size={15} />
-          </KioskIconButton>
-        </span>
+        {showMarketingButton ? (
+          <span data-tour="nav-marketing" style={{ display: 'inline-flex' }}>
+            <KioskIconButton label="Marketing content" onClick={() => navigate('/marketing')}>
+              <Megaphone size={15} />
+            </KioskIconButton>
+          </span>
+        ) : null}
         {showAdminButton ? (
           <KioskIconButton label="Admin" onClick={() => navigate('/admin')}>
             <Settings size={15} />
@@ -183,7 +200,11 @@ export function KioskStatusBar() {
             surface colour so the dot reads as part of the chrome
             rather than a sticker on top. */}
         {!isMobile ? <Divider /> : null}
-        <NotificationBell size={15} haloColor={theme.color.surface} />
+        <NotificationBell
+          size={15}
+          haloColor={theme.color.surface}
+          scope={voiceCallMode.active ? 'voice_call' : 'all'}
+        />
         {batterySupported && percent !== null ? (
           <>
             {!isMobile ? <Divider /> : null}

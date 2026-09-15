@@ -485,6 +485,7 @@ export function eventTypeCategory(
   | 'appliance'
   | 'impression'
   | 'virtualImpression'
+  | 'voiceCall'
   | 'consult' {
   if (!label) return 'consult';
   const v = label.toLowerCase();
@@ -493,10 +494,11 @@ export function eventTypeCategory(
   if (/same[\s-]?day\s+appliance|appliance/i.test(v)) return 'appliance';
   if (/virtual.*impression|impression.*virtual/i.test(v)) return 'virtualImpression';
   if (/impression/i.test(v)) return 'impression';
+  if (/voice\s*call|phone\s*call/i.test(v)) return 'voiceCall';
   return 'consult';
 }
 
-// The six display buckets every booking falls into. These line up
+// The seven display buckets every booking falls into. These line up
 // 1:1 with the colour keys on `theme.category`, so a category value
 // indexes straight into the palette for dots, bars, and chips.
 export type AppointmentCategory =
@@ -505,6 +507,7 @@ export type AppointmentCategory =
   | 'appliance'
   | 'impression'
   | 'virtualImpression'
+  | 'voiceCall'
   | 'consult';
 
 // Axis-pinned bookings (native widget + staff-created) carry a
@@ -517,6 +520,7 @@ const SERVICE_TYPE_CATEGORY: Record<string, AppointmentCategory> = {
   same_day_appliance: 'appliance',
   impression_appointment: 'impression',
   virtual_impression_appointment: 'virtualImpression',
+  voice_call: 'voiceCall',
   other: 'consult',
 };
 
@@ -547,6 +551,7 @@ export const APPOINTMENT_CATEGORY_LABELS: Record<AppointmentCategory, string> = 
   appliance: 'Same-day appliances',
   impression: 'Impressions',
   virtualImpression: 'Virtual impressions',
+  voiceCall: 'Voice calls',
   consult: 'Other',
 };
 
@@ -556,6 +561,7 @@ export const APPOINTMENT_CATEGORY_ORDER: AppointmentCategory[] = [
   'appliance',
   'impression',
   'virtualImpression',
+  'voiceCall',
   'consult',
 ];
 
@@ -846,6 +852,10 @@ export function formatCustomerServiceTitleLabel(row: {
   // Denture repair — no axis prefix; per-arch detail belongs in the
   // repair-table block below the service label.
   if (service === 'denture_repair') return 'Denture Repair';
+
+  // Voice call — a booked phone call with an agent. Nothing to
+  // compose; Title Case like its siblings.
+  if (service === 'voice_call') return 'Voice Call';
 
   // Anything else: fall back to the persisted event_type_label.
   return eventLabel ?? 'Appointment';

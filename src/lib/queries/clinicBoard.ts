@@ -167,8 +167,11 @@ export function bucketForVisit(input: {
   // schedule cards can be coloured teal vs olive-lime; the in-clinic
   // board only cares about the underlying service kind, so collapse
   // it back to 'impression' here.
+  // Voice calls never open a visit, so a voice call row only reaches
+  // this board by mistake; file it under the catch-all rather than
+  // dropping it, so a data problem stays visible.
   const cat = eventTypeCategory(input.event_type_label);
-  return cat === 'virtualImpression' ? 'impression' : cat;
+  return cat === 'virtualImpression' ? 'impression' : cat === 'voiceCall' ? 'consult' : cat;
 }
 
 export function searchableTextForVisit(v: EnrichedActiveVisit): string {

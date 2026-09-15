@@ -35,15 +35,18 @@ const SCOPE_LABEL: Record<ClosureScope, string> = {
   same_day_appliance: 'Same-day appliances',
   impression_appointment: 'Impressions',
   virtual_impression_appointment: 'Virtual impressions',
+  voice_call: 'Voice calls',
   other: 'Other',
 };
 
 // Order in the dropdown: whole clinic first, then the in-person types,
-// then virtual (the separate team) last.
+// then the remote teams (virtual, voice calls) last. A whole-clinic
+// closure never blocks either remote team.
 const SCOPE_OPTIONS: { value: ClosureScope; label: string }[] = [
   { value: 'whole_clinic', label: SCOPE_LABEL.whole_clinic },
   ...IN_PERSON_SCOPES.map((s) => ({ value: s, label: SCOPE_LABEL[s] })),
   { value: 'virtual_impression_appointment', label: SCOPE_LABEL.virtual_impression_appointment },
+  { value: 'voice_call', label: SCOPE_LABEL.voice_call },
 ];
 
 // Per-type palette dot for the list — the same category colours as the
@@ -55,6 +58,7 @@ const SCOPE_COLOR: Record<ClosureScope, string | null> = {
   same_day_appliance: theme.category.appliance,
   impression_appointment: theme.category.impression,
   virtual_impression_appointment: theme.category.virtualImpression,
+  voice_call: theme.category.voiceCall,
   other: theme.category.consult,
 };
 

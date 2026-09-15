@@ -1,5 +1,5 @@
 import { Fragment } from 'react';
-import { AlertTriangle, ChevronRight } from 'lucide-react';
+import { AlertTriangle, ChevronRight, PhoneCall } from 'lucide-react';
 import googleMeetIcon from '../../assets/google-meet.png';
 import { SourceGlyph } from '../AppointmentCard/AppointmentCard.tsx';
 import { StatusPill } from '../StatusPill/StatusPill.tsx';
@@ -19,6 +19,7 @@ import {
 import { useNow } from '../../lib/useNow.ts';
 import { fmtTzAbbr } from '../../lib/dateFormat.ts';
 import type { DayFreeTime } from '../../lib/scheduleGaps.ts';
+import { isVoiceCall } from '../../lib/voiceCall.ts';
 
 export interface ScheduleListViewProps {
   rows: AppointmentRow[];
@@ -360,6 +361,18 @@ export function ScheduleListRow({
             {row.join_url && (
               <img src={googleMeetIcon} height={13} aria-label="Virtual meeting" style={{ flexShrink: 0, display: 'block', width: 'auto' }} />
             )}
+            {/* Voice calls carry the phone glyph in the same slot the
+                Meet mark uses, in the category colour, so a call reads
+                as a call before the words are read. */}
+            {isVoiceCall(row) ? (
+              <PhoneCall
+                size={13}
+                color={theme.category.voiceCall}
+                strokeWidth={2.25}
+                aria-label="Voice call"
+                style={{ flexShrink: 0 }}
+              />
+            ) : null}
             <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
               {[formatAppointmentSummary(row), staffDisplayName(row)].filter(Boolean).join(' · ') || '—'}
             </span>

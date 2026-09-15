@@ -86,6 +86,7 @@ const SERVICE_TYPE_OPTIONS: ReadonlyArray<{ value: LedgerServiceType; label: str
   { value: 'denture_repair', label: 'Denture repair' },
   { value: 'impression_appointment', label: 'Impression appointment' },
   { value: 'virtual_impression_appointment', label: 'Virtual appointment' },
+  { value: 'voice_call', label: 'Voice call' },
   { value: 'same_day_appliance', label: 'Same-day appliance' },
   { value: 'click_in_veneers', label: 'Click-in veneers' },
   { value: 'retail', label: 'Retail sale' },

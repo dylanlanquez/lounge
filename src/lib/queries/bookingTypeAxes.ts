@@ -118,6 +118,8 @@ export const SERVICE_AXES: Record<BookingServiceType, readonly AxisDef[]> = {
     },
     { key: 'arch', label: 'Arch', source: { kind: 'arch_enum' } },
   ],
+  // A voice call is a phone call, not a treatment: nothing to pin.
+  voice_call: [],
   other: [],
 };
 

@@ -828,7 +828,32 @@ Per-service product lists are independent; in-person impression and virtual impr
 
 ---
 
-## 8. Sign-off
+## 8. ADR-008 — Voice calls: the agent is a resource, the mode is a view
+
+### 8.1 Status
+
+**Decided (15 Sep 2026).** Migration `20260915000001_lng_voice_calls.sql`. Slice spec at `docs/slices/voice-calls.md`. The Twilio call surface and the voice call visit page are later slices and do not change this decision.
+
+### 8.2 Context
+
+Lounge is adding booked voice calls run by voice call agents. Three questions had to be settled before the first slice: how capacity is modelled, how the booking type fits the existing schedule machinery, and how an agent gets a quiet, call-first view of the app without a parallel permission system.
+
+### 8.3 Decision
+
+1. **Agents are a staff-role resource pool** (`voice-call-agent`), not a per-person hours model. A voice call's single phase consumes one unit of the pool, so the ordinary conflict checker and slot scanner cap concurrent calls at the number of active agents. The virtual-impression per-clinician hours model was rejected here: a call is not tied to one person's Google room, and agents share a queue. Per-agent pinning can be added later without touching this.
+2. **The staff flag and the pool membership are one fact.** `lng_staff_members.is_voice_call_agent` and the `lng_staff_pool_assignments` row are kept identical by two triggers with a transaction-local recursion guard. Admin can flip either side.
+3. **`voice_call` is a full `service_type`** with a parent config row, a phase, and its own patient emails. It follows the remote-team closure rule: whole-clinic closures never block it.
+4. **Voice call mode is a view preference, not a permission.** It lives in a small React context, is available only to flagged agents, defaults on for agents with no elevated permission, and is remembered per staff member per device in `localStorage`. It hides chrome (nav tabs, tray buttons, filter pills) and scopes queries (the day list, the strip dots, the bell), while every route keeps enforcing the real permission flags. No new RLS, no new role enum.
+
+### 8.4 Consequences
+
+- Nothing changes for existing staff until an agent is flagged: the pool has no members, the service type has no bookings.
+- `AppointmentCategory` gains `voiceCall` and `theme.category.voiceCall`; every `Record<BookingServiceType, …>` in the app is total again (TypeScript enforces this).
+- The public widget does not expose voice calls; that is a deliberate `lng_widget_booking_types` decision for a later slice.
+
+---
+
+## 9. Sign-off
 
 By signing off this ADR, you accept:
 
@@ -838,6 +863,7 @@ By signing off this ADR, you accept:
 - ADR-004: `receptionist` added to `lab_role_enum`, with the boolean overrides specified.
 - ADR-005: Inline styles + theme system, no CSS framework.
 - ADR-006: Booking phases — phase sequence with per-phase pool consumption + patient-facing duration as a separate, admin-controlled field. Slice spec at `docs/slices/booking-phases.md`.
+- ADR-008: Voice calls. Agents are a staff-role pool, `voice_call` is a full service type, Voice call mode is a per-device view preference. Slice spec at `docs/slices/voice-calls.md`.
 - ADR-007: Multi-axis booking-type overrides — service axes declared in code registry, override rows pin any subset, resolver walks specificity-sorted chain.
 
 Open architecture questions AQ1–AQ5 will be resolved at the slice they block, not as a Phase 0 sign-off prerequisite. AQ6–AQ11 (booking-phases) are resolved in the slice doc at sign-off.

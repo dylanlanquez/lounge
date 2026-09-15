@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Bell } from 'lucide-react';
 import { theme } from '../../theme/index.ts';
 import { useNotifications } from '../../lib/queries/notifications.ts';
-import { NotificationsSheet } from './NotificationsSheet.tsx';
+import { NotificationsSheet, type NotificationScope, scopeNotifications } from './NotificationsSheet.tsx';
 
 // Notification bell + drawer opener. Lives in the KioskStatusBar
 // next to the battery / wifi cluster. Subtle accent-coloured dot
@@ -27,16 +27,25 @@ interface NotificationBellProps {
   // Optional accessible label override. Default reads the unseen
   // count for screen readers.
   ariaLabel?: string;
+  // Which notifications the bell counts and the sheet lists. Voice
+  // call mode passes 'voice_call' so an agent's bell only lights for
+  // their calls; 'all' (default) is the whole feed.
+  scope?: NotificationScope;
 }
 
 export function NotificationBell({
   size = 22,
   haloColor = theme.color.surface,
   ariaLabel,
+  scope = 'all',
 }: NotificationBellProps) {
   const [open, setOpen] = useState(false);
   const notifications = useNotifications();
-  const { unseenCount } = notifications;
+  // The unseen count follows the scope: rows outside it never light
+  // the dot, so a voice call agent is not nagged about walk-ins.
+  const unseenCount = scopeNotifications(notifications.rows, scope).filter((r) =>
+    notifications.lastViewedAt ? r.created_at > notifications.lastViewedAt : true,
+  ).length;
   const hasUnseen = unseenCount > 0;
 
   // Padding scales with icon size so the tap target matches the
@@ -72,7 +81,7 @@ export function NotificationBell({
             ? `Notifications — ${unseenCount} new`
             : 'Notifications')
         }
-        title="Notifications"
+        title={scope === 'voice_call' ? 'Voice call notifications' : 'Notifications'}
         style={{
           appearance: 'none',
           border: 'none',
@@ -115,6 +124,7 @@ export function NotificationBell({
         open={open}
         onClose={() => setOpen(false)}
         notifications={notifications}
+        scope={scope}
       />
     </>
   );

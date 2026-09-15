@@ -36,6 +36,7 @@ export const theme = {
     appliance: '#C8525F',         // muted coral — same-day appliances
     impression: '#8FA52A',        // olive-lime — impression appointments
     virtualImpression: '#3D8FA0', // muted teal — virtual / Google Meet
+    voiceCall: '#5E57A5',         // muted indigo — booked phone calls (6.2:1 on white)
     consult: '#4A4F55',           // graphite — anything else
   },
   // Avatar palette — used to give each person a deterministic colour

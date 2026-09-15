@@ -62,6 +62,7 @@ const SERVICE_DOT_COLOUR: Record<BookingServiceType, string> = {
   same_day_appliance: theme.color.accent,
   impression_appointment: '#B36815',
   virtual_impression_appointment: theme.category.virtualImpression,
+  voice_call: theme.category.voiceCall,
   other: '#6B7378',
 };
 

@@ -153,6 +153,10 @@ export interface NotificationRow {
   link_path: string | null;
   // The booking-type label, arch deliberately stripped per spec.
   booking_type: string;
+  // The canonical service_type behind booking_type (payload, then the
+  // joined appointment, then the walk-in). Null when unknown. Voice
+  // call mode scopes the bell to rows where this is 'voice_call'.
+  service_type: string | null;
   // Pre-formatted "Monday, 19 May 2026 at 10:30 BST" string for
   // the middle line. Null when the event didn't carry a start_at
   // (visit_ended_early has only the close time, not a future
@@ -813,6 +817,7 @@ function mapEventToRow(
     actor_name: actorName,
     link_path: linkPath,
     booking_type: bookingType,
+    service_type: serviceType,
     scheduled_at_label: scheduledAtLabel,
     refund_amount_pence: refundAmount,
     refund_is_full: refundIsFull,

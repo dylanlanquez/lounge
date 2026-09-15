@@ -28,18 +28,33 @@ import { NotificationsSettings } from './NotificationsSettings.tsx';
 //   • Settings is a NESTED view inside the same sheet — the
 //     header chevron navigates back to the list without closing.
 
+// Which slice of the feed a bell shows. 'voice_call' is Voice call
+// mode: only events on voice call bookings, so an agent's inbox is
+// their calls and nothing else. Scope is applied before search.
+export type NotificationScope = 'all' | 'voice_call';
+
+export function scopeNotifications<T extends { service_type: string | null }>(
+  rows: T[],
+  scope: NotificationScope,
+): T[] {
+  if (scope === 'all') return rows;
+  return rows.filter((r) => r.service_type === 'voice_call');
+}
+
 interface NotificationsSheetProps {
   open: boolean;
   onClose: () => void;
   notifications: UseNotificationsResult;
+  scope?: NotificationScope;
 }
 
 type View = 'list' | 'settings';
 
-export function NotificationsSheet({ open, onClose, notifications }: NotificationsSheetProps) {
+export function NotificationsSheet({ open, onClose, notifications, scope = 'all' }: NotificationsSheetProps) {
   const navigate = useNavigate();
   const [view, setView] = useState<View>('list');
   const [search, setSearch] = useState('');
+  const voiceOnly = scope === 'voice_call';
 
   // Reset internal state on each fresh open so a previous search
   // or settings drilldown doesn't bleed across openings.
@@ -66,9 +81,13 @@ export function NotificationsSheet({ open, onClose, notifications }: Notificatio
     };
   }, [open, onClose]);
 
+  const scopedRows = useMemo(
+    () => scopeNotifications(notifications.rows, scope),
+    [notifications.rows, scope],
+  );
   const filteredRows = useMemo(
-    () => filterNotifications(notifications.rows, search),
-    [notifications.rows, search],
+    () => filterNotifications(scopedRows, search),
+    [scopedRows, search],
   );
   const sections = useMemo(
     () => groupNotificationsByDay(filteredRows),
@@ -76,7 +95,11 @@ export function NotificationsSheet({ open, onClose, notifications }: Notificatio
   );
   const unseenCutoff = notifications.lastViewedAt;
   const hasResults = filteredRows.length > 0;
-  const hasAnyRows = notifications.rows.length > 0;
+  const hasAnyRows = scopedRows.length > 0;
+  // "N new" in the footer counts within the scope, matching the bell.
+  const unseenCount = unseenCutoff
+    ? scopedRows.filter((r) => r.created_at > unseenCutoff).length
+    : scopedRows.length;
 
   const handleRowActivate = (linkPath: string) => {
     navigate(linkPath);
@@ -190,7 +213,7 @@ export function NotificationsSheet({ open, onClose, notifications }: Notificatio
                 color: theme.color.ink,
               }}
             >
-              {view === 'settings' ? 'Notification settings' : 'Notifications'}
+              {view === 'settings' ? 'Notification settings' : voiceOnly ? 'Voice call notifications' : 'Notifications'}
             </h2>
             {view === 'list' ? (
               <button
@@ -305,7 +328,11 @@ export function NotificationsSheet({ open, onClose, notifications }: Notificatio
             ) : !hasAnyRows ? (
               <EmptyState
                 title="You're all caught up"
-                description="New bookings, reschedules, cancellations, and ended visits show up here. Pick which types you want in Settings."
+                description={
+                  voiceOnly
+                    ? 'New voice call bookings, reschedules, cancellations, and no-shows show up here. Everything else stays out of your way while you are in Voice call mode.'
+                    : 'New bookings, reschedules, cancellations, and ended visits show up here. Pick which types you want in Settings.'
+                }
               />
             ) : !hasResults ? (
               <Status text={`No notifications match "${search.trim()}".`} />
@@ -378,14 +405,12 @@ export function NotificationsSheet({ open, onClose, notifications }: Notificatio
               color: theme.color.inkSubtle,
             }}
           >
-            {notifications.unseenCount > 0
-              ? `${notifications.unseenCount} new`
-              : 'All read'}
+            {unseenCount > 0 ? `${unseenCount} new` : 'All read'}
           </span>
           <Button
             variant="tertiary"
             onClick={() => void handleMarkAllRead()}
-            disabled={notifications.unseenCount === 0}
+            disabled={unseenCount === 0}
           >
             Mark all as read
           </Button>

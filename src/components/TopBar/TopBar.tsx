@@ -7,6 +7,7 @@ import { theme } from '../../theme/index.ts';
 import { useIsMobile } from '../../lib/useIsMobile.ts';
 import { useAuth } from '../../lib/auth.tsx';
 import { useCurrentAccount } from '../../lib/queries/currentAccount.tsx';
+import { useVoiceCallMode } from '../../lib/voiceCallMode.tsx';
 
 export interface TopBarProps {
   // 'home' shows logo + avatar + admin + sign-out menu.
@@ -22,10 +23,15 @@ export function TopBar({ variant = 'home', title, backTo, right }: TopBarProps) 
   const isMobile = useIsMobile(640);
   const { user, signOut } = useAuth();
   const { account } = useCurrentAccount();
-  const showAdminButton = !!account && (account.is_admin || account.is_super_admin);
-  const showReportsButton = !!account && account.can_view_reports;
+  // Voice call mode quietens every admin and money destination. The
+  // gates below are the same ones KioskStatusBar applies; mode is a
+  // view preference, the routes keep enforcing the real permissions.
+  const voiceCallMode = useVoiceCallMode().active;
+  const showAdminButton =
+    !voiceCallMode && !!account && (account.is_admin || account.is_super_admin);
+  const showReportsButton = !voiceCallMode && !!account && account.can_view_reports;
   const showCashCountsButton =
-    !!account && (account.can_count_cash || account.can_view_safe);
+    !voiceCallMode && !!account && (account.can_count_cash || account.can_view_safe);
 
   if (variant === 'subpage') {
     return (

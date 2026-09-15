@@ -20,6 +20,7 @@ export type ClosureScope =
   | 'same_day_appliance'
   | 'impression_appointment'
   | 'virtual_impression_appointment'
+  | 'voice_call'
   | 'other';
 
 export interface Closure {

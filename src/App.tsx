@@ -12,6 +12,7 @@ import { Button } from './components/Button/Button.tsx';
 import { BottomNav } from './components/BottomNav/BottomNav.tsx';
 import { KioskStatusBar } from './components/KioskStatusBar/KioskStatusBar.tsx';
 import { WalkthroughProvider } from './components/Walkthrough/Walkthrough.tsx';
+import { VoiceCallModeProvider } from './lib/voiceCallMode.tsx';
 import { MarketingWalkthroughAutoStart } from './lib/walkthroughs/marketingWalkthrough.tsx';
 import { ErrorBoundary } from './components/ErrorBoundary/ErrorBoundary.tsx';
 import { lazyWithRetry } from './lib/lazyWithRetry.ts';
@@ -112,6 +113,11 @@ export function App() {
             the status bar and the bottom nav too, and the profile sheet
             inside KioskStatusBar needs its "Lock" control. */}
         <IdleLockProvider>
+        {/* VoiceCallModeProvider reads the account (is the signed-in
+            staff member a voice call agent?) and hands the Clinic /
+            Voice calls switch state to the top bar, the bottom nav,
+            the Schedule and the notifications bell. */}
+        <VoiceCallModeProvider>
           <WalkthroughProvider>
             <MarketingWalkthroughAutoStart />
             <KioskStatusBar />
@@ -119,6 +125,7 @@ export function App() {
             <RoutedErrorBoundary />
             <BottomNav />
           </WalkthroughProvider>
+        </VoiceCallModeProvider>
         </IdleLockProvider>
       </CurrentAccountProvider>
     </AuthProvider>

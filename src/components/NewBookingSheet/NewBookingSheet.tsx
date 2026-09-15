@@ -3,6 +3,7 @@ import {
   CalendarClock,
   CalendarPlus,
   Clock,
+  PhoneCall,
   User,
 } from 'lucide-react';
 import {
@@ -99,6 +100,9 @@ export interface NewBookingSheetProps {
     newAppointmentId: string,
     info: { emailSent: boolean; emailReason: string | null; meetCreateError?: string | null },
   ) => void;
+  // Pin the service and hide the picker. Voice call mode opens the
+  // sheet as "New voice call": the agent books a call, never a chair.
+  lockedServiceType?: BookingServiceType;
 }
 
 export function NewBookingSheet({
@@ -107,6 +111,7 @@ export function NewBookingSheet({
   initialIso,
   locationId,
   onCreated,
+  lockedServiceType,
 }: NewBookingSheetProps) {
   // ── Form state ──────────────────────────────────────────────────
   const initial = useMemo(() => splitIso(initialIso), [initialIso]);
@@ -171,7 +176,8 @@ export function NewBookingSheet({
       setCreatingPatient(false);
     }
   };
-  const [serviceType, setServiceType] = useState<BookingServiceType | ''>('');
+  const [serviceType, setServiceType] = useState<BookingServiceType | ''>(lockedServiceType ?? '');
+  const isVoiceCallSheet = lockedServiceType === 'voice_call';
   // Axis pins for the picked service (e.g. denture variant, product key,
   // arch). Order is fixed per service via SERVICE_AXES; values are kept
   // in a single object so resetting on service change is one assignment.
@@ -956,14 +962,14 @@ export function NewBookingSheet({
                 width: 32,
                 height: 32,
                 borderRadius: theme.radius.pill,
-                background: theme.color.accentBg,
-                color: theme.color.accent,
+                background: isVoiceCallSheet ? 'rgba(94, 87, 165, 0.12)' : theme.color.accentBg,
+                color: isVoiceCallSheet ? theme.category.voiceCall : theme.color.accent,
                 flexShrink: 0,
               }}
             >
-              <CalendarPlus size={18} aria-hidden />
+              {isVoiceCallSheet ? <PhoneCall size={18} aria-hidden /> : <CalendarPlus size={18} aria-hidden />}
             </span>
-            New booking
+            {isVoiceCallSheet ? 'New voice call' : 'New booking'}
           </span>
         }
         footer={
@@ -1054,15 +1060,23 @@ export function NewBookingSheet({
           <Section
             title="Service"
             required
-            info="The service drives the booking's duration and which resources (chair, lab bench, room) it consumes. Working hours and conflict rules come from Admin, Booking types and Conflicts."
+            info={
+              lockedServiceType
+                ? 'This sheet books one kind of appointment. Switch to Clinic mode for the full list.'
+                : "The service drives the booking's duration and which resources (chair, lab bench, room) it consumes. Working hours and conflict rules come from Admin, Booking types and Conflicts."
+            }
           >
-            <DropdownSelect<BookingServiceType>
-              ariaLabel="Service"
-              value={serviceType}
-              onChange={(v) => setServiceType(v)}
-              options={BOOKING_SERVICE_TYPES.filter((s) => s.value !== 'other')}
-              placeholder="Choose a service"
-            />
+            {lockedServiceType ? (
+              <LockedServiceRow serviceType={lockedServiceType} />
+            ) : (
+              <DropdownSelect<BookingServiceType>
+                ariaLabel="Service"
+                value={serviceType}
+                onChange={(v) => setServiceType(v)}
+                options={BOOKING_SERVICE_TYPES.filter((s) => s.value !== 'other')}
+                placeholder="Choose a service"
+              />
+            )}
             {configError ? (
               <div style={{ marginTop: theme.space[3] }}>
                 <StatusBanner tone="error" title="Couldn't load booking config">
@@ -2179,4 +2193,60 @@ async function createPatient(args: {
     .single();
   if (error || !data) throw new Error(humanizePatientSaveError(error));
   return data as PatientRow;
+}
+
+// Read-only stand-in for the Service dropdown when the sheet is opened
+// for one pinned service (Voice call mode). Same 56px input height and
+// radius as the dropdown it replaces so the form keeps its rhythm; the
+// category colour and glyph say which service without a control that
+// looks tappable.
+function LockedServiceRow({ serviceType }: { serviceType: BookingServiceType }) {
+  const label = BOOKING_SERVICE_TYPES.find((s) => s.value === serviceType)?.label ?? serviceType;
+  const isVoice = serviceType === 'voice_call';
+  return (
+    <div
+      role="group"
+      aria-label={`Service: ${label}`}
+      style={{
+        height: theme.layout.inputHeight,
+        display: 'flex',
+        alignItems: 'center',
+        gap: theme.space[3],
+        padding: `0 ${theme.space[4]}px`,
+        borderRadius: theme.radius.input,
+        border: `1px solid ${theme.color.border}`,
+        background: theme.color.bg,
+      }}
+    >
+      {isVoice ? (
+        <PhoneCall size={18} color={theme.category.voiceCall} aria-hidden style={{ flexShrink: 0 }} />
+      ) : null}
+      <span
+        style={{
+          flex: 1,
+          minWidth: 0,
+          fontSize: theme.type.size.base,
+          fontWeight: theme.type.weight.semibold,
+          color: theme.color.ink,
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+        }}
+      >
+        {label}
+      </span>
+      <span
+        style={{
+          fontSize: theme.type.size.xs,
+          fontWeight: theme.type.weight.medium,
+          color: theme.color.inkSubtle,
+          textTransform: 'uppercase',
+          letterSpacing: theme.type.tracking.wide,
+          whiteSpace: 'nowrap',
+        }}
+      >
+        Pinned
+      </span>
+    </div>
+  );
 }

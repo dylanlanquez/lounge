@@ -74,6 +74,15 @@ export interface CurrentAccount {
   is_virtual_impression_clinician: boolean;
   // Whether this clinician may edit their own availability (Profile menu).
   clinician_can_edit_own_hours: boolean;
+  // Voice call agent (raw): true when the staff row sets
+  // is_voice_call_agent. Unlocks the Voice call mode switch in the top
+  // bar; admins and managers flagged as agents keep their access and
+  // simply gain the switch.
+  is_voice_call_agent: boolean;
+  // Derived "voice call only": an agent with no elevated permission.
+  // Voice call mode defaults ON for them on first sign-in (see
+  // src/lib/voiceCallMode.tsx); everyone else starts in clinic mode.
+  is_voice_call_only: boolean;
   can_view_reports: boolean;
   can_view_financials: boolean;
   can_count_cash: boolean;
@@ -282,6 +291,10 @@ export function CurrentAccountProvider({ children }: { children: ReactNode }) {
         // admin always exits this branch because they're an admin.
         const isCsOnly =
           isCustomerService && !isAdminEff && !isManagerEff && !isSuperAdmin;
+        const isVoiceCallAgent =
+          isActiveStaff && membership?.is_voice_call_agent === true;
+        const isVoiceCallOnly =
+          isVoiceCallAgent && !isAdminEff && !isManagerEff && !isSuperAdmin;
         setAccount({
           account_id: r.id,
           auth_user_id: r.auth_user_id,
@@ -301,6 +314,8 @@ export function CurrentAccountProvider({ children }: { children: ReactNode }) {
             isActiveStaff && membership?.is_virtual_impression_clinician === true,
           clinician_can_edit_own_hours:
             isActiveStaff && membership?.clinician_can_edit_own_hours === true,
+          is_voice_call_agent: isVoiceCallAgent,
+          is_voice_call_only: isVoiceCallOnly,
           can_view_reports:
             (isActiveStaff && membership?.can_view_reports === true) || isSuperAdmin,
           can_view_financials:

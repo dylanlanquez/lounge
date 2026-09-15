@@ -51,6 +51,10 @@ export interface StaffRow {
   clinician_self_serve: boolean;
   // When true the clinician may edit their own availability (no admin).
   clinician_can_edit_own_hours: boolean;
+  // Voice call agent capability. Unlocks Voice call mode in the app and
+  // counts the staff member towards the voice-call-agent pool (the DB
+  // keeps the flag and the pool membership in sync both ways).
+  is_voice_call_agent: boolean;
   // Free-text code inserted into the returns message sent to patients
   // (DPD return authorisation). The sending staff member's code is used.
   authorisation_code: string | null;
@@ -142,6 +146,7 @@ interface RawJoinedRow {
   is_virtual_impression_clinician: boolean | null;
   clinician_self_serve: boolean | null;
   clinician_can_edit_own_hours: boolean | null;
+  is_voice_call_agent: boolean | null;
   authorisation_code: string | null;
   can_view_reports: boolean | null;
   can_view_financials: boolean | null;
@@ -203,6 +208,7 @@ function mapRow(r: RawJoinedRow): StaffRow {
     is_virtual_impression_clinician: r.is_virtual_impression_clinician === true,
     clinician_self_serve: r.clinician_self_serve !== false,
     clinician_can_edit_own_hours: r.clinician_can_edit_own_hours === true,
+    is_voice_call_agent: r.is_voice_call_agent === true,
     authorisation_code: (r.authorisation_code as string | null) ?? null,
     can_view_reports: r.can_view_reports === true,
     can_view_financials: r.can_view_financials === true,
@@ -238,7 +244,7 @@ function mapRow(r: RawJoinedRow): StaffRow {
 }
 
 const STAFF_SELECT =
-  'id, account_id, is_admin, is_manager, is_customer_service, is_virtual_impression_clinician, clinician_self_serve, clinician_can_edit_own_hours, authorisation_code, can_view_reports, can_view_financials, can_count_cash, can_write_off, can_view_safe, is_safe_witness, require_2fa, admin_page_access, marketing_walkthrough_enabled, idle_lock_enabled, role_id, status, hired_at, deactivated_at, invite_sent_at, invite_expires_at, invite_accepted_at, last_sign_in_at, account:accounts!account_id(id, first_name, last_name, name, login_email, location_id, location:locations!location_id(id, name, type, city)), role:lng_staff_roles!role_id(id, name)';
+  'id, account_id, is_admin, is_manager, is_customer_service, is_virtual_impression_clinician, clinician_self_serve, clinician_can_edit_own_hours, is_voice_call_agent, authorisation_code, can_view_reports, can_view_financials, can_count_cash, can_write_off, can_view_safe, is_safe_witness, require_2fa, admin_page_access, marketing_walkthrough_enabled, idle_lock_enabled, role_id, status, hired_at, deactivated_at, invite_sent_at, invite_expires_at, invite_accepted_at, last_sign_in_at, account:accounts!account_id(id, first_name, last_name, name, login_email, location_id, location:locations!location_id(id, name, type, city)), role:lng_staff_roles!role_id(id, name)';
 
 // Lists every staff member, active and inactive, sorted alphabetically
 // by display name. Inactive rows render with a "Deactivated" badge in
@@ -338,6 +344,18 @@ export async function setClinicianCanEditOwnHours(staffMemberId: string, value: 
   const { error } = await supabase
     .from('lng_staff_members')
     .update({ clinician_can_edit_own_hours: value })
+    .eq('id', staffMemberId);
+  if (error) throw new Error(error.message);
+}
+
+// Toggles is_voice_call_agent. The DB mirrors the flag onto the
+// voice-call-agent pool assignment (and back), so this one write is
+// the whole story: the agent becomes bookable capacity and gains the
+// Voice call mode switch on their next account refresh.
+export async function setIsVoiceCallAgent(staffMemberId: string, value: boolean): Promise<void> {
+  const { error } = await supabase
+    .from('lng_staff_members')
+    .update({ is_voice_call_agent: value })
     .eq('id', staffMemberId);
   if (error) throw new Error(error.message);
 }
@@ -1145,6 +1163,8 @@ export interface CurrentStaffMembership {
   is_virtual_impression_clinician: boolean;
   // Whether they may edit their own availability.
   clinician_can_edit_own_hours: boolean;
+  // Whether the signed-in staff member is a voice call agent.
+  is_voice_call_agent: boolean;
   can_view_reports: boolean;
   can_view_financials: boolean;
   can_count_cash: boolean;
@@ -1179,7 +1199,7 @@ export async function fetchCurrentStaffMembership(
   // entire auth gate. Two cheap round-trips, no schema-cache risk.
   const { data, error } = await supabase
     .from('lng_staff_members')
-    .select('id, is_admin, is_manager, is_customer_service, is_virtual_impression_clinician, clinician_can_edit_own_hours, can_view_reports, can_view_financials, can_count_cash, can_write_off, can_view_safe, require_2fa, admin_page_access, marketing_walkthrough_enabled, idle_lock_enabled, role_id, status')
+    .select('id, is_admin, is_manager, is_customer_service, is_virtual_impression_clinician, clinician_can_edit_own_hours, is_voice_call_agent, can_view_reports, can_view_financials, can_count_cash, can_write_off, can_view_safe, require_2fa, admin_page_access, marketing_walkthrough_enabled, idle_lock_enabled, role_id, status')
     .eq('account_id', accountId)
     .maybeSingle();
   if (error) {
@@ -1217,6 +1237,7 @@ export async function fetchCurrentStaffMembership(
         is_customer_service: false,
         is_virtual_impression_clinician: false,
         clinician_can_edit_own_hours: false,
+        is_voice_call_agent: false,
         can_view_reports: l.can_view_reports === true,
         can_view_financials: l.can_view_financials === true,
         can_count_cash: l.can_count_cash === true,
@@ -1242,6 +1263,7 @@ export async function fetchCurrentStaffMembership(
     is_customer_service: boolean | null;
     is_virtual_impression_clinician: boolean | null;
     clinician_can_edit_own_hours: boolean | null;
+    is_voice_call_agent: boolean | null;
     can_view_reports: boolean | null;
     can_view_financials: boolean | null;
     can_count_cash: boolean | null;
@@ -1278,6 +1300,7 @@ export async function fetchCurrentStaffMembership(
     is_customer_service: r.is_customer_service === true,
     is_virtual_impression_clinician: r.is_virtual_impression_clinician === true,
     clinician_can_edit_own_hours: r.clinician_can_edit_own_hours === true,
+    is_voice_call_agent: r.is_voice_call_agent === true,
     can_view_reports: r.can_view_reports === true,
     can_view_financials: r.can_view_financials === true,
     can_count_cash: r.can_count_cash === true,

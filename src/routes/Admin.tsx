@@ -61,6 +61,7 @@ import {
   setIsCustomerService,
   setIsManager,
   setIsVirtualImpressionClinician,
+  setIsVoiceCallAgent,
   setRequire2fa,
   setStaffAuthorisationCode,
   setStaffLocation,
@@ -2473,6 +2474,19 @@ function StaffTab() {
     }
   };
 
+  const toggleVoiceCallAgent = async (staffMemberId: string, next: boolean) => {
+    setBusyId(staffMemberId);
+    setError(null);
+    try {
+      await setIsVoiceCallAgent(staffMemberId, next);
+      staff.refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   const openManage = (row: StaffRow) => {
     setManaging(row);
     setDraftFirst(row.first_name ?? '');
@@ -3189,6 +3203,7 @@ function StaffTab() {
                           ) : null}
                           {s.is_manager ? <RolePill tone="neutral">Manager</RolePill> : null}
                           {s.is_customer_service ? <RolePill tone="neutral">Customer Service</RolePill> : null}
+                          {s.is_voice_call_agent ? <RolePill tone="neutral">Voice call agent</RolePill> : null}
                           {s.require_2fa ? <RolePill tone="neutral">2FA required</RolePill> : null}
                           {/* Only the exemption is worth a pill. Everyone
                               else is locked, so saying so on every row is
@@ -3473,6 +3488,12 @@ function StaffTab() {
                   description="Patient-comms agent role. Sees a focused view: book, reschedule, cancel, and resend confirmation emails. Loses clinic-floor actions (arrival, no-show, cart, payment, Print LWO, end visit early, tech notes). Admins or managers flagged as CS keep their full access."
                   checked={managing.is_customer_service}
                   onChange={(v) => toggleCustomerService(managing.staff_member_id, v)}
+                />
+                <PermissionRow
+                  title="Voice call agent"
+                  description="Takes booked voice calls. Adds the Clinic / Voice calls switch to their top bar: in Voice call mode the schedule shows their calls only, the nav drops to Schedule, Patients and Ledger, and the bell shows call notifications only. Also counts them in the Voice call agent pool (Conflicts) so voice call capacity follows the team."
+                  checked={managing.is_voice_call_agent}
+                  onChange={(v) => toggleVoiceCallAgent(managing.staff_member_id, v)}
                 />
               </div>
             </ManageSection>

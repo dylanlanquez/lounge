@@ -61,6 +61,7 @@ export type LedgerServiceType =
   | 'denture_repair'
   | 'impression_appointment'
   | 'virtual_impression_appointment'
+  | 'voice_call'
   | 'same_day_appliance'
   | 'click_in_veneers'
   // Retail Quick Sale — the walk-in's service_type. Routes the ledger

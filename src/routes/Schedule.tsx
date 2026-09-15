@@ -14,7 +14,7 @@ import {
   ListFilter,
   Mail,
   Monitor,
-
+  PhoneCall,
   Plus,
   ShieldCheck,
   Video,
@@ -97,6 +97,9 @@ import { sendAppointmentConfirmation } from '../lib/queries/sendAppointmentConfi
 import { cancelAppointment } from '../lib/queries/cancelAppointment.ts';
 import { useCurrentLocation } from '../lib/queries/locations.ts';
 import googleMeetIcon from '../assets/google-meet.png';
+import { useVoiceCallMode } from '../lib/voiceCallMode.tsx';
+import { VOICE_CALL_SERVICE_TYPE, isVoiceCall, telHref, voiceCallIsLive } from '../lib/voiceCall.ts';
+import { VoiceCallDayHero } from '../components/VoiceCallDayHero/VoiceCallDayHero.tsx';
 
 
 export function Schedule() {
@@ -107,6 +110,11 @@ export function Schedule() {
   // open appointments and book / reschedule / cancel — those are
   // patient-comms, not floor actions.
   const isCsOnly = currentAccount?.is_cs_only === true;
+  // Voice call mode: the agent's phone-first view of the same day. The
+  // list narrows to voice calls, the clinic toolbar (Filter, Down time)
+  // gives way to the next-call hero, New booking becomes New voice call,
+  // and the week strip's dots count calls only.
+  const voiceMode = useVoiceCallMode().active;
   const navigate = useNavigate();
   const isMobile = useIsMobile(640);
   const isDesktop = useIsDesktop();
@@ -286,17 +294,25 @@ export function Schedule() {
   // aria-label and title.
   const compactPills = isMobile;
 
+  // The day as this mode sees it: every booking in clinic mode, voice
+  // calls only in voice call mode. Counts, empty states and the hero
+  // all read from this, never from the raw fetch.
+  const dayRows = useMemo(
+    () => (voiceMode ? day.data.filter(isVoiceCall) : day.data),
+    [day.data, voiceMode],
+  );
   const visibleRows = useMemo(
     () =>
-      shownCategories.size === 0
-        ? day.data
-        : day.data.filter((r) => shownCategories.has(appointmentCategory(r))),
-    [day.data, shownCategories]
+      voiceMode || shownCategories.size === 0
+        ? dayRows
+        : dayRows.filter((r) => shownCategories.has(appointmentCategory(r))),
+    [dayRows, shownCategories, voiceMode]
   );
   // The filter only counts as "active" when it's actually hiding
   // bookings that exist today — deselecting a type with no bookings
-  // changes nothing on screen, so it mustn't raise the alarm.
-  const hiddenCount = day.data.length - visibleRows.length;
+  // changes nothing on screen, so it mustn't raise the alarm. Voice
+  // call mode never filters (the mode is the filter).
+  const hiddenCount = dayRows.length - visibleRows.length;
   const filterActive = hiddenCount > 0;
   // Labels of the types currently shown that actually have bookings
   // today — drives the "Showing only ..." banner copy.
@@ -315,7 +331,12 @@ export function Schedule() {
   // (just date+status), so a 121-day fetch is cheap.
   const stripStartIso = addDaysIso(todayIso, -WEEK_STRIP_WINDOW_RADIUS_DAYS);
   const stripEndIso = addDaysIso(todayIso, WEEK_STRIP_WINDOW_RADIUS_DAYS);
-  const weekCounts = useDateRangeCounts(stripStartIso, stripEndIso, currentLocation.data?.id ?? null);
+  const weekCounts = useDateRangeCounts(
+    stripStartIso,
+    stripEndIso,
+    currentLocation.data?.id ?? null,
+    voiceMode ? VOICE_CALL_SERVICE_TYPE : null,
+  );
 
   // Waiver state for the selected patient. Sections are global; signatures
   // are per-patient. Pre-arrival the "required sections" are inferred from
@@ -579,12 +600,16 @@ export function Schedule() {
                 transition: `opacity ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
               }}
             >
-              {day.data.length === 0
-                ? 'No appointments'
-                : filterActive
-                  ? `${visibleRows.length} of ${day.data.length} shown`
-                  : `${day.data.length} appointment${day.data.length === 1 ? '' : 's'}`}
-              {freeTime?.open && freeTime.closesAt ? ` · open until ${formatTimeNoZone(freeTime.closesAt)}` : ''}
+              {voiceMode
+                ? dayRows.length === 0
+                  ? 'No voice calls'
+                  : `${dayRows.length} voice call${dayRows.length === 1 ? '' : 's'}`
+                : dayRows.length === 0
+                  ? 'No appointments'
+                  : filterActive
+                    ? `${visibleRows.length} of ${dayRows.length} shown`
+                    : `${dayRows.length} appointment${dayRows.length === 1 ? '' : 's'}`}
+              {!voiceMode && freeTime?.open && freeTime.closesAt ? ` · open until ${formatTimeNoZone(freeTime.closesAt)}` : ''}
             </span>
           </div>
           <div
@@ -603,7 +628,7 @@ export function Schedule() {
           >
             {/* Type filter only earns its place once there's a list to
                 narrow — hidden on empty days so the toolbar stays calm. */}
-            {day.data.length > 0 ? (
+            {!voiceMode && dayRows.length > 0 ? (
               <ScheduleFilter
                 counts={categoryCounts}
                 selected={shownCategories}
@@ -612,7 +637,7 @@ export function Schedule() {
                 compact={compactPills}
               />
             ) : null}
-            {freeTime?.open ? (
+            {!voiceMode && freeTime?.open ? (
               <ToolbarPill
                 ariaLabel="Down time by role and room"
                 onClick={() => setDownTimeOpen(true)}
@@ -630,10 +655,10 @@ export function Schedule() {
                 so there's no affordance to misfire on. */}
             {!isCsOnly ? (
               <ToolbarPill
-                ariaLabel="New booking"
+                ariaLabel={voiceMode ? 'New voice call' : 'New booking'}
                 onClick={() => tryOpenNewBooking(defaultBookingIso(selectedDate, startHour))}
-                icon={<Plus size={16} aria-hidden />}
-                label="New booking"
+                icon={voiceMode ? <PhoneCall size={16} aria-hidden /> : <Plus size={16} aria-hidden />}
+                label={voiceMode ? 'New voice call' : 'New booking'}
                 title={newBookingBlocker ?? undefined}
                 blocked={!!newBookingBlocker}
                 stretch={isMobile}
@@ -707,6 +732,19 @@ export function Schedule() {
           </div>
         ) : null}
 
+        {/* Voice call mode: the next-call hero sits where the clinic
+            toolbar's extras used to. Same readiness rule as the card so
+            it never paints from an unscoped first fetch. */}
+        {voiceMode && dayRows.length > 0 && !currentLocation.loading && day.hasLoaded ? (
+          <VoiceCallDayHero
+            rows={dayRows}
+            now={now}
+            isToday={onToday}
+            isPast={selectedDate < todayIso}
+            onOpen={setSelected}
+          />
+        ) : null}
+
         <Card padding={isMobile ? 'sm' : 'md'}>
           {/* Three things must all be resolved before we can decide
               what to render in the day card:
@@ -730,19 +768,29 @@ export function Schedule() {
             <SkeletonRows />
           ) : (
             <DayReloadingWrapper loading={day.loading}>
-              {day.data.length === 0 ? (
+              {dayRows.length === 0 ? (
             <EmptyState
-              icon={<CalendarOff size={24} />}
-              title={onToday ? 'No appointments today' : 'Nothing on this day'}
+              icon={voiceMode ? <PhoneCall size={24} /> : <CalendarOff size={24} />}
+              title={
+                voiceMode
+                  ? onToday
+                    ? 'No voice calls today'
+                    : 'No voice calls on this day'
+                  : onToday
+                    ? 'No appointments today'
+                    : 'Nothing on this day'
+              }
               description={
                 // CS staff get a different empty-state copy — they
                 // can't make bookings here at all, so directing them
                 // at a CTA they don't have would just be confusing.
                 isCsOnly
                   ? 'No bookings on this day. New bookings are made in Checkpoint.'
-                  : onToday
-                    ? 'Book a new appointment, tap New walk-in when someone arrives, or wait for Calendly bookings to land.'
-                    : 'Book a new appointment for this day, or pick another above.'
+                  : voiceMode
+                    ? 'Book a voice call for this day, or pick another day above. Switch to Clinic mode to see the rest of the diary.'
+                    : onToday
+                      ? 'Book a new appointment, tap New walk-in when someone arrives, or wait for Calendly bookings to land.'
+                      : 'Book a new appointment for this day, or pick another above.'
               }
               action={
                 !isCsOnly ? (
@@ -752,7 +800,8 @@ export function Schedule() {
                     title={newBookingBlocker ?? undefined}
                   >
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
-                      <Plus size={16} aria-hidden /> Book new appointment
+                      {voiceMode ? <PhoneCall size={16} aria-hidden /> : <Plus size={16} aria-hidden />}
+                      {voiceMode ? 'Book a voice call' : 'Book new appointment'}
                     </span>
                   </Button>
                 ) : undefined
@@ -773,7 +822,14 @@ export function Schedule() {
               }
             />
           ) : (
-            <ScheduleListView rows={visibleRows} onPick={setSelected} isToday={onToday} freeTime={freeTime} />
+            <ScheduleListView
+              rows={visibleRows}
+              onPick={setSelected}
+              isToday={onToday}
+              // Lunch and closing lines are the clinic's day; a voice
+              // call agent's day is their calls.
+              freeTime={voiceMode ? null : freeTime}
+            />
           )}
             </DayReloadingWrapper>
           )}
@@ -862,6 +918,8 @@ export function Schedule() {
               <div style={{ display: 'flex', gap: theme.space[2], justifyContent: 'flex-end', flexWrap: 'wrap' }}>
                 {(() => {
                   const isVirtual = !!selected.join_url;
+                  const isVoiceRow = isVoiceCall(selected);
+                  const callHref = isVoiceRow ? telHref(selected.patient_phone) : null;
                   const status = selected.status;
                   // Virtual no-show is desktop-only. Staff need to
                   // have actually attempted the Google Meet to know
@@ -888,9 +946,13 @@ export function Schedule() {
                   const showVirtualJoin =
                     isVirtual &&
                     (status === 'booked' || status === 'arrived' || status === 'joined' || status === 'no_show');
-                  const showMarkArrived = !isVirtual && status === 'booked' && !isCsOnly;
+                  // A voice call has no desk arrival: the primary action
+                  // is to ring the patient. Until Twilio lands this hands
+                  // the number to the device's dialler.
+                  const showMarkArrived = !isVirtual && !isVoiceRow && status === 'booked' && !isCsOnly;
+                  const showCallPatient = isVoiceRow && !!callHref && voiceCallIsLive(status);
                   const showCloseOnly =
-                    !showNoShow && !showVirtualJoin && !showMarkArrived && status !== 'no_show';
+                    !showNoShow && !showVirtualJoin && !showMarkArrived && !showCallPatient && status !== 'no_show';
                   if (showCloseOnly) {
                     return (
                       <Button variant="secondary" onClick={closeSheet}>
@@ -988,6 +1050,18 @@ export function Schedule() {
                         >
                           <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
                             <Video size={16} /> {joinLabel}
+                          </span>
+                        </Button>
+                      ) : null}
+                      {showCallPatient && callHref ? (
+                        <Button
+                          variant="primary"
+                          onClick={() => {
+                            window.location.href = callHref;
+                          }}
+                        >
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[2] }}>
+                            <PhoneCall size={16} aria-hidden /> Call patient
                           </span>
                         </Button>
                       ) : null}
@@ -1116,7 +1190,9 @@ export function Schedule() {
                       ? isDesktop
                         ? 'If they have not connected, tap No-show.'
                         : 'If they have not connected, mark No-show from a desktop browser.'
-                      : 'If they have not turned up, tap No-show.'}
+                      : isVoiceCall(selected)
+                        ? 'If they have not answered, tap No-show.'
+                        : 'If they have not turned up, tap No-show.'}
                   </p>
                 </div>
               ) : null}
@@ -1209,6 +1285,9 @@ export function Schedule() {
                         {selected.join_url && (
                           <img src={googleMeetIcon} height={18} aria-label="Virtual meeting" style={{ flexShrink: 0, display: 'block', width: 'auto' }} />
                         )}
+                        {isVoiceCall(selected) ? (
+                          <PhoneCall size={18} color={theme.category.voiceCall} aria-label="Voice call" style={{ flexShrink: 0 }} />
+                        ) : null}
                         {headingText}
                       </p>
                       {detailText ? (
@@ -1264,7 +1343,13 @@ export function Schedule() {
               ) : null}
 
               <p style={{ margin: 0, color: theme.color.inkMuted, fontSize: theme.type.size.sm }}>
-                {selected.status === 'booked'
+                {isVoiceCall(selected) && selected.status === 'booked'
+                  ? selected.patient_phone
+                    ? `Ring ${selected.patient_phone} at the booked time. Mark no-show 15 min after the start time if they do not answer.`
+                    : 'No phone number on file. Open the patient profile and add one before the call.'
+                  : isVoiceCall(selected) && selected.status === 'no_show'
+                    ? 'Marked as a no-show. If they ring back, tap "Patient attended" to amend.'
+                : selected.status === 'booked'
                   ? selected.join_url
                     ? 'Tap Join meeting on a desktop when the call begins. Mark no-show 15 min after the start time if they have not connected.'
                     : 'Mark arrived when the patient is at the desk. Mark no-show 15 min after the start time if they have not turned up.'
@@ -1450,6 +1535,7 @@ export function Schedule() {
           open
           initialIso={newBookingSlot}
           locationId={currentLocation.data.id}
+          lockedServiceType={voiceMode ? VOICE_CALL_SERVICE_TYPE : undefined}
           onClose={() => setNewBookingSlot(null)}
           onCreated={(id, info) => {
             setNewBookingSlot(null);
