@@ -30,14 +30,17 @@ import { NotificationsSettings } from './NotificationsSettings.tsx';
 
 // Which slice of the feed a bell shows. 'voice_call' is Voice call
 // mode: only events on voice call bookings, so an agent's inbox is
-// their calls and nothing else. Scope is applied before search.
-export type NotificationScope = 'all' | 'voice_call';
+// their calls and nothing else. 'clinic' is Clinic mode: everything
+// except voice calls, which are the agents' business. 'all' is the
+// whole feed. Scope is applied before search.
+export type NotificationScope = 'all' | 'clinic' | 'voice_call';
 
 export function scopeNotifications<T extends { service_type: string | null }>(
   rows: T[],
   scope: NotificationScope,
 ): T[] {
   if (scope === 'all') return rows;
+  if (scope === 'clinic') return rows.filter((r) => r.service_type !== 'voice_call');
   return rows.filter((r) => r.service_type === 'voice_call');
 }
 

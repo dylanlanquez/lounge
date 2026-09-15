@@ -203,7 +203,7 @@ export function KioskStatusBar() {
         <NotificationBell
           size={15}
           haloColor={theme.color.surface}
-          scope={voiceCallMode.active ? 'voice_call' : 'all'}
+          scope={voiceCallMode.active ? 'voice_call' : 'clinic'}
         />
         {batterySupported && percent !== null ? (
           <>

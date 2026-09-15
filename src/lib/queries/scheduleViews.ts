@@ -321,14 +321,19 @@ export function useDateRangeCounts(
   // the staff member's location so cross-site rows don't pump up the
   // wrong day's dot.
   locationId?: string | null,
-  // Narrow the dots to one booking type. Voice call mode passes
-  // 'voice_call' so the strip only lights the days that have calls.
-  serviceType?: string | null,
+  // Scope the dots by booking type. Voice call mode passes
+  // { only: 'voice_call' } so the strip lights the days with calls;
+  // Clinic mode passes { except: 'voice_call' } so calls never light
+  // the clinic's strip. Rows with no service_type (legacy Calendly)
+  // count as clinic bookings.
+  scope?: { only: string } | { except: string } | null,
 ): DateRangeCountsResult {
   const [counts, setCounts] = useState<Map<string, number>>(new Map());
   const [error, setError] = useState<string | null>(null);
   const [refreshTick, setRefreshTick] = useState(0);
-  const { loading, settle } = useStaleQueryLoading(`${startIso}|${endIso}|${serviceType ?? ''}`);
+  const only = scope && 'only' in scope ? scope.only : null;
+  const except = scope && 'except' in scope ? scope.except : null;
+  const { loading, settle } = useStaleQueryLoading(`${startIso}|${endIso}|${only ?? ''}|!${except ?? ''}`);
 
   useEffect(() => {
     // Same wait-for-location guard as useDayAppointments — skip
@@ -348,7 +353,9 @@ export function useDateRangeCounts(
         .lte('start_at', end.toISOString())
         .not('status', 'in', '(cancelled,rescheduled)');
       if (locationId) q = q.eq('location_id', locationId);
-      if (serviceType) q = q.eq('service_type', serviceType);
+      if (only) q = q.eq('service_type', only);
+      // PostgREST's neq drops NULL rows, so spell the exclusion out.
+      if (except) q = q.or(`service_type.is.null,service_type.neq.${except}`);
       const { data: rows, error: err } = await q;
 
       if (cancelled) return;
@@ -374,7 +381,7 @@ export function useDateRangeCounts(
     return () => {
       cancelled = true;
     };
-  }, [startIso, endIso, locationId, serviceType, refreshTick, settle]);
+  }, [startIso, endIso, locationId, only, except, refreshTick, settle]);
 
   const refresh = useCallback(() => {
     setRefreshTick((t) => t + 1);

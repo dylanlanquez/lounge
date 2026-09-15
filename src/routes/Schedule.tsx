@@ -250,15 +250,24 @@ export function Schedule() {
   // with yours when they aren't.
   const day = useDayAppointments(selectedDate, currentLocation.data?.id ?? null);
 
+  // The day as this mode sees it. Voice calls are the agents' diary
+  // and live only in Voice call mode; Clinic mode is the clinic floor
+  // and never shows them (Dylan, 15 Sep 2026). Counts, empty states,
+  // free time and the hero all read from this, never the raw fetch.
+  const dayRows = useMemo(
+    () => (voiceMode ? day.data.filter(isVoiceCall) : day.data.filter((r) => !isVoiceCall(r))),
+    [day.data, voiceMode],
+  );
+
   // Per-category booking counts for the day in view — feeds the live
   // numbers beside each row in the filter popover.
   const categoryCounts = useMemo(() => {
     const counts = Object.fromEntries(
       APPOINTMENT_CATEGORY_ORDER.map((c) => [c, 0])
     ) as Record<AppointmentCategory, number>;
-    for (const row of day.data) counts[appointmentCategory(row)] += 1;
+    for (const row of dayRows) counts[appointmentCategory(row)] += 1;
     return counts;
-  }, [day.data]);
+  }, [dayRows]);
 
   // The rows actually rendered. Empty filter = the whole day; otherwise
   // narrowed to the ticked categories.
@@ -278,14 +287,14 @@ export function Schedule() {
       clinicSettings.loading
         ? null
         : computeDayFreeTime({
-            rows: day.data,
+            rows: dayRows,
             dateIso: selectedDate,
             hours: dayHours,
             now,
             isToday: selectedDate === todayIso,
             isPast: selectedDate < todayIso,
           }),
-    [clinicSettings.loading, dayHours, day.data, selectedDate, now, todayIso],
+    [clinicSettings.loading, dayHours, dayRows, selectedDate, now, todayIso],
   );
 
   // Pills on the day toolbar. On a phone they are always icons: a rule
@@ -294,13 +303,6 @@ export function Schedule() {
   // aria-label and title.
   const compactPills = isMobile;
 
-  // The day as this mode sees it: every booking in clinic mode, voice
-  // calls only in voice call mode. Counts, empty states and the hero
-  // all read from this, never from the raw fetch.
-  const dayRows = useMemo(
-    () => (voiceMode ? day.data.filter(isVoiceCall) : day.data),
-    [day.data, voiceMode],
-  );
   const visibleRows = useMemo(
     () =>
       voiceMode || shownCategories.size === 0
@@ -335,7 +337,7 @@ export function Schedule() {
     stripStartIso,
     stripEndIso,
     currentLocation.data?.id ?? null,
-    voiceMode ? VOICE_CALL_SERVICE_TYPE : null,
+    voiceMode ? { only: VOICE_CALL_SERVICE_TYPE } : { except: VOICE_CALL_SERVICE_TYPE },
   );
 
   // Waiver state for the selected patient. Sections are global; signatures
@@ -841,7 +843,7 @@ export function Schedule() {
         <DownTimeSheet
           open={downTimeOpen}
           onClose={() => setDownTimeOpen(false)}
-          rows={day.data}
+          rows={dayRows}
           dateIso={selectedDate}
           dayLabel={dayHeading}
           hours={dayHours}
