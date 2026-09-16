@@ -41,6 +41,22 @@ export function voiceCallOutcomeLabel(outcome: string): string {
   return VOICE_CALL_OUTCOMES.find((o) => o.value === outcome)?.label ?? outcome;
 }
 
+// What a confirmed outcome implies about the underlying Twilio call
+// session's own status, for sessions whose real status callback never
+// lands (e.g. a call that fails to connect cleanly on a bad
+// international number). See lng_close_voice_call_session — this is
+// only ever a fallback close, never an override of a status Twilio
+// itself already reported.
+const SESSION_CLOSE_STATUS: Record<VoiceCallOutcome, string> = {
+  answered: 'completed',
+  voicemail: 'completed',
+  wrong_number: 'completed',
+  call_back_requested: 'completed',
+  no_answer: 'no-answer',
+  busy: 'busy',
+  no_connection: 'failed',
+};
+
 // A voice call's missed outcomes reuse the shared 'no_show' patient_event
 // type (see logVoiceCallOutcome below), so the timeline needs a way to
 // tell "clinic no-show" and "call not reached" apart by payload.reason
@@ -421,6 +437,20 @@ export async function logVoiceCallOutcome(args: {
             joined_before_no_show: false,
           },
   });
+
+  // A confirmed outcome means this call is over, whether or not
+  // Twilio's own status callback ever landed for it. Without this, a
+  // session that never got a clean terminal webhook (a flaky
+  // international number, a dropped call) sits at 'ringing' or
+  // 'in-progress' for up to two hours, showing as genuinely live in
+  // Admin -> Calls with a "Listen in" button that joins a conference
+  // nobody is actually on.
+  if (args.sessionId) {
+    await supabase.rpc('lng_close_voice_call_session', {
+      p_session_id: args.sessionId,
+      p_status: SESSION_CLOSE_STATUS[args.outcome],
+    });
+  }
 
   return { status, logWriteFailed };
 }
