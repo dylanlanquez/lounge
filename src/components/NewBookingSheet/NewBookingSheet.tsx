@@ -1445,7 +1445,7 @@ export function NewBookingSheet({
                     : 'muted'
                 }
               >
-                {config.duration_default}-minute video call
+                {config.patient_facing_min_minutes ?? config.duration_default}-minute video call
                 {availabilityLoading || !date
                   ? '.'
                   : Array.isArray(availableSlots) && availableSlots.length > 0
@@ -1456,7 +1456,12 @@ export function NewBookingSheet({
               <InlineHint
                 tone={hoursForDate || !date ? 'muted' : 'alert'}
               >
-                {config.duration_default}-minute slot
+                {/* patient_facing_min_minutes excludes any buffer phase
+                    (e.g. voice calls: a 10-minute call, not the 15-minute
+                    block a buffer-after reserves) — duration_default is
+                    the full block and stays what scheduling math uses
+                    everywhere else in this file. */}
+                {config.patient_facing_min_minutes ?? config.duration_default}-minute slot
                 {hoursForDate
                   ? `. Hours that day: ${hoursForDate.open} to ${hoursForDate.close}${
                       hoursForDate.break && hoursForDate.break.end > hoursForDate.break.start
