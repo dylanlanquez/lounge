@@ -97,17 +97,33 @@ function friendlyCallErrorMessage(err: DeviceError | undefined): string {
 // reads as NotFoundError — mapped to the same two messages
 // friendlyCallErrorMessage uses for the SDK's own 31401/31402.
 async function ensureMicrophoneAccess(): Promise<void> {
+  if (!navigator.mediaDevices?.getUserMedia) {
+    throw new Error(
+      `This browser has no microphone API available (navigator.mediaDevices${navigator.mediaDevices ? '.getUserMedia' : ''} is missing). Try a different browser or check for a policy disabling media access.`,
+    );
+  }
   let stream: MediaStream;
   try {
     stream = await navigator.mediaDevices.getUserMedia({ audio: true });
   } catch (e) {
-    const name = e instanceof DOMException ? e.name : '';
+    // Distinguish real permission denials (the common, expected case,
+    // with a friendly fix) from anything else, which we surface
+    // verbatim rather than guessing — an earlier version of this
+    // collapsed every failure into "access is blocked" regardless of
+    // the real cause, which hid a genuine misdiagnosis from Dylan
+    // when the Mac/Chrome/extension permission chain checked out
+    // clean but the call still failed instantly.
+    const name = e instanceof DOMException ? e.name : e instanceof Error ? e.name : 'UnknownError';
+    const detail = e instanceof Error ? e.message : String(e);
     if (name === 'NotFoundError' || name === 'DevicesNotFoundError') {
       throw new Error('No microphone was found. Check a microphone is connected and try again.');
     }
-    throw new Error(
-      'Microphone access is blocked. Allow microphone access for this site in your browser, then try again. On a Mac, also check System Settings, Privacy and Security, Microphone, and make sure your browser is allowed there.',
-    );
+    if (name === 'NotAllowedError' || name === 'PermissionDeniedError' || name === 'SecurityError') {
+      throw new Error(
+        `Microphone access is blocked (${name}). Allow microphone access for this site in your browser, then try again. On a Mac, also check System Settings, Privacy and Security, Microphone, and make sure your browser is allowed there.`,
+      );
+    }
+    throw new Error(`Could not access the microphone: ${name} — ${detail}`);
   }
   // Only checking access is possible here; the Voice SDK opens its
   // own stream when the call actually connects. Release this one
