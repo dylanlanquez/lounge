@@ -3,8 +3,11 @@ import {
   CalendarClock,
   CalendarPlus,
   Clock,
+  FileText,
+  Paperclip,
   PhoneCall,
   User,
+  X,
 } from 'lucide-react';
 import {
   BottomSheet,
@@ -63,6 +66,8 @@ import {
   findPatientsByNameAtLocation,
 } from '../../lib/queries/patients.ts';
 import { supabase } from '../../lib/supabase.ts';
+import { uploadPatientFile } from '../../lib/queries/patientFiles.ts';
+import { logFailure } from '../../lib/failureLog.ts';
 
 // NewBookingSheet — bottom-sheet UI for creating a brand-new
 // native (non-Calendly) appointment. Opened from the Schedule when
@@ -98,7 +103,15 @@ export interface NewBookingSheetProps {
   // refreshing the schedule.
   onCreated: (
     newAppointmentId: string,
-    info: { emailSent: boolean; emailReason: string | null; meetCreateError?: string | null },
+    info: {
+      emailSent: boolean;
+      emailReason: string | null;
+      meetCreateError?: string | null;
+      // Set when one or more staged attachments failed to upload.
+      // The booking itself always succeeds regardless — this is a
+      // secondary, non-blocking notice.
+      attachmentError?: string | null;
+    },
   ) => void;
   // Pin the service and hide the picker. Voice call mode opens the
   // sheet as "New voice call": the agent books a call, never a chair.
@@ -192,6 +205,13 @@ export function NewBookingSheet({
   const [axisOptions, setAxisOptions] = useState<Partial<Record<AxisKey, AxisValueOption[]>>>({});
   const [axisOptionsLoading, setAxisOptionsLoading] = useState<boolean>(false);
   const [notes, setNotes] = useState<string>('');
+  // Photos or files the operator wants on file before the call/visit
+  // happens (e.g. a reference photo, a screenshot of an order, an ID).
+  // Staged client-side; actually uploaded once the appointment exists,
+  // so every file lands with a source_appointment_id back-reference.
+  const [attachments, setAttachments] = useState<File[]>([]);
+  const [attachmentPickError, setAttachmentPickError] = useState<string | null>(null);
+  const attachmentInputRef = useRef<HTMLInputElement | null>(null);
   // Per-host Google Meet integration. Only relevant when the picked
   // service is virtual_impression_appointment — for everything else
   // we leave this null and skip the dropdown entirely. createAppointment
@@ -271,6 +291,8 @@ export function NewBookingSheet({
     setAxisOptions({});
     setAxisOptionsLoading(false);
     setNotes('');
+    setAttachments([]);
+    setAttachmentPickError(null);
     setClinicianId(null);
     setShopifyOrderApplies(false);
     setShopifyOrderInput('');
@@ -930,10 +952,56 @@ export function NewBookingSheet({
               }
             : null,
       });
+      // Attachments upload after the appointment exists, so every
+      // file carries a source_appointment_id back-reference. The
+      // booking is already committed at this point, so an upload
+      // failure must not look like the booking failed — it surfaces
+      // as attachmentError instead, same pattern as meetCreateError.
+      let attachmentError: string | null = null;
+      if (attachments.length > 0) {
+        const { data: uploaderAccountId, error: accErr } = await supabase.rpc('auth_account_id');
+        if (accErr) {
+          await logFailure({
+            source: 'new_booking_sheet.attachments',
+            severity: 'warning',
+            message: `auth_account_id failed, uploading attachments without an uploader: ${accErr.message}`,
+            context: { appointmentId: result.appointmentId, patientId: patient.id },
+          });
+        }
+        let failed = 0;
+        for (const file of attachments) {
+          try {
+            await uploadPatientFile({
+              patientId: patient.id,
+              patientName: patientFullName(patient),
+              file,
+              labelKey: 'other',
+              labelDisplayName: file.name.trim().length >= 3 ? file.name.trim() : `Attachment · ${file.name}`,
+              uploaderAccountId: (uploaderAccountId as string | null) ?? null,
+              sourceAppointmentId: result.appointmentId,
+            });
+          } catch (e) {
+            failed += 1;
+            await logFailure({
+              source: 'new_booking_sheet.attachments',
+              severity: 'error',
+              message: `Attachment upload failed: ${e instanceof Error ? e.message : String(e)}`,
+              context: { appointmentId: result.appointmentId, patientId: patient.id, fileName: file.name },
+            });
+          }
+        }
+        if (failed > 0) {
+          attachmentError =
+            failed === attachments.length
+              ? `${failed === 1 ? 'The attachment' : 'The attachments'} could not be uploaded. Add ${failed === 1 ? 'it' : 'them'} from the patient profile instead.`
+              : `${failed} of ${attachments.length} attachments could not be uploaded. Add the rest from the patient profile.`;
+        }
+      }
       onCreated(result.appointmentId, {
         emailSent: result.emailSent,
         emailReason: result.emailReason,
         meetCreateError: result.meetCreateError ?? null,
+        attachmentError,
       });
     } catch (e) {
       if (e instanceof RescheduleConflictError) {
@@ -1531,12 +1599,96 @@ export function NewBookingSheet({
             title="Notes"
             info="Optional. Anything the team should know going in. Visible on the schedule card and on the patient profile."
           >
-            <Input
-              aria-label="Notes"
+            <NotesTextarea
               value={notes}
-              onChange={(e) => setNotes(e.target.value)}
+              onChange={setNotes}
               placeholder="e.g. wheelchair access; bringing a translator; allergic to latex."
             />
+          </Section>
+
+          <Section
+            title="Attachments"
+            info="Optional. Photos or files worth having on hand before the call or visit — a reference photo, an order screenshot, an ID. Saved to the patient's files once the booking is made."
+          >
+            <input
+              ref={attachmentInputRef}
+              type="file"
+              multiple
+              accept="image/*,.pdf,.doc,.docx,.heic"
+              onChange={(e) => {
+                const picked = Array.from(e.target.files ?? []);
+                e.target.value = '';
+                if (picked.length === 0) return;
+                const oversized = picked.filter((f) => f.size > MAX_ATTACHMENT_BYTES);
+                const accepted = picked.filter((f) => f.size <= MAX_ATTACHMENT_BYTES);
+                setAttachments((prev) => {
+                  const combined = [...prev, ...accepted];
+                  if (combined.length <= MAX_ATTACHMENTS) return combined;
+                  setAttachmentPickError(`Only the first ${MAX_ATTACHMENTS} files are kept — one booking can carry up to ${MAX_ATTACHMENTS}.`);
+                  return combined.slice(0, MAX_ATTACHMENTS);
+                });
+                if (oversized.length > 0) {
+                  setAttachmentPickError(
+                    `${oversized.length === 1 ? oversized[0]!.name : `${oversized.length} files`} over 20 MB ${oversized.length === 1 ? 'was' : 'were'} not added.`,
+                  );
+                } else if (picked.length === accepted.length) {
+                  setAttachmentPickError(null);
+                }
+              }}
+              style={{ display: 'none' }}
+            />
+            <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
+              {attachments.length > 0 ? (
+                <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
+                  {attachments.map((file, i) => (
+                    <AttachmentRow
+                      key={`${file.name}-${file.size}-${i}`}
+                      file={file}
+                      onRemove={() => setAttachments((prev) => prev.filter((_, idx) => idx !== i))}
+                    />
+                  ))}
+                </ul>
+              ) : null}
+              {attachments.length < MAX_ATTACHMENTS ? (
+                <button
+                  type="button"
+                  onClick={() => attachmentInputRef.current?.click()}
+                  style={{
+                    appearance: 'none',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: theme.space[2],
+                    height: 52,
+                    borderRadius: theme.radius.input,
+                    border: `1.5px dashed ${theme.color.border}`,
+                    background: 'transparent',
+                    color: theme.color.inkMuted,
+                    fontFamily: 'inherit',
+                    fontSize: theme.type.size.sm,
+                    fontWeight: theme.type.weight.medium,
+                    cursor: 'pointer',
+                    transition: `border-color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}, color ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+                  }}
+                  onMouseEnter={(e) => {
+                    (e.currentTarget as HTMLElement).style.borderColor = theme.color.accent;
+                    (e.currentTarget as HTMLElement).style.color = theme.color.accent;
+                  }}
+                  onMouseLeave={(e) => {
+                    (e.currentTarget as HTMLElement).style.borderColor = theme.color.border;
+                    (e.currentTarget as HTMLElement).style.color = theme.color.inkMuted;
+                  }}
+                >
+                  <Paperclip size={16} aria-hidden />
+                  Add photo or file
+                </button>
+              ) : null}
+              {attachmentPickError ? (
+                <p role="alert" style={{ margin: 0, fontSize: theme.type.size.xs, color: theme.color.alert }}>
+                  {attachmentPickError}
+                </p>
+              ) : null}
+            </div>
           </Section>
 
         </div>
@@ -2204,6 +2356,162 @@ async function createPatient(args: {
 // radius as the dropdown it replaces so the form keeps its rhythm; the
 // category colour and glyph say which service without a control that
 // looks tappable.
+// Attachment limits. 20 MB matches Supabase Storage's default
+// per-object ceiling; 8 files is comfortably more than a booking has
+// ever needed and keeps the sheet from growing unbounded.
+const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024;
+const MAX_ATTACHMENTS = 8;
+
+// Bigger, resizable Notes field. Same field chrome as Input (inset
+// border, focus ring darkens to ink, same radius) so it reads as
+// part of the same form, but four rows tall — Dylan asked for the
+// notes box to be bigger, and a phone-call or a walk-in note often
+// runs to a full sentence or two, not the half-line Input was built
+// for.
+function NotesTextarea({
+  value,
+  onChange,
+  placeholder,
+}: {
+  value: string;
+  onChange: (next: string) => void;
+  placeholder: string;
+}) {
+  const [focused, setFocused] = useState(false);
+  return (
+    <textarea
+      aria-label="Notes"
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      onFocus={() => setFocused(true)}
+      onBlur={() => setFocused(false)}
+      placeholder={placeholder}
+      rows={4}
+      style={{
+        width: '100%',
+        resize: 'vertical',
+        minHeight: 96,
+        border: 'none',
+        borderRadius: theme.radius.input,
+        background: theme.color.surface,
+        padding: `${theme.space[4]}px ${theme.space[5]}px`,
+        fontFamily: 'inherit',
+        fontSize: theme.type.size.base,
+        lineHeight: theme.type.leading.normal,
+        color: theme.color.ink,
+        outline: 'none',
+        boxShadow: focused
+          ? `inset 0 0 0 1px ${theme.color.ink}`
+          : `inset 0 0 0 1px ${theme.color.border}`,
+        transition: `box-shadow ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+      }}
+    />
+  );
+}
+
+// One staged attachment: a thumbnail for images (object URL, revoked
+// on unmount), a plain file glyph for everything else, the name and
+// size, and a remove button. Nothing here is uploaded yet — that
+// happens once the booking is saved, so a cancelled sheet never
+// leaves an orphaned file on a patient's profile.
+function AttachmentRow({ file, onRemove }: { file: File; onRemove: () => void }) {
+  const isImage = file.type.startsWith('image/');
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isImage) return;
+    const url = URL.createObjectURL(file);
+    setPreviewUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [file, isImage]);
+
+  return (
+    <li
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: theme.space[3],
+        padding: `${theme.space[2]}px ${theme.space[3]}px`,
+        borderRadius: theme.radius.input,
+        border: `1px solid ${theme.color.border}`,
+        background: theme.color.surface,
+      }}
+    >
+      <span
+        aria-hidden
+        style={{
+          width: 36,
+          height: 36,
+          borderRadius: theme.radius.input - 4,
+          flexShrink: 0,
+          overflow: 'hidden',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          background: theme.color.bg,
+          color: theme.color.inkMuted,
+        }}
+      >
+        {previewUrl ? (
+          <img src={previewUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+        ) : (
+          <FileText size={16} />
+        )}
+      </span>
+      <span style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+        <span
+          style={{
+            fontSize: theme.type.size.sm,
+            fontWeight: theme.type.weight.medium,
+            color: theme.color.ink,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {file.name}
+        </span>
+        <span style={{ fontSize: theme.type.size.xs, color: theme.color.inkSubtle }}>
+          {formatFileSize(file.size)}
+        </span>
+      </span>
+      <button
+        type="button"
+        onClick={onRemove}
+        aria-label={`Remove ${file.name}`}
+        style={{
+          appearance: 'none',
+          border: 'none',
+          background: 'transparent',
+          color: theme.color.inkSubtle,
+          cursor: 'pointer',
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          width: 28,
+          height: 28,
+          borderRadius: theme.radius.pill,
+          flexShrink: 0,
+        }}
+        onMouseEnter={(e) => {
+          (e.currentTarget as HTMLElement).style.color = theme.color.alert;
+        }}
+        onMouseLeave={(e) => {
+          (e.currentTarget as HTMLElement).style.color = theme.color.inkSubtle;
+        }}
+      >
+        <X size={14} />
+      </button>
+    </li>
+  );
+}
+
+// "240 KB" / "3.1 MB" — one decimal above 1 MB, whole numbers below.
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 function LockedServiceRow({ serviceType }: { serviceType: BookingServiceType }) {
   const label = BOOKING_SERVICE_TYPES.find((s) => s.value === serviceType)?.label ?? serviceType;
   const isVoice = serviceType === 'voice_call';

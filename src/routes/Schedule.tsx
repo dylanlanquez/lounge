@@ -1565,7 +1565,13 @@ export function Schedule() {
                       title: 'Booking added, meeting link missing',
                       description: `${info.meetCreateError} Tap Generate Meet link to retry.`,
                     }
-                  : info.emailSent
+                  : info.attachmentError
+                    ? {
+                        tone: 'info' as const,
+                        title: 'Booking added',
+                        description: info.attachmentError,
+                      }
+                    : info.emailSent
                     ? {
                         tone: 'success' as const,
                         title: 'Booking added',
