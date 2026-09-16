@@ -81,13 +81,22 @@ async function handle(req: Request): Promise<Response> {
   const accountId = (acc as { id: string } | null)?.id ?? callerAuthId;
 
   const accountSid = Deno.env.get('TWILIO_ACCOUNT_SID') ?? '';
-  const apiKeySid = Deno.env.get('TWILIO_API_KEY_SID') ?? '';
-  const apiKeySecret = Deno.env.get('TWILIO_API_KEY_SECRET') ?? '';
+  // A dedicated key, not the TWILIO_API_KEY_SID/SECRET pair
+  // _shared/twilioSms.ts uses: that one is a restricted key scoped
+  // only to Messaging (confirmed via Twilio's own Keys API — it
+  // 401s with "required permission twilio/messaging/messages/list is
+  // missing" against anything outside Messaging), and Twilio's
+  // signaling servers rejected every Access Token signed with it as
+  // "JWT signature validation failed" (31202) even once the payload
+  // shape itself was fixed. This key was created specifically for
+  // Voice, with no scope restriction.
+  const apiKeySid = Deno.env.get('TWILIO_VOICE_API_KEY_SID') ?? '';
+  const apiKeySecret = Deno.env.get('TWILIO_VOICE_API_KEY_SECRET') ?? '';
   const appSid = Deno.env.get('TWILIO_TWIML_APP_SID') ?? '';
   const missing = [
     !accountSid && 'TWILIO_ACCOUNT_SID',
-    !apiKeySid && 'TWILIO_API_KEY_SID',
-    !apiKeySecret && 'TWILIO_API_KEY_SECRET',
+    !apiKeySid && 'TWILIO_VOICE_API_KEY_SID',
+    !apiKeySecret && 'TWILIO_VOICE_API_KEY_SECRET',
     !appSid && 'TWILIO_TWIML_APP_SID',
   ].filter(Boolean);
   if (missing.length > 0) {
@@ -135,6 +144,14 @@ async function buildAccessToken(args: {
     jti: `${args.apiKeySid}-${now}`,
     iss: args.apiKeySid,
     sub: args.accountSid,
+    // Twilio's own jsonwebtoken-based AccessToken always stamps iat
+    // (jsonwebtoken.sign() adds it by default unless noTimestamp is
+    // set) alongside exp computed from that same instant. Omitting
+    // it produces a token Twilio's servers reject outright with
+    // AccessTokenInvalid (20101) — confirmed by reproducing the
+    // exact failure against the real SDK and diffing against the
+    // official "twilio" npm package's lib/jwt/AccessToken.js.
+    iat: now,
     exp: now + args.ttlSeconds,
     grants: {
       identity: args.identity,

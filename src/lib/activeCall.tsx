@@ -64,12 +64,16 @@ interface TwilioCall {
   mute: (shouldMute: boolean) => void;
   isMuted: () => boolean;
 }
+interface DeviceError {
+  message?: string;
+  code?: number;
+}
 interface TwilioDevice {
   register: () => Promise<void>;
   destroy: () => void;
   updateToken: (token: string) => void;
   connect: (opts: { params: Record<string, string> }) => Promise<TwilioCall>;
-  on: (event: 'tokenWillExpire', cb: () => void) => void;
+  on: (event: 'tokenWillExpire' | 'error', cb: (arg?: DeviceError) => void) => void;
 }
 
 export function ActiveCallProvider({ children }: { children: ReactNode }) {
@@ -146,7 +150,25 @@ export function ActiveCallProvider({ children }: { children: ReactNode }) {
         const { Device } = await import('@twilio/voice-sdk');
         const device = new Device(token, { logLevel: 'error' }) as unknown as TwilioDevice;
         deviceRef.current = device;
-        await device.register();
+        // device.register()/connect() reject with `undefined` on a
+        // signaling error (e.g. an invalid Access Token), not the
+        // TwilioError describing what actually happened — that only
+        // ever surfaces via this 'error' event. Capturing it here is
+        // the only way startCall's catch block below can report
+        // anything more useful than "the call failed" when that
+        // happens (confirmed by reproducing a real
+        // AccessTokenInvalid failure against Twilio's own servers).
+        let lastDeviceError: DeviceError | undefined;
+        device.on('error', (err) => {
+          lastDeviceError = err;
+        });
+        try {
+          await device.register();
+        } catch (e) {
+          throw e instanceof Error
+            ? e
+            : new Error(lastDeviceError?.message ?? `Twilio registration failed (code ${lastDeviceError?.code ?? 'unknown'})`);
+        }
         device.on('tokenWillExpire', () => {
           mintToken()
             .then((fresh) => device.updateToken(fresh))
@@ -160,9 +182,16 @@ export function ActiveCallProvider({ children }: { children: ReactNode }) {
             );
         });
 
-        const call = await device.connect({
-          params: { sessionId, To: args.patientPhone },
-        });
+        let call: TwilioCall;
+        try {
+          call = await device.connect({
+            params: { sessionId, To: args.patientPhone },
+          });
+        } catch (e) {
+          throw e instanceof Error
+            ? e
+            : new Error(lastDeviceError?.message ?? `Could not connect the call (code ${lastDeviceError?.code ?? 'unknown'})`);
+        }
         callRef.current = call;
         setState('ringing');
 
