@@ -163,7 +163,7 @@ Deno.serve(async (req) => {
   if (!RESEND_API_KEY) {
     return j(200, { ok: false, reason: 'delivery_not_configured' });
   }
-  const sender = await getEmailSenderHeaders(supabase);
+  const sender = await getEmailSenderHeaders(supabase as unknown as Parameters<typeof getEmailSenderHeaders>[0]);
   const send = await renderAndSend({
     apiKey: RESEND_API_KEY,
     from: sender.from,

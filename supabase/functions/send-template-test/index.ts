@@ -117,7 +117,7 @@ async function handle(req: Request): Promise<Response> {
   const text = bodyToText(bodyAfterVars);
 
   const admin: SupabaseClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
-  const sender = await getEmailSenderHeaders(admin);
+  const sender = await getEmailSenderHeaders(admin as unknown as Parameters<typeof getEmailSenderHeaders>[0]);
   const sendResult = await sendEmail({ headers: sender, to, subject: subjectFinal, html, text });
   if (!sendResult.ok) {
     return jsonResponse(200, { ok: false, error: sendResult.error });

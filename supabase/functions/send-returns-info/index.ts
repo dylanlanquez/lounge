@@ -230,7 +230,7 @@ async function sendEmailChannel(
   if (!RESEND_API_KEY) return { status: 'skipped', reason: 'email_not_configured' };
   if (!rendered) return { status: 'skipped', reason: 'template_disabled' };
 
-  const headers = await getEmailSenderHeaders(admin);
+  const headers = await getEmailSenderHeaders(admin as unknown as Parameters<typeof getEmailSenderHeaders>[0]);
   const send = await sendViaResend({
     apiKey: RESEND_API_KEY,
     from: headers.from,

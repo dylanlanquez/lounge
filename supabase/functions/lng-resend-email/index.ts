@@ -139,7 +139,7 @@ async function handle(req: Request): Promise<Response> {
   // otherwise replay to an unverified domain and bounce with the
   // same Resend 403 the original send failed on. The persisted
   // from_email is informational audit, not a routing instruction.
-  const senderHeaders = await getEmailSenderHeaders(admin);
+  const senderHeaders = await getEmailSenderHeaders(admin as unknown as Parameters<typeof getEmailSenderHeaders>[0]);
   const envFrom = senderHeaders.from;
   const envReplyTo = senderHeaders.replyTo;
   const resendBody: Record<string, unknown> = {

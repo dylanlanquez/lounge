@@ -354,7 +354,7 @@ async function handle(req: Request): Promise<Response> {
 
     if (claimed && claimed.length > 0) {
       try {
-        const sender = await getEmailSenderHeaders(admin);
+        const sender = await getEmailSenderHeaders(admin as unknown as Parameters<typeof getEmailSenderHeaders>[0]);
         const result = await sendShippingEmail(admin, {
           visitId:          visit_id,
           patientId:        visit.patient_id,

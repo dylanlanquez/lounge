@@ -163,7 +163,7 @@ async function trySendEmail(
 
   if (!claimed?.length) return; // another concurrent call won the race
 
-  const sender = await getEmailSenderHeaders(admin);
+  const sender = await getEmailSenderHeaders(admin as unknown as Parameters<typeof getEmailSenderHeaders>[0]);
   const sent = await sendShippingEmail(admin, {
     visitId:          visit.id,
     patientEmail:     patient.email,

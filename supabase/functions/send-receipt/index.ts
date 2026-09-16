@@ -273,7 +273,7 @@ Deno.serve(async (req) => {
   // defaults keeps preview / dev DBs working before lng_settings
   // is seeded. We compute them once here so the audit row's
   // from_email and the actual Resend request stay in lockstep.
-  const senderHeaders = await getEmailSenderHeaders(supabase);
+  const senderHeaders = await getEmailSenderHeaders(supabase as unknown as Parameters<typeof getEmailSenderHeaders>[0]);
   let deliveryResult: { ok: true; provider: string; messageId?: string } | { ok: false; error: string };
   if (receipt.channel === 'email') {
     deliveryResult = await sendEmail(senderHeaders, recipient, subject, html, text);

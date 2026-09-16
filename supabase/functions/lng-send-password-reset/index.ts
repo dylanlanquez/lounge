@@ -178,7 +178,7 @@ Deno.serve(async (req) => {
     });
   }
   const brand = await loadBrand(admin);
-  const sender = await getEmailSenderHeaders(admin);
+  const sender = await getEmailSenderHeaders(admin as unknown as Parameters<typeof getEmailSenderHeaders>[0]);
   const result = await renderAndSend({
     apiKey: RESEND_API_KEY,
     from: sender.from,
