@@ -81,3 +81,18 @@ verify_jwt = false
 #   Twilio, gated by X-Twilio-Signature instead.
 [functions.twilio-voice-status]
 verify_jwt = false
+
+# twilio-voice-conference-join
+#   Public webhook Twilio requests for the patient's own call leg the
+#   moment they answer (the `Url` on the outbound Calls.json REST
+#   dial twilio-voice-twiml makes). No Authorization header from
+#   Twilio, gated by X-Twilio-Signature instead.
+[functions.twilio-voice-conference-join]
+verify_jwt = false
+
+# twilio-voice-conference-status
+#   Public Conference-level status callback (start/end/join/leave) —
+#   only used to stamp lng_voice_call_listeners.left_at. Same
+#   reasoning as every other Twilio webhook here.
+[functions.twilio-voice-conference-status]
+verify_jwt = false

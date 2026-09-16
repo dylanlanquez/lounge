@@ -14,7 +14,8 @@ export type VoiceCallOutcome =
   | 'voicemail'
   | 'wrong_number'
   | 'busy'
-  | 'call_back_requested';
+  | 'call_back_requested'
+  | 'no_connection';
 
 export interface VoiceCallOutcomeOption {
   value: VoiceCallOutcome;
@@ -33,6 +34,7 @@ export const VOICE_CALL_OUTCOMES: readonly VoiceCallOutcomeOption[] = [
   { value: 'call_back_requested', label: 'Call back requested', tone: 'warn' },
   { value: 'busy', label: 'Line busy', tone: 'warn' },
   { value: 'wrong_number', label: 'Wrong number', tone: 'bad' },
+  { value: 'no_connection', label: "Couldn't connect", tone: 'bad' },
 ];
 
 export function voiceCallOutcomeLabel(outcome: string): string {
@@ -51,6 +53,66 @@ export function voiceCallOutcomeTone(outcome: string): 'good' | 'bad' | 'warn' {
   return VOICE_CALL_OUTCOMES.find((o) => o.value === outcome)?.tone ?? 'warn';
 }
 
+// Twilio's answering-machine detection is out of scope for this pass,
+// so a completed call with real duration is always guessed as
+// "answered" — this cannot distinguish a human answering from
+// voicemail. Known, accepted limitation, not a bug to fix here.
+const NEAR_ZERO_DURATION_SECONDS = 2;
+
+// Feeds CallOutcomeSheet's pre-fill. Never silently decides the
+// outcome — the sheet still requires the agent to confirm/press "Log
+// this call"; this only saves them the cold pick when the call
+// itself already tells us enough.
+export function suggestOutcomeFromSession(
+  status: string,
+  durationSeconds: number | null,
+): VoiceCallOutcome | null {
+  switch (status) {
+    case 'no-answer':
+      return 'no_answer';
+    case 'busy':
+      return 'busy';
+    case 'failed':
+    case 'canceled':
+      return 'no_connection';
+    case 'completed':
+      // A call that "completed" but lasted under ~2s connected and
+      // dropped almost immediately — in practice indistinguishable
+      // from a number that couldn't actually take the call.
+      if (durationSeconds != null && durationSeconds >= NEAR_ZERO_DURATION_SECONDS) return 'answered';
+      return 'no_connection';
+    default:
+      // initiated / queued / ringing / in-progress: not a terminal
+      // state yet, nothing to suggest.
+      return null;
+  }
+}
+
+export interface CallSessionSnapshot {
+  id: string;
+  status: string;
+  duration_seconds: number | null;
+}
+
+// Two shapes: sessionId known (the call that just ended) fetches that
+// exact row; sessionId omitted (the manual "Log this call" entry
+// point, no call in flight) falls back to the appointment's most
+// recent session, if any.
+export async function fetchCallSessionForSuggestion(
+  appointmentId: string,
+  sessionId?: string | null,
+): Promise<CallSessionSnapshot | null> {
+  let query = supabase
+    .from('lng_voice_call_sessions')
+    .select('id, status, duration_seconds')
+    .eq('appointment_id', appointmentId);
+  query = sessionId
+    ? query.eq('id', sessionId)
+    : query.order('created_at', { ascending: false }).limit(1);
+  const { data } = await query.maybeSingle();
+  return (data as CallSessionSnapshot | null) ?? null;
+}
+
 export interface VoiceCallLogRow {
   id: string;
   appointment_id: string;
@@ -60,6 +122,10 @@ export interface VoiceCallLogRow {
   created_at: string;
   created_by: string | null;
   author_name: string | null;
+  session_id: string | null;
+  recording_status: string | null;
+  transcript_status: string | null;
+  transcript_text: string | null;
 }
 
 interface RawLogRow {
@@ -70,6 +136,7 @@ interface RawLogRow {
   note: string | null;
   created_at: string;
   created_by: string | null;
+  session_id: string | null;
 }
 
 // Two-step author resolution (log rows, then the distinct accounts
@@ -90,16 +157,39 @@ async function withAuthorNames(rows: RawLogRow[]): Promise<VoiceCallLogRow[]> {
       names.set(a.id, combined || a.name || 'A team member');
     }
   }
-  return rows.map((r) => ({
-    id: r.id,
-    appointment_id: r.appointment_id,
-    patient_id: r.patient_id,
-    outcome: r.outcome as VoiceCallOutcome,
-    note: r.note,
-    created_at: r.created_at,
-    created_by: r.created_by,
-    author_name: r.created_by ? (names.get(r.created_by) ?? 'A team member') : null,
-  }));
+
+  // Second, independent lookup for recording/transcript state — same
+  // no-embedded-relationship shape as the author-name lookup above,
+  // keyed by the session ids this batch of log rows actually carries.
+  const sessionIds = Array.from(new Set(rows.map((r) => r.session_id).filter((id): id is string => !!id)));
+  const sessions = new Map<string, { recording_status: string; transcript_status: string; transcript_text: string | null }>();
+  if (sessionIds.length > 0) {
+    const { data } = await supabase
+      .from('lng_voice_call_sessions')
+      .select('id, recording_status, transcript_status, transcript_text')
+      .in('id', sessionIds);
+    for (const s of (data ?? []) as { id: string; recording_status: string; transcript_status: string; transcript_text: string | null }[]) {
+      sessions.set(s.id, s);
+    }
+  }
+
+  return rows.map((r) => {
+    const session = r.session_id ? sessions.get(r.session_id) : undefined;
+    return {
+      id: r.id,
+      appointment_id: r.appointment_id,
+      patient_id: r.patient_id,
+      outcome: r.outcome as VoiceCallOutcome,
+      note: r.note,
+      created_at: r.created_at,
+      created_by: r.created_by,
+      author_name: r.created_by ? (names.get(r.created_by) ?? 'A team member') : null,
+      session_id: r.session_id,
+      recording_status: session?.recording_status ?? null,
+      transcript_status: session?.transcript_status ?? null,
+      transcript_text: session?.transcript_text ?? null,
+    };
+  });
 }
 
 // Every attempt logged against one booking, newest first. Usually
@@ -137,7 +227,7 @@ export function useVoiceCallLog(
     (async () => {
       const { data: rows, error: err } = await supabase
         .from('lng_voice_call_log')
-        .select('id, appointment_id, patient_id, outcome, note, created_at, created_by')
+        .select('id, appointment_id, patient_id, outcome, note, created_at, created_by, session_id')
         .eq('appointment_id', appointmentId)
         .order('created_at', { ascending: false });
       if (cancelled) return;
@@ -280,6 +370,10 @@ export async function logVoiceCallOutcome(args: {
   patientId: string;
   outcome: VoiceCallOutcome;
   note: string | null;
+  // The call this outcome belongs to, when logged straight off the
+  // softphone — gives the Call record card an exact link to the
+  // recording/transcript instead of guessing by nearest timestamp.
+  sessionId?: string | null;
 }): Promise<{ status: 'complete' | 'no_show'; logWriteFailed: boolean }> {
   const status: 'complete' | 'no_show' = args.outcome === 'answered' ? 'complete' : 'no_show';
   const trimmedNote = args.note?.trim() || null;
@@ -299,6 +393,7 @@ export async function logVoiceCallOutcome(args: {
     outcome: args.outcome,
     note: trimmedNote,
     created_by: actorId,
+    session_id: args.sessionId ?? null,
   });
   let logWriteFailed = false;
   if (logErr) {

@@ -1,4 +1,4 @@
-import { Check, Phone, PhoneMissed, Voicemail } from 'lucide-react';
+import { Check, Phone, PhoneMissed, PhoneOff, Voicemail } from 'lucide-react';
 import { theme } from '../../theme/index.ts';
 import { voiceCallOutcomeLabel, voiceCallOutcomeTone, type VoiceCallOutcome } from '../../lib/queries/voiceCallLog.ts';
 
@@ -10,7 +10,16 @@ import { voiceCallOutcomeLabel, voiceCallOutcomeTone, type VoiceCallOutcome } fr
 export function OutcomeBadge({ outcome, size = 'sm' }: { outcome: VoiceCallOutcome; size?: 'sm' | 'md' }) {
   const tone = voiceCallOutcomeTone(outcome);
   const colour = tone === 'good' ? theme.color.accent : tone === 'bad' ? theme.color.alert : theme.color.warn;
-  const Icon = outcome === 'answered' ? Check : outcome === 'voicemail' ? Voicemail : outcome === 'no_answer' ? PhoneMissed : Phone;
+  const Icon =
+    outcome === 'answered'
+      ? Check
+      : outcome === 'voicemail'
+        ? Voicemail
+        : outcome === 'no_answer'
+          ? PhoneMissed
+          : outcome === 'no_connection'
+            ? PhoneOff
+            : Phone;
   const height = size === 'md' ? 26 : 22;
   return (
     <span

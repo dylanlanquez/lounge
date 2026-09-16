@@ -393,6 +393,7 @@ function Loaded({
   // Voice calls: "Log this call" replaces the arrival/no-show pair,
   // and its own reversal has no visit-vs-no-visit branch to consider.
   const [callOutcomeOpen, setCallOutcomeOpen] = useState(false);
+  const [callOutcomeSessionId, setCallOutcomeSessionId] = useState<string | null>(null);
   const [callLogRefreshKey, setCallLogRefreshKey] = useState(0);
   // The softphone call itself is a separate concern from logging its
   // outcome (see ActiveCallProvider / CallBar) — this just opens the
@@ -401,8 +402,11 @@ function Loaded({
   const { onCallEnded } = useActiveCall();
   useEffect(
     () =>
-      onCallEnded(({ appointmentId: endedAppointmentId }) => {
-        if (endedAppointmentId === appt.id) setCallOutcomeOpen(true);
+      onCallEnded(({ appointmentId: endedAppointmentId, sessionId: endedSessionId }) => {
+        if (endedAppointmentId === appt.id) {
+          setCallOutcomeSessionId(endedSessionId);
+          setCallOutcomeOpen(true);
+        }
       }),
     [onCallEnded, appt.id],
   );
@@ -1097,6 +1101,7 @@ function Loaded({
         open={callOutcomeOpen}
         appointmentId={appt.id}
         patientId={appt.patient_id}
+        sessionId={callOutcomeSessionId}
         onClose={() => setCallOutcomeOpen(false)}
         onLogged={(result) => {
           setCallOutcomeOpen(false);

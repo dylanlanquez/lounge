@@ -45,7 +45,7 @@ interface ActiveCallValue {
    *  a context value itself, so a mounted appointment page can react
    *  without triggering re-renders on every tick of every other
    *  subscriber. */
-  onCallEnded: (cb: (info: { appointmentId: string }) => void) => () => void;
+  onCallEnded: (cb: (info: { appointmentId: string; sessionId: string }) => void) => () => void;
 }
 
 const ActiveCallContext = createContext<ActiveCallValue | null>(null);
@@ -150,7 +150,7 @@ export function ActiveCallProvider({ children }: { children: ReactNode }) {
   const deviceRef = useRef<TwilioDevice | null>(null);
   const callRef = useRef<TwilioCall | null>(null);
   const elapsedIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const listenersRef = useRef<Set<(info: { appointmentId: string }) => void>>(new Set());
+  const listenersRef = useRef<Set<(info: { appointmentId: string; sessionId: string }) => void>>(new Set());
 
   const clearElapsedTimer = useCallback(() => {
     if (elapsedIntervalRef.current !== null) {
@@ -266,7 +266,7 @@ export function ActiveCallProvider({ children }: { children: ReactNode }) {
           const endedAppointmentId = args.appointmentId;
           teardown();
           setState('ended');
-          for (const cb of listenersRef.current) cb({ appointmentId: endedAppointmentId });
+          for (const cb of listenersRef.current) cb({ appointmentId: endedAppointmentId, sessionId });
           setTimeout(() => {
             setState((current) => (current === 'ended' ? 'idle' : current));
             setAppointmentId(null);
@@ -312,7 +312,7 @@ export function ActiveCallProvider({ children }: { children: ReactNode }) {
     setState(next ? 'muted' : 'in-call');
   }, []);
 
-  const onCallEnded = useCallback((cb: (info: { appointmentId: string }) => void) => {
+  const onCallEnded = useCallback((cb: (info: { appointmentId: string; sessionId: string }) => void) => {
     listenersRef.current.add(cb);
     return () => {
       listenersRef.current.delete(cb);
