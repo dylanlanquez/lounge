@@ -82,6 +82,39 @@ function friendlyCallErrorMessage(err: DeviceError | undefined): string {
   }
   return err?.message ?? 'The call failed';
 }
+
+// Checked before anything else in startCall, not left for the Twilio
+// SDK to discover deep inside device.connect(). Without this, the
+// button shows "Connecting…" then briefly "Ringing…" — device.connect()
+// resolves locally before the SDK's own getUserMedia call fails, so
+// the agent sees the call apparently progress for a few seconds
+// before it errors out, which reads as "it rang but nothing happened"
+// rather than what actually happened: the call was never placed
+// because the browser couldn't get the microphone. Failing here
+// first also means no lng_voice_call_sessions row or Twilio token is
+// created for a call that was never going to happen. A permission
+// denial reads as DOMException NotAllowedError; no device at all
+// reads as NotFoundError — mapped to the same two messages
+// friendlyCallErrorMessage uses for the SDK's own 31401/31402.
+async function ensureMicrophoneAccess(): Promise<void> {
+  let stream: MediaStream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch (e) {
+    const name = e instanceof DOMException ? e.name : '';
+    if (name === 'NotFoundError' || name === 'DevicesNotFoundError') {
+      throw new Error('No microphone was found. Check a microphone is connected and try again.');
+    }
+    throw new Error(
+      'Microphone access is blocked. Allow microphone access for this site in your browser, then try again. On a Mac, also check System Settings, Privacy and Security, Microphone, and make sure your browser is allowed there.',
+    );
+  }
+  // Only checking access is possible here; the Voice SDK opens its
+  // own stream when the call actually connects. Release this one
+  // immediately rather than holding two open media streams.
+  for (const track of stream.getTracks()) track.stop();
+}
+
 interface TwilioDevice {
   register: () => Promise<void>;
   destroy: () => void;
@@ -145,6 +178,8 @@ export function ActiveCallProvider({ children }: { children: ReactNode }) {
       setState('connecting');
 
       try {
+        await ensureMicrophoneAccess();
+
         const { data: session, error: sessionErr } = await supabase
           .from('lng_voice_call_sessions')
           .insert({
