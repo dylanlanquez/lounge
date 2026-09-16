@@ -1,38 +1,199 @@
-import { useCallback, useEffect, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ChevronDown, ChevronUp, PhoneCall, PlayCircle } from 'lucide-react';
-import { Button, Card, EmptyState, Skeleton } from '../components/index.ts';
+import { CheckCircle2, ChevronDown, ChevronUp, PhoneCall, PhoneOff, PlayCircle, Search } from 'lucide-react';
+import { Avatar, Button, Card, DropdownSelect, EmptyState, Input, Skeleton } from '../components/index.ts';
 import { theme } from '../theme/index.ts';
 import { supabase } from '../lib/supabase.ts';
 import { OutcomeBadge } from '../components/CallOutcomeSheet/OutcomeBadge.tsx';
 import { LiveCallsPanel } from '../components/LiveCallsPanel/LiveCallsPanel.tsx';
 import { fetchCallRecordingUrl } from '../lib/queries/callRecording.ts';
 import { formatRelativeShort } from '../lib/queries/notifications.ts';
-import type { VoiceCallOutcome } from '../lib/queries/voiceCallLog.ts';
+import { VOICE_CALL_OUTCOMES, type VoiceCallOutcome } from '../lib/queries/voiceCallLog.ts';
 
-// Admin -> Calls. Two things Dylan asked for in one place instead of
-// scattered across individual appointment pages: what's live right
-// now (reuses LiveCallsPanel, the same admin-only "Listen in" list
-// Schedule's voice-calls-mode toolbar shows), and a browsable history
-// of every past call with its recording and transcript, across every
-// patient — not just the one you happen to be looking at.
+// Admin -> Calls. A single dashboard for voice calls across the whole
+// clinic: what's live right now (reuses LiveCallsPanel, the same
+// admin-only "Listen in" list Schedule's voice-calls-mode toolbar
+// shows, but always visible here so this page reads as a live board
+// rather than something that vanishes when quiet), a stats strip so
+// the answer rate is visible at a glance, and a searchable,
+// filterable history of every past call with its recording and
+// transcript, across every patient.
 export function AdminCallsTab() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[6] }}>
-      <div>
-        <h3
+      <header>
+        <p
           style={{
-            margin: `0 0 ${theme.space[3]}px`,
+            margin: 0,
             fontSize: theme.type.size.md,
             fontWeight: theme.type.weight.semibold,
             color: theme.color.ink,
+            letterSpacing: theme.type.tracking.tight,
           }}
         >
-          Live now
-        </h3>
-        <LiveCallsPanel />
-      </div>
+          Calls
+        </p>
+        <p style={{ margin: `${theme.space[1]}px 0 0`, fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>
+          Every voice call, live and logged, with recordings and transcripts.
+        </p>
+      </header>
+
+      <StatsStrip />
+
+      <section>
+        <SectionHeading>Live now</SectionHeading>
+        <LiveCallsPanel
+          emptyState={
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: theme.space[3],
+                padding: theme.space[4],
+                borderRadius: theme.radius.card,
+                border: `1px dashed ${theme.color.border}`,
+                background: theme.color.surface,
+              }}
+            >
+              <span
+                aria-hidden
+                style={{
+                  width: 8,
+                  height: 8,
+                  borderRadius: '50%',
+                  background: theme.color.inkSubtle,
+                  flexShrink: 0,
+                }}
+              />
+              <span style={{ fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>
+                No calls in progress right now.
+              </span>
+            </div>
+          }
+        />
+      </section>
+
       <PastCallsSection />
+    </div>
+  );
+}
+
+function SectionHeading({ children }: { children: ReactNode }) {
+  return (
+    <h3
+      style={{
+        margin: `0 0 ${theme.space[3]}px`,
+        fontSize: theme.type.size.sm,
+        fontWeight: theme.type.weight.semibold,
+        color: theme.color.inkMuted,
+        textTransform: 'uppercase',
+        letterSpacing: theme.type.tracking.wide,
+      }}
+    >
+      {children}
+    </h3>
+  );
+}
+
+interface CallStats {
+  total: number;
+  answered: number;
+  couldntConnect: number;
+}
+
+function useCallStats(refreshKey: number) {
+  const [stats, setStats] = useState<CallStats | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const [totalRes, answeredRes, failedRes] = await Promise.all([
+        supabase.from('lng_voice_call_log').select('id', { count: 'exact', head: true }),
+        supabase.from('lng_voice_call_log').select('id', { count: 'exact', head: true }).eq('outcome', 'answered'),
+        supabase.from('lng_voice_call_log').select('id', { count: 'exact', head: true }).in('outcome', ['no_connection', 'wrong_number']),
+      ]);
+      if (cancelled) return;
+      setStats({
+        total: totalRes.count ?? 0,
+        answered: answeredRes.count ?? 0,
+        couldntConnect: failedRes.count ?? 0,
+      });
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [refreshKey]);
+
+  return stats;
+}
+
+function StatsStrip() {
+  const stats = useCallStats(0);
+  const answerRate = stats && stats.total > 0 ? Math.round((stats.answered / stats.total) * 100) : null;
+
+  const tiles: { label: string; value: string; color: string; icon: typeof PhoneCall }[] = [
+    { label: 'Calls logged', value: stats ? String(stats.total) : '—', color: theme.color.ink, icon: PhoneCall },
+    {
+      label: 'Answered',
+      value: stats ? (answerRate !== null ? `${stats.answered} (${answerRate}%)` : String(stats.answered)) : '—',
+      color: theme.color.accent,
+      icon: CheckCircle2,
+    },
+    {
+      label: 'Couldn’t connect',
+      value: stats ? String(stats.couldntConnect) : '—',
+      color: theme.color.alert,
+      icon: PhoneOff,
+    },
+  ];
+
+  return (
+    <div
+      style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))',
+        gap: theme.space[3],
+      }}
+    >
+      {tiles.map((tile) => (
+        <Card key={tile.label} padding="md">
+          <div style={{ display: 'flex', alignItems: 'center', gap: theme.space[3] }}>
+            <span
+              aria-hidden
+              style={{
+                width: 36,
+                height: 36,
+                borderRadius: theme.radius.pill,
+                background: `${tile.color}14`,
+                color: tile.color,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                flexShrink: 0,
+              }}
+            >
+              <tile.icon size={17} aria-hidden />
+            </span>
+            <span style={{ minWidth: 0 }}>
+              <span
+                style={{
+                  display: 'block',
+                  fontSize: theme.type.size.lg,
+                  fontWeight: theme.type.weight.bold,
+                  color: theme.color.ink,
+                  letterSpacing: theme.type.tracking.tight,
+                  lineHeight: theme.type.leading.tight,
+                }}
+              >
+                {tile.value}
+              </span>
+              <span style={{ display: 'block', fontSize: theme.type.size.xs, color: theme.color.inkSubtle, marginTop: 1 }}>
+                {tile.label}
+              </span>
+            </span>
+          </div>
+        </Card>
+      ))}
     </div>
   );
 }
@@ -52,6 +213,10 @@ interface PastCallRow {
 }
 
 const PAGE_SIZE = 25;
+const OUTCOME_FILTER_OPTIONS = [
+  { value: 'all', label: 'All outcomes' },
+  ...VOICE_CALL_OUTCOMES.map((o) => ({ value: o.value, label: o.label })),
+];
 
 function PastCallsSection() {
   const [rows, setRows] = useState<PastCallRow[]>([]);
@@ -59,6 +224,8 @@ function PastCallsSection() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(true);
+  const [search, setSearch] = useState('');
+  const [outcomeFilter, setOutcomeFilter] = useState('all');
 
   const load = useCallback(async (offset: number) => {
     const { data: logRows, error: logErr } = await supabase
@@ -164,44 +331,80 @@ function PastCallsSection() {
     }
   };
 
+  const filteredRows = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    return rows.filter((row) => {
+      if (outcomeFilter !== 'all' && row.outcome !== outcomeFilter) return false;
+      if (term && !row.patientName.toLowerCase().includes(term) && !(row.agentName ?? '').toLowerCase().includes(term)) {
+        return false;
+      }
+      return true;
+    });
+  }, [rows, search, outcomeFilter]);
+
   return (
-    <div>
-      <h3
+    <section>
+      <SectionHeading>Past calls</SectionHeading>
+
+      <div
         style={{
-          margin: `0 0 ${theme.space[3]}px`,
-          fontSize: theme.type.size.md,
-          fontWeight: theme.type.weight.semibold,
-          color: theme.color.ink,
+          display: 'flex',
+          gap: theme.space[3],
+          marginBottom: theme.space[3],
+          flexWrap: 'wrap',
         }}
       >
-        Past calls
-      </h3>
-      <Card padding="lg">
+        <div style={{ flex: '1 1 220px', minWidth: 180 }}>
+          <Input
+            placeholder="Search by patient or team member"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            leadingIcon={<Search size={15} aria-hidden />}
+            aria-label="Search past calls"
+          />
+        </div>
+        <div style={{ width: 200, flexShrink: 0 }}>
+          <DropdownSelect
+            ariaLabel="Filter by outcome"
+            value={outcomeFilter}
+            onChange={setOutcomeFilter}
+            options={OUTCOME_FILTER_OPTIONS}
+          />
+        </div>
+      </div>
+
+      <Card padding="none">
         {loading ? (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 1, padding: theme.space[4] }}>
             <Skeleton height={56} radius={theme.radius.input} />
             <Skeleton height={56} radius={theme.radius.input} />
             <Skeleton height={56} radius={theme.radius.input} />
           </div>
         ) : error ? (
-          <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.alert }}>
+          <p style={{ margin: 0, padding: theme.space[4], fontSize: theme.type.size.sm, color: theme.color.alert }}>
             Couldn't load past calls: {error}
           </p>
         ) : rows.length === 0 ? (
-          <EmptyState
-            icon={<PhoneCall size={24} />}
-            title="No calls logged yet"
-            description="Every logged voice call will show up here, across every patient."
-          />
+          <div style={{ padding: theme.space[4] }}>
+            <EmptyState
+              icon={<PhoneCall size={24} />}
+              title="No calls logged yet"
+              description="Every logged voice call will show up here, across every patient."
+            />
+          </div>
+        ) : filteredRows.length === 0 ? (
+          <p style={{ margin: 0, padding: theme.space[4], fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>
+            No calls match this search.
+          </p>
         ) : (
           <>
-            <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
-              {rows.map((row) => (
-                <PastCallEntry key={row.id} row={row} />
+            <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
+              {filteredRows.map((row, i) => (
+                <PastCallEntry key={row.id} row={row} isLast={i === filteredRows.length - 1} />
               ))}
             </ul>
             {hasMore ? (
-              <div style={{ marginTop: theme.space[4], display: 'flex', justifyContent: 'center' }}>
+              <div style={{ padding: theme.space[4], display: 'flex', justifyContent: 'center' }}>
                 <Button variant="tertiary" onClick={handleLoadMore} loading={loadingMore} disabled={loadingMore}>
                   Load more
                 </Button>
@@ -210,16 +413,17 @@ function PastCallsSection() {
           </>
         )}
       </Card>
-    </div>
+    </section>
   );
 }
 
-function PastCallEntry({ row }: { row: PastCallRow }) {
+function PastCallEntry({ row, isLast }: { row: PastCallRow; isLast: boolean }) {
   const navigate = useNavigate();
   const [recordingState, setRecordingState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
   const [objectUrl, setObjectUrl] = useState<string | null>(null);
   const [recordingError, setRecordingError] = useState<string | null>(null);
   const [transcriptOpen, setTranscriptOpen] = useState(false);
+  const [hovered, setHovered] = useState(false);
 
   const handlePlay = async () => {
     if (!row.sessionId || recordingState === 'loading') return;
@@ -238,140 +442,155 @@ function PastCallEntry({ row }: { row: PastCallRow }) {
   return (
     <li
       style={{
-        padding: theme.space[3],
-        borderRadius: theme.radius.input,
-        border: `1px solid ${theme.color.border}`,
+        borderBottom: isLast ? 'none' : `1px solid ${theme.color.border}`,
+        background: hovered ? theme.color.bg : 'transparent',
+        transition: `background ${theme.motion.duration.fast}ms ${theme.motion.easing.spring}`,
       }}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
     >
-      <button
-        type="button"
-        onClick={() => navigate(`/appointment/${row.appointmentId}`)}
-        style={{
-          appearance: 'none',
-          border: 'none',
-          background: 'none',
-          padding: 0,
-          width: '100%',
-          textAlign: 'left',
-          display: 'flex',
-          alignItems: 'center',
-          gap: theme.space[2],
-          flexWrap: 'wrap',
-          cursor: 'pointer',
-          fontFamily: 'inherit',
-        }}
-      >
-        <span style={{ fontSize: theme.type.size.sm, fontWeight: theme.type.weight.semibold, color: theme.color.ink }}>
-          {row.patientName}
-        </span>
-        <OutcomeBadge outcome={row.outcome} />
-        <span style={{ fontSize: theme.type.size.xs, color: theme.color.inkSubtle }}>
-          {formatRelativeShort(row.createdAt)}
-          {row.agentName ? ` · ${row.agentName}` : ''}
-        </span>
-      </button>
-      {row.note ? (
-        <p
-          style={{
-            margin: `${theme.space[2]}px 0 0`,
-            fontSize: theme.type.size.sm,
-            color: theme.color.ink,
-            lineHeight: theme.type.leading.relaxed,
-            whiteSpace: 'pre-wrap',
-          }}
-        >
-          {row.note}
-        </p>
-      ) : null}
-
-      {row.recordingStatus === 'available' ? (
-        <div style={{ marginTop: theme.space[3] }}>
-          {recordingState === 'ready' && objectUrl ? (
-            <audio controls src={objectUrl} style={{ width: '100%', height: 32 }} />
-          ) : (
-            <button
-              type="button"
-              onClick={handlePlay}
-              disabled={recordingState === 'loading'}
-              style={{
-                appearance: 'none',
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: theme.space[2],
-                height: 32,
-                padding: `0 ${theme.space[3]}px`,
-                borderRadius: theme.radius.pill,
-                border: `1px solid ${theme.color.border}`,
-                background: theme.color.surface,
-                color: theme.category.voiceCall,
-                fontFamily: 'inherit',
-                fontSize: theme.type.size.xs,
-                fontWeight: theme.type.weight.semibold,
-                cursor: recordingState === 'loading' ? 'default' : 'pointer',
-                opacity: recordingState === 'loading' ? 0.7 : 1,
-              }}
-            >
-              <PlayCircle size={14} aria-hidden />
-              {recordingState === 'loading' ? 'Loading…' : 'Play recording'}
-            </button>
-          )}
-          {recordingState === 'error' && recordingError ? (
-            <p style={{ margin: `${theme.space[1]}px 0 0`, fontSize: theme.type.size.xs, color: theme.color.alert }}>
-              {recordingError}
-            </p>
-          ) : null}
-        </div>
-      ) : row.recordingStatus === 'deleted' ? (
-        <p style={{ margin: `${theme.space[2]}px 0 0`, fontSize: theme.type.size.xs, color: theme.color.inkSubtle, fontStyle: 'italic' }}>
-          Recording and transcript removed after the retention period.
-        </p>
-      ) : null}
-
-      {row.transcriptStatus === 'pending' ? (
-        <p style={{ margin: `${theme.space[2]}px 0 0`, fontSize: theme.type.size.xs, color: theme.color.inkMuted }}>
-          Transcribing…
-        </p>
-      ) : row.transcriptStatus === 'available' && row.transcriptText ? (
-        <div style={{ marginTop: theme.space[2] }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: theme.space[3], padding: theme.space[4] }}>
+        <Avatar name={row.patientName} size="sm" />
+        <div style={{ flex: 1, minWidth: 0 }}>
           <button
             type="button"
-            onClick={() => setTranscriptOpen((v) => !v)}
+            onClick={() => navigate(`/appointment/${row.appointmentId}`)}
             style={{
               appearance: 'none',
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: theme.space[1],
               border: 'none',
               background: 'none',
               padding: 0,
-              color: theme.color.inkMuted,
-              fontFamily: 'inherit',
-              fontSize: theme.type.size.xs,
-              fontWeight: theme.type.weight.medium,
+              width: '100%',
+              textAlign: 'left',
+              display: 'flex',
+              alignItems: 'center',
+              gap: theme.space[2],
+              flexWrap: 'wrap',
               cursor: 'pointer',
+              fontFamily: 'inherit',
             }}
           >
-            {transcriptOpen ? <ChevronUp size={12} aria-hidden /> : <ChevronDown size={12} aria-hidden />}
-            {transcriptOpen ? 'Hide transcript' : 'Show transcript'}
+            <span style={{ fontSize: theme.type.size.sm, fontWeight: theme.type.weight.semibold, color: theme.color.ink }}>
+              {row.patientName}
+            </span>
+            <OutcomeBadge outcome={row.outcome} />
           </button>
-          {transcriptOpen ? (
+          <p style={{ margin: `${theme.space[1]}px 0 0`, fontSize: theme.type.size.xs, color: theme.color.inkSubtle }}>
+            {formatRelativeShort(row.createdAt)}
+            {row.agentName ? ` · ${row.agentName}` : ''}
+          </p>
+
+          {row.note ? (
             <p
               style={{
                 margin: `${theme.space[2]}px 0 0`,
-                padding: theme.space[3],
-                borderRadius: theme.radius.input,
-                background: theme.color.bg,
                 fontSize: theme.type.size.sm,
                 color: theme.color.ink,
                 lineHeight: theme.type.leading.relaxed,
                 whiteSpace: 'pre-wrap',
               }}
             >
-              {row.transcriptText}
+              {row.note}
+            </p>
+          ) : null}
+
+          {row.recordingStatus === 'available' || row.recordingStatus === 'deleted' ? (
+            <div style={{ marginTop: theme.space[3], display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
+              {row.recordingStatus === 'available' ? (
+                recordingState === 'ready' && objectUrl ? (
+                  <audio controls src={objectUrl} style={{ width: '100%', height: 32 }} />
+                ) : (
+                  <div>
+                    <button
+                      type="button"
+                      onClick={handlePlay}
+                      disabled={recordingState === 'loading'}
+                      style={{
+                        appearance: 'none',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: theme.space[2],
+                        height: 30,
+                        padding: `0 ${theme.space[3]}px 0 ${theme.space[2]}px`,
+                        borderRadius: theme.radius.pill,
+                        border: `1px solid ${theme.category.voiceCall}33`,
+                        background: `${theme.category.voiceCall}0D`,
+                        color: theme.category.voiceCall,
+                        fontFamily: 'inherit',
+                        fontSize: theme.type.size.xs,
+                        fontWeight: theme.type.weight.semibold,
+                        cursor: recordingState === 'loading' ? 'default' : 'pointer',
+                        opacity: recordingState === 'loading' ? 0.7 : 1,
+                      }}
+                    >
+                      <PlayCircle size={15} aria-hidden />
+                      {recordingState === 'loading' ? 'Loading recording…' : 'Play recording'}
+                    </button>
+                    {recordingState === 'error' && recordingError ? (
+                      <p style={{ margin: `${theme.space[1]}px 0 0`, fontSize: theme.type.size.xs, color: theme.color.alert }}>
+                        {recordingError}
+                      </p>
+                    ) : null}
+                  </div>
+                )
+              ) : (
+                <p style={{ margin: 0, fontSize: theme.type.size.xs, color: theme.color.inkSubtle, fontStyle: 'italic' }}>
+                  Recording and transcript removed after the retention period.
+                </p>
+              )}
+
+              {row.transcriptStatus === 'pending' ? (
+                <p style={{ margin: 0, fontSize: theme.type.size.xs, color: theme.color.inkMuted }}>Transcribing…</p>
+              ) : row.transcriptStatus === 'available' && row.transcriptText ? (
+                <div>
+                  <button
+                    type="button"
+                    onClick={() => setTranscriptOpen((v) => !v)}
+                    style={{
+                      appearance: 'none',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: theme.space[1],
+                      border: 'none',
+                      background: 'none',
+                      padding: 0,
+                      color: theme.color.inkMuted,
+                      fontFamily: 'inherit',
+                      fontSize: theme.type.size.xs,
+                      fontWeight: theme.type.weight.medium,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    {transcriptOpen ? <ChevronUp size={12} aria-hidden /> : <ChevronDown size={12} aria-hidden />}
+                    {transcriptOpen ? 'Hide transcript' : 'Show transcript'}
+                  </button>
+                  {transcriptOpen ? (
+                    <p
+                      style={{
+                        margin: `${theme.space[2]}px 0 0`,
+                        padding: theme.space[3],
+                        borderRadius: theme.radius.input,
+                        borderLeft: `3px solid ${theme.color.border}`,
+                        background: theme.color.bg,
+                        fontSize: theme.type.size.sm,
+                        color: theme.color.ink,
+                        lineHeight: theme.type.leading.relaxed,
+                        whiteSpace: 'pre-wrap',
+                      }}
+                    >
+                      {row.transcriptText}
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+          ) : row.transcriptStatus === 'pending' ? (
+            <p style={{ margin: `${theme.space[2]}px 0 0`, fontSize: theme.type.size.xs, color: theme.color.inkMuted }}>
+              Transcribing…
             </p>
           ) : null}
         </div>
-      ) : null}
+      </div>
     </li>
   );
 }
