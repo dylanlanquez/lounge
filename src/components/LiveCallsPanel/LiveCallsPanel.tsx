@@ -24,10 +24,19 @@ export function LiveCallsPanel() {
 
   const load = useCallback(async () => {
     if (!isAdmin) return;
+    // A row can get stuck at 'ringing'/'in-progress' forever if a test
+    // call (or a real one) is abandoned before Twilio's status
+    // callback ever lands — this table has no server-side timeout of
+    // its own. Without a freshness bound, an orphaned row from hours
+    // or days ago would show up here as if it were happening right
+    // now. Two hours is generous enough to never cut off a real
+    // in-progress call while still hiding old debris.
+    const freshnessCutoff = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
     const { data: sessions } = await supabase
       .from('lng_voice_call_sessions')
       .select('id, patient_id, created_by')
       .in('status', ['ringing', 'in-progress'])
+      .gt('created_at', freshnessCutoff)
       .order('created_at', { ascending: false });
     const rows = (sessions ?? []) as { id: string; patient_id: string; created_by: string | null }[];
     if (rows.length === 0) {
