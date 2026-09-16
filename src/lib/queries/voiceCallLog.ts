@@ -98,7 +98,14 @@ async function withAuthorNames(rows: RawLogRow[]): Promise<VoiceCallLogRow[]> {
 // zero or one row; a booking can carry more than one if an agent
 // tried, missed, and the call was reset and tried again without a
 // reschedule.
-export function useVoiceCallLog(appointmentId: string | null): {
+export function useVoiceCallLog(
+  appointmentId: string | null,
+  // Bumped by the caller (e.g. after logVoiceCallOutcome resolves) to
+  // force a refetch without waiting for appointmentId to change. The
+  // internal refresh() below only helps a component that calls it
+  // itself; a parent that just wrote the row needs this instead.
+  externalRefreshKey?: number,
+): {
   data: VoiceCallLogRow[];
   loading: boolean;
   error: string | null;
@@ -140,7 +147,7 @@ export function useVoiceCallLog(appointmentId: string | null): {
     return () => {
       cancelled = true;
     };
-  }, [appointmentId, tick]);
+  }, [appointmentId, tick, externalRefreshKey]);
 
   return { data, loading, error, refresh };
 }

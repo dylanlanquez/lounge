@@ -11,8 +11,18 @@ import { formatRelativeShort } from '../../lib/queries/notifications.ts';
 // Usually one row (a call is logged once), but supports more — a
 // reversed and re-logged call keeps its earlier attempt on the
 // record rather than erasing it.
-export function CallRecordCard({ appointmentId }: { appointmentId: string }) {
-  const { data, loading, error } = useVoiceCallLog(appointmentId);
+export function CallRecordCard({
+  appointmentId,
+  refreshKey,
+}: {
+  appointmentId: string;
+  // Bumped by the parent right after logging a new outcome, so the
+  // freshly-written row shows up without a page reload — this card's
+  // own useVoiceCallLog instance has no other way to know a write
+  // happened elsewhere.
+  refreshKey?: number;
+}) {
+  const { data, loading, error } = useVoiceCallLog(appointmentId, refreshKey);
 
   return (
     <Card padding="lg">

@@ -392,6 +392,7 @@ function Loaded({
   // Voice calls: "Log this call" replaces the arrival/no-show pair,
   // and its own reversal has no visit-vs-no-visit branch to consider.
   const [callOutcomeOpen, setCallOutcomeOpen] = useState(false);
+  const [callLogRefreshKey, setCallLogRefreshKey] = useState(0);
   const [confirmReverseCallOutcomeOpen, setConfirmReverseCallOutcomeOpen] = useState(false);
   const [reversingCallOutcome, setReversingCallOutcome] = useState(false);
   const [resending, setResending] = useState(false);
@@ -652,6 +653,7 @@ function Loaded({
     try {
       await reverseVoiceCallOutcome(appt.id, appt.patient_id);
       setConfirmReverseCallOutcomeOpen(false);
+      setTimelineTick((t) => t + 1);
       onChanged();
     } catch (e) {
       const message = e instanceof Error ? e.message : 'Could not reverse this call';
@@ -872,7 +874,7 @@ function Loaded({
           right before the actions that add to it. */}
       {isVoiceCallAppt ? (
         <div style={{ marginTop: theme.space[5] }}>
-          <CallRecordCard appointmentId={appt.id} />
+          <CallRecordCard appointmentId={appt.id} refreshKey={callLogRefreshKey} />
         </div>
       ) : null}
 
@@ -1085,6 +1087,8 @@ function Loaded({
               'The call was logged on the booking, but the entry could not be saved to the call record. Try again from here so it shows up below.',
             );
           }
+          setCallLogRefreshKey((k) => k + 1);
+          setTimelineTick((t) => t + 1);
           onChanged();
         }}
       />
