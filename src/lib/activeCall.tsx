@@ -35,6 +35,10 @@ export interface StartCallArgs {
 interface ActiveCallValue {
   state: CallState;
   appointmentId: string | null;
+  // Exposed so CallBar can watch lng_voice_call_listeners for this
+  // call and show an "an admin has joined" indicator — see
+  // CallBar.tsx's ADMIN_JOINED_INDICATOR_ENABLED flag.
+  sessionId: string | null;
   patientName: string | null;
   elapsedSeconds: number;
   errorMessage: string | null;
@@ -143,6 +147,7 @@ export function ActiveCallProvider({ children }: { children: ReactNode }) {
   const { account } = useCurrentAccount();
   const [state, setState] = useState<CallState>('idle');
   const [appointmentId, setAppointmentId] = useState<string | null>(null);
+  const [sessionIdState, setSessionIdState] = useState<string | null>(null);
   const [patientName, setPatientName] = useState<string | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -210,6 +215,7 @@ export function ActiveCallProvider({ children }: { children: ReactNode }) {
           throw new Error(sessionErr?.message ?? 'Could not create a call session');
         }
         const sessionId = (session as { id: string }).id;
+        setSessionIdState(sessionId);
 
         const token = await mintToken();
         const { Device } = await import('@twilio/voice-sdk');
@@ -270,6 +276,7 @@ export function ActiveCallProvider({ children }: { children: ReactNode }) {
           setTimeout(() => {
             setState((current) => (current === 'ended' ? 'idle' : current));
             setAppointmentId(null);
+            setSessionIdState(null);
             setPatientName(null);
           }, 1500);
         });
@@ -325,6 +332,7 @@ export function ActiveCallProvider({ children }: { children: ReactNode }) {
     () => ({
       state,
       appointmentId,
+      sessionId: sessionIdState,
       patientName,
       elapsedSeconds,
       errorMessage,
@@ -333,7 +341,7 @@ export function ActiveCallProvider({ children }: { children: ReactNode }) {
       toggleMute,
       onCallEnded,
     }),
-    [state, appointmentId, patientName, elapsedSeconds, errorMessage, startCall, hangUp, toggleMute, onCallEnded],
+    [state, appointmentId, sessionIdState, patientName, elapsedSeconds, errorMessage, startCall, hangUp, toggleMute, onCallEnded],
   );
 
   return <ActiveCallContext.Provider value={value}>{children}</ActiveCallContext.Provider>;

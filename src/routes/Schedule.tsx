@@ -101,6 +101,7 @@ import { useVoiceCallMode } from '../lib/voiceCallMode.tsx';
 import { VOICE_CALL_SERVICE_TYPE, isVoiceCall, telHref, voiceCallIsLive } from '../lib/voiceCall.ts';
 import { reverseVoiceCallOutcome } from '../lib/queries/voiceCallLog.ts';
 import { CallOutcomeSheet } from '../components/CallOutcomeSheet/CallOutcomeSheet.tsx';
+import { LiveCallsPanel } from '../components/LiveCallsPanel/LiveCallsPanel.tsx';
 import { VoiceCallDayHero } from '../components/VoiceCallDayHero/VoiceCallDayHero.tsx';
 
 
@@ -678,6 +679,12 @@ export function Schedule() {
             ) : null}
           </div>
         </div>
+
+        {voiceMode ? (
+          <div style={{ marginBottom: theme.space[3] }}>
+            <LiveCallsPanel />
+          </div>
+        ) : null}
 
         {/* Filter-on banner. The danger the operator flagged: a filter
             silently hides bookings and someone assumes the day is clear.

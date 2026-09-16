@@ -12,9 +12,11 @@ import { Button } from './components/Button/Button.tsx';
 import { BottomNav } from './components/BottomNav/BottomNav.tsx';
 import { KioskStatusBar } from './components/KioskStatusBar/KioskStatusBar.tsx';
 import { CallBar } from './components/CallBar/CallBar.tsx';
+import { ListenInBar } from './components/ListenInBar/ListenInBar.tsx';
 import { WalkthroughProvider } from './components/Walkthrough/Walkthrough.tsx';
 import { VoiceCallModeProvider } from './lib/voiceCallMode.tsx';
 import { ActiveCallProvider } from './lib/activeCall.tsx';
+import { ListenInProvider } from './lib/listenIn.tsx';
 import { MarketingWalkthroughAutoStart } from './lib/walkthroughs/marketingWalkthrough.tsx';
 import { ErrorBoundary } from './components/ErrorBoundary/ErrorBoundary.tsx';
 import { lazyWithRetry } from './lib/lazyWithRetry.ts';
@@ -124,6 +126,12 @@ export function App() {
             above it to attribute a placed call to the right staff
             account. */}
         <ActiveCallProvider>
+        {/* ListenInProvider is the admin-only sibling of
+            ActiveCallProvider — a separate Device connection for
+            silently monitoring someone else's call, kept apart so
+            "on a call" and "listening to one" are never the same
+            state. */}
+        <ListenInProvider>
         {/* VoiceCallModeProvider reads the account (is the signed-in
             staff member a voice call agent?) and hands the Clinic /
             Voice calls switch state to the top bar, the bottom nav,
@@ -133,11 +141,13 @@ export function App() {
             <MarketingWalkthroughAutoStart />
             <KioskStatusBar />
             <CallBar />
+            <ListenInBar />
             <ScrollToTop />
             <RoutedErrorBoundary />
             <BottomNav />
           </WalkthroughProvider>
         </VoiceCallModeProvider>
+        </ListenInProvider>
         </ActiveCallProvider>
         </IdleLockProvider>
       </CurrentAccountProvider>
