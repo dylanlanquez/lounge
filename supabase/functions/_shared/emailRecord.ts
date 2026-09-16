@@ -12,11 +12,20 @@
 // to fall back to logFailure when this returns null AND the surrounding
 // send succeeded, so the missing audit row never goes unnoticed.
 
+// PromiseLike, not Promise: supabase-js's query builder is thenable
+// (implements .then()) but is not a true ES Promise — it's missing
+// .catch/.finally/Symbol.toStringTag, which a Promise<T> parameter
+// type requires structurally. Typing this as Promise<T> compiles
+// locally but fails `deno check` at deploy time against the real
+// client, which is exactly the mismatch that broke this function's
+// first fresh rebuild in a while (Dylan, 16 Sep 2026 — WORKER_ERROR
+// investigation). PromiseLike is the correct, minimal shape: it only
+// requires .then(), which the builder genuinely has.
 type AdminLike = {
   from: (table: string) => {
     insert: (row: Record<string, unknown>) => {
       select: (cols: string) => {
-        single: () => Promise<{ data: unknown; error: unknown }>;
+        single: () => PromiseLike<{ data: unknown; error: unknown }>;
       };
     };
   };

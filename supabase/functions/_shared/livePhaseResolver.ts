@@ -47,11 +47,17 @@ interface RpcResolvedPhase {
 // Untyped Supabase client surface — same shape the
 // _shared/emailRenderer's AdminClient uses, so we don't pull in
 // supabase-js's circular types.
+// PromiseLike, not Promise — same reasoning as emailRecord.ts's
+// AdminLike: supabase-js's .rpc() call returns a thenable query
+// builder, not a true ES Promise, so a Promise<T> parameter type
+// fails deno check against the real client even though it compiles
+// against a hand-rolled test double. See emailRecord.ts's comment
+// for the full story (Dylan, 16 Sep 2026 — WORKER_ERROR investigation).
 type AdminClient = {
   rpc: (
     fn: string,
     args: Record<string, unknown>,
-  ) => Promise<{ data: unknown; error: unknown }>;
+  ) => PromiseLike<{ data: unknown; error: unknown }>;
 };
 
 /** Read live phases and project them onto the appointment's

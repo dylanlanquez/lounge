@@ -32,7 +32,22 @@
 //   2. env RESEND_REPLY_TO_BOOKING
 //   3. sending address (so replies still land somewhere we read)
 
-import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.50.0';
+// Duck-typed rather than the concrete SupabaseClient: callers may
+// construct their client from different module specifiers (npm:
+// vs esm.sh), which TypeScript treats as nominally distinct classes
+// even when structurally identical.
+type AdminLike = {
+  from: (table: string) => {
+    select: (cols: string) => {
+      in: (
+        col: string,
+        values: string[],
+      ) => {
+        is: (col: string, value: null) => PromiseLike<{ data: unknown; error: unknown }>;
+      };
+    };
+  };
+};
 
 export interface EmailSenderHeaders {
   /** Resend "from" header — display name + angle-bracket address. */
@@ -54,7 +69,7 @@ const DEFAULT_SENDER_ADDRESS = 'clinic@notifications.venneir.com';
  *  because the admin UI is single-location today; per-location
  *  overrides land on the same key with a non-null location_id. */
 async function readAdminSenderRow(
-  admin: SupabaseClient,
+  admin: AdminLike,
 ): Promise<{ fromName: string | null; replyTo: string | null }> {
   const { data } = await admin
     .from('lng_settings')
@@ -83,7 +98,7 @@ async function readAdminSenderRow(
  *  Resend send. Pass the service-role-keyed admin client used by
  *  the calling edge function so the read bypasses RLS. */
 export async function getEmailSenderHeaders(
-  admin: SupabaseClient,
+  admin: AdminLike,
 ): Promise<EmailSenderHeaders> {
   const adminRow = await readAdminSenderRow(admin);
 

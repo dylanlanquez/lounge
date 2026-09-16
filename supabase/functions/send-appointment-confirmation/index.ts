@@ -30,7 +30,14 @@
 // rescheduleAppointment (best-effort post-step) and the Schedule
 // sheet "Resend confirmation" button.
 
-import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.50.0';
+// A plain PostgrestClient, not the full supabase-js SupabaseClient:
+// this function only ever does .from()/.rpc() as the service role
+// and a raw auth/v1/user check. The full supabase-js meta-package
+// pulls in @supabase/realtime-js, which drags in `ws` and crashes
+// Deno's edge runtime intermittently on cold start (a `ws`/esm.sh
+// denonext bundling bug unrelated to anything this function needs).
+import { PostgrestClient } from 'npm:@supabase/postgrest-js@1.19.4';
+type AdminClient = PostgrestClient;
 import { iconSvg as _iconSvg } from '../_shared/emailIcons.ts';
 import { recordEmailMessage } from '../_shared/emailRecord.ts';
 import { getEmailSenderHeaders } from '../_shared/emailSender.ts';
@@ -98,12 +105,13 @@ async function handle(req: Request): Promise<Response> {
     !!internalTokenHeader && internalTokenHeader === SUPABASE_SERVICE_ROLE_KEY;
   let callerAccountAuthId: string | null = null;
   if (!isInternal) {
-    const userClient = createClient(SUPABASE_URL, ANON_KEY, {
-      global: { headers: { Authorization: userJwt } },
-    });
-    const { data: who } = await userClient.auth.getUser();
-    if (!who?.user) return jsonResponse(401, { ok: false, error: 'Not signed in' });
-    callerAccountAuthId = who.user.id;
+    const who = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+      headers: { apikey: ANON_KEY, Authorization: userJwt },
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .catch(() => null);
+    if (!who?.id) return jsonResponse(401, { ok: false, error: 'Not signed in' });
+    callerAccountAuthId = who.id as string;
   }
 
   let body: {
@@ -124,11 +132,16 @@ async function handle(req: Request): Promise<Response> {
     return jsonResponse(400, { ok: false, error: 'appointmentId required' });
   }
 
-  const admin: SupabaseClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+  const admin: AdminClient = new PostgrestClient(`${SUPABASE_URL}/rest/v1`, {
+    headers: {
+      apikey: SUPABASE_SERVICE_ROLE_KEY,
+      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+    },
+  });
   // Pull the canonical sender once per invocation. Admin → Branding
   // → Email sender drives display name + reply-to; the verified
   // Resend address comes from env (RESEND_SENDER_ADDRESS).
-  const senderHeaders = await getEmailSenderHeaders(admin);
+  const senderHeaders = await getEmailSenderHeaders(admin as unknown as Parameters<typeof getEmailSenderHeaders>[0]);
 
   // ── Hydrate new appointment ────────────────────────────────────
   const apt = await readAppointment(admin, appointmentId);
@@ -624,7 +637,7 @@ interface LocationRow {
 // a range. On any error or missing data both are null and the
 // rendered variable degrades to empty.
 async function resolvePatientFacingRange(
-  admin: SupabaseClient,
+  admin: AdminClient,
   serviceType: string | null,
 ): Promise<{ min: number | null; max: number | null }> {
   if (!serviceType) return { min: null, max: null };
@@ -659,7 +672,7 @@ interface AppointmentPhase {
   end_at: string;
 }
 async function fetchAppointmentPhases(
-  admin: SupabaseClient,
+  admin: AdminClient,
   appointmentId: string,
 ): Promise<AppointmentPhase[]> {
   const { data, error } = await admin
@@ -692,7 +705,7 @@ interface BookingItemsSnapshot {
   upgrades: AppointmentUpgradeSnapshot[];
 }
 async function fetchAppointmentBookingItems(
-  admin: SupabaseClient,
+  admin: AdminClient,
   appointmentId: string,
 ): Promise<BookingItemsSnapshot> {
   const [repairsRes, upgradesRes] = await Promise.all([
@@ -1079,7 +1092,7 @@ function composeDentureRepairTable(
 // rather than a single duration line. Sourced from lng_settings so
 // admin can tune without redeploy. Default 60 mirrors M3.
 async function resolveSegmentedThresholdMinutes(
-  admin: SupabaseClient,
+  admin: AdminClient,
 ): Promise<number> {
   const { data, error } = await admin
     .from('lng_settings')
@@ -1094,7 +1107,7 @@ async function resolveSegmentedThresholdMinutes(
 }
 
 async function readAppointment(
-  admin: SupabaseClient,
+  admin: AdminClient,
   id: string,
 ): Promise<AppointmentRow | null> {
   const { data } = await admin
@@ -1110,7 +1123,7 @@ async function readAppointment(
 // Counts prior delivery events for a given appointment UID. Returned
 // value becomes the SEQUENCE on the next REQUEST (or `+1` for a
 // CANCEL of the old UID).
-async function currentSequenceForUid(admin: SupabaseClient, appointmentId: string): Promise<number> {
+async function currentSequenceForUid(admin: AdminClient, appointmentId: string): Promise<number> {
   const { count } = await admin
     .from('lng_event_log')
     .select('id', { count: 'exact', head: true })
@@ -1121,7 +1134,7 @@ async function currentSequenceForUid(admin: SupabaseClient, appointmentId: strin
 }
 
 async function logFailure(
-  admin: SupabaseClient,
+  admin: AdminClient,
   args: {
     severity: 'warning' | 'error';
     message: string;
@@ -1695,7 +1708,7 @@ type OpeningDay = { closed: true } | { open: string; close: string };
 const DAY_NAMES_LONG = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
 async function loadBrandingAndContact(
-  admin: SupabaseClient,
+  admin: AdminClient,
 ): Promise<{ brand: BrandSettings; contact: ContactSettings }> {
   const empty = {
     brand: {

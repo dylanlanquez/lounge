@@ -26,7 +26,14 @@
 // timeline; lng_event_log row written for ops audit. Failures land
 // in lng_system_failures.
 
-import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.50.0';
+// A plain PostgrestClient, not the full supabase-js SupabaseClient:
+// this function only ever does .from()/.rpc() as the service role.
+// The full supabase-js meta-package pulls in @supabase/realtime-js,
+// which drags in `ws` and crashes Deno's edge runtime intermittently
+// on cold start (a `ws`/esm.sh denonext bundling bug unrelated to
+// anything this function needs).
+import { PostgrestClient } from 'npm:@supabase/postgrest-js@1.19.4';
+type AdminClient = PostgrestClient;
 import { iconSvg as _iconSvg } from '../_shared/emailIcons.ts';
 import { recordEmailMessage } from '../_shared/emailRecord.ts';
 import { composeAppointmentTimelineBlock } from '../_shared/appointmentTimelineBlock.ts';
@@ -103,14 +110,19 @@ async function handle(req: Request): Promise<Response> {
     return jsonResponse(401, { ok: false, error: 'Unauthorised' });
   }
 
-  const admin: SupabaseClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+  const admin: AdminClient = new PostgrestClient(`${SUPABASE_URL}/rest/v1`, {
+    headers: {
+      apikey: SUPABASE_SERVICE_ROLE_KEY,
+      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+    },
+  });
   // Resolve the canonical From + Reply-To headers once per cron tick
   // from Admin → Branding → Email sender. Threaded through processOne
   // so every reminder in the same sweep ships under the same identity
   // even if an admin saves a rebrand mid-loop (we read once, send
   // consistent), and the receipt audit rows record the exact pair the
   // Resend POST used.
-  const senderHeaders = await getEmailSenderHeaders(admin);
+  const senderHeaders = await getEmailSenderHeaders(admin as unknown as Parameters<typeof getEmailSenderHeaders>[0]);
 
   // ── Load templates ─────────────────────────────────────────────
   // Per-service overrides (M17): we may have multiple rows per
@@ -259,7 +271,12 @@ async function handle(req: Request): Promise<Response> {
       else if (result.outcome === 'skipped') skipped += 1;
       else {
         failed += 1;
-        errors.push({ appointmentId: apt.id, reason: result.reason });
+        // processOne's failed branch doesn't always carry a reason
+        // string; the array itself is typed as always having one
+        // (every row in the error report needs something readable),
+        // so a genuinely reasonless failure gets a plain placeholder
+        // rather than leaving the field to a type-checking gap.
+        errors.push({ appointmentId: apt.id, reason: result.reason ?? 'unknown failure' });
       }
     } catch (e) {
       failed += 1;
@@ -310,7 +327,7 @@ interface ProcessResult {
 type TemplateRow = { subject: string; body_syntax: string; enabled: boolean };
 
 async function processOne(
-  admin: SupabaseClient,
+  admin: AdminClient,
   senderHeaders: EmailSenderHeaders,
   templates: { standard: TemplateRow; virtual: TemplateRow | null },
   apt: AppointmentRow,
@@ -629,7 +646,7 @@ interface AppointmentPhase {
 }
 
 async function fetchAppointmentPhases(
-  admin: SupabaseClient,
+  admin: AdminClient,
   appointmentId: string,
 ): Promise<AppointmentPhase[]> {
   const { data, error } = await admin
@@ -642,7 +659,7 @@ async function fetchAppointmentPhases(
 }
 
 async function resolveSegmentedThresholdMinutes(
-  admin: SupabaseClient,
+  admin: AdminClient,
 ): Promise<number> {
   const { data, error } = await admin
     .from('lng_settings')
@@ -694,7 +711,7 @@ function buildPatientFacingSchedule(
 }
 
 async function resolvePatientFacingRange(
-  admin: SupabaseClient,
+  admin: AdminClient,
   serviceType: string | null,
 ): Promise<{ min: number | null; max: number | null }> {
   if (!serviceType) return { min: null, max: null };
@@ -791,7 +808,7 @@ interface BookingItemsSnapshot {
 }
 
 async function fetchAppointmentBookingItems(
-  admin: SupabaseClient,
+  admin: AdminClient,
   appointmentId: string,
 ): Promise<BookingItemsSnapshot> {
   const [repairsRes, upgradesRes] = await Promise.all([
@@ -1261,7 +1278,7 @@ type OpeningDay = { closed: true } | { open: string; close: string };
 const DAY_NAMES_LONG = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
 async function loadBrandingAndContact(
-  admin: SupabaseClient,
+  admin: AdminClient,
 ): Promise<{ brand: BrandSettings; contact: ContactSettings }> {
   const empty = {
     brand: {
@@ -1413,7 +1430,7 @@ async function sendEmail(args: {
 }
 
 async function logFailure(
-  admin: SupabaseClient,
+  admin: AdminClient,
   args: { message: string; context: Record<string, unknown> },
 ): Promise<void> {
   try {
