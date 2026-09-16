@@ -111,8 +111,15 @@ async function handle(req: Request): Promise<Response> {
   const conferenceName = `voice-session-${sessionId}`;
 
   const sayNotice = settings.enabled ? `<Say>${escapeXml(settings.noticeText)}</Say>` : '';
+  // Twilio's Conference recordingStatusCallback payload carries
+  // AccountSid/ConferenceSid/RecordingSid — no CallSid at all (that's
+  // a call-level recording field, not a conference one). sessionId
+  // rides the URL's own query string instead, the same way this
+  // function itself receives it, so twilio-voice-recording-status can
+  // identify the row without needing a ConferenceSid lookup.
+  const recordingStatusUrl = `${RECORDING_STATUS_URL}?sessionId=${sessionId}`;
   const conferenceAttrs = settings.enabled
-    ? ` record="record-from-start" recordingStatusCallback="${escapeXml(RECORDING_STATUS_URL)}" recordingStatusCallbackEvent="completed" recordingStatusCallbackMethod="POST"`
+    ? ` record="record-from-start" recordingStatusCallback="${escapeXml(recordingStatusUrl)}" recordingStatusCallbackEvent="completed" recordingStatusCallbackMethod="POST"`
     : '';
 
   const twiml = `<?xml version="1.0" encoding="UTF-8"?>
