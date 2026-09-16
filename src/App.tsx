@@ -35,6 +35,7 @@ const SaleDetail = lazyWithRetry(() => import('./routes/SaleDetail.tsx').then((m
 const VisitDetail = lazyWithRetry(() => import('./routes/VisitDetail.tsx').then((m) => ({ default: m.VisitDetail })), 'VisitDetail');
 const Pay = lazyWithRetry(() => import('./routes/Pay.tsx').then((m) => ({ default: m.Pay })), 'Pay');
 const PatientProfile = lazyWithRetry(() => import('./routes/PatientProfile.tsx').then((m) => ({ default: m.PatientProfile })), 'PatientProfile');
+const PatientVoiceCallHistory = lazyWithRetry(() => import('./routes/PatientVoiceCallHistory.tsx').then((m) => ({ default: m.PatientVoiceCallHistory })), 'PatientVoiceCallHistory');
 const Patients = lazyWithRetry(() => import('./routes/Patients.tsx').then((m) => ({ default: m.Patients })), 'Patients');
 const Ledger = lazyWithRetry(() => import('./routes/Ledger.tsx').then((m) => ({ default: m.Ledger })), 'Ledger');
 const AppointmentDetail = lazyWithRetry(() => import('./routes/AppointmentDetail.tsx').then((m) => ({ default: m.AppointmentDetail })), 'AppointmentDetail');
@@ -326,6 +327,7 @@ function RoutedErrorBoundary() {
           <Route path="/visit/:id" element={<RequireStaff><VisitDetail /></RequireStaff>} />
           <Route path="/visit/:id/pay" element={<RequireStaff><Pay /></RequireStaff>} />
           <Route path="/patient/:id" element={<RequireStaff><PatientProfile /></RequireStaff>} />
+          <Route path="/patient/:patientId/voice-calls" element={<RequireStaff><PatientVoiceCallHistory /></RequireStaff>} />
           <Route path="/patients" element={<RequireStaff><Patients /></RequireStaff>} />
           <Route path="/ledger" element={<RequireStaff><Ledger /></RequireStaff>} />
           <Route path="/appointment/:id" element={<RequireStaff><AppointmentDetail /></RequireStaff>} />

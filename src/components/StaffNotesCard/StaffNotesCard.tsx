@@ -25,7 +25,13 @@ import { logFailure } from '../../lib/failureLog.ts';
 //
 //   * latest note always visible
 //   * older notes collapsed under "View N older notes"
-//   * full audit log collapsed under "History (N entries)"
+//   * a genuine change log collapsed under "History (N changes)" —
+//     amends and deletes only. Writing a note is not "history", it's
+//     just the note, already sitting above; the toggle used to count
+//     every note's own creation event, so a single note nobody had
+//     ever touched read as "History (1 entry)" — as if there were
+//     something to look back on when there wasn't (Dylan, 16 Sep
+//     2026). It now appears only once a note has actually changed.
 //
 // Author bylines render from the joined accounts row at fetch time
 // (see queries/appointmentStaffNotes.ts); the card never parses
@@ -58,6 +64,13 @@ export function StaffNotesCard({ appointmentId, patientId }: StaffNotesCardProps
   const activeNotes = useMemo(() => notes.filter((n) => !n.deleted_at), [notes]);
   const latest = activeNotes[0] ?? null;
   const older = activeNotes.slice(1);
+  // A note's own creation isn't "history" — it's the note, shown
+  // above as the latest or an older entry. History means something
+  // changed since: an amend or a delete.
+  const historyEvents = useMemo(
+    () => events.filter((e) => e.event_type !== 'staff_note_added'),
+    [events],
+  );
 
   const handleSaveComposer = async () => {
     if (saving || !patientId) return;
@@ -198,15 +211,15 @@ export function StaffNotesCard({ appointmentId, patientId }: StaffNotesCardProps
             />
           ) : null}
 
-          {events.length > 0 ? (
+          {historyEvents.length > 0 ? (
             <DisclosureToggle
               open={showHistory}
               onToggle={() => setShowHistory((v) => !v)}
-              label={`History (${events.length} ${events.length === 1 ? 'entry' : 'entries'})`}
+              label={`History (${historyEvents.length} ${historyEvents.length === 1 ? 'change' : 'changes'})`}
             />
           ) : null}
 
-          {showHistory ? <HistoryList events={events} /> : null}
+          {showHistory ? <HistoryList events={historyEvents} /> : null}
         </div>
       )}
 

@@ -667,7 +667,9 @@ export type AppointmentAction =
   | 'reverse_no_show'        // no_show
   | 'view_rescheduled_to'    // rescheduled with a forward link
   | 'mark_virtual_complete'  // joined, virtual only — call finished
-  | 'view_visit';            // arrived / complete with an in-person visit
+  | 'view_visit'             // arrived / complete with an in-person visit
+  | 'log_call_outcome'       // booked, voice call only — replaces mark_arrived/mark_no_show
+  | 'reverse_call_outcome';  // no_show / complete, voice call only — undo a logged outcome
 
 export interface AvailableActionsInput {
   status: AppointmentStatus;
@@ -676,11 +678,15 @@ export interface AvailableActionsInput {
   hasVisit: boolean;
   hasRescheduleTarget: boolean;
   isVirtual: boolean;
+  // A voice call has no chair and no visit — it replaces the
+  // arrival/no-show pair with a single "log this call" action and
+  // never offers Join/Rejoin/Mark-complete (no join_url exists for it).
+  isVoiceCall: boolean;
 }
 
 export function availableActions(input: AvailableActionsInput): AppointmentAction[] {
   const out: AppointmentAction[] = ['view_patient_profile'];
-  const { status, source, hasPatientEmail, hasVisit, hasRescheduleTarget, isVirtual } = input;
+  const { status, source, hasPatientEmail, hasVisit, hasRescheduleTarget, isVirtual, isVoiceCall } = input;
   const isCalendly = source === 'calendly';
 
   // Reschedule is offered for every non-Calendly booking — Calendly
@@ -699,17 +705,24 @@ export function availableActions(input: AvailableActionsInput): AppointmentActio
   const canResend = !isCalendly && hasPatientEmail;
 
   if (status === 'booked') {
-    // Virtual: Join replaces the arrival wizard; in-person: normal arrival flow.
-    out.push(isVirtual ? 'join_meeting' : 'mark_arrived');
-    if (isVirtual) out.push('mark_virtual_complete');
-    out.push('mark_no_show');
+    if (isVoiceCall) {
+      // One action, not two: there is no arrival to mark and no
+      // no-show reason picker separate from the outcome itself —
+      // logging the call IS marking what happened.
+      out.push('log_call_outcome');
+    } else {
+      // Virtual: Join replaces the arrival wizard; in-person: normal arrival flow.
+      out.push(isVirtual ? 'join_meeting' : 'mark_arrived');
+      if (isVirtual) out.push('mark_virtual_complete');
+      out.push('mark_no_show');
+    }
     if (canReschedule) out.push('reschedule');
     if (canCancel) out.push('cancel');
     if (canResend) out.push('resend_confirmation');
   } else if (status === 'cancelled') {
     out.push('reverse_cancellation');
   } else if (status === 'no_show') {
-    out.push('reverse_no_show');
+    out.push(isVoiceCall ? 'reverse_call_outcome' : 'reverse_no_show');
   } else if (status === 'rescheduled') {
     if (hasRescheduleTarget) out.push('view_rescheduled_to');
   } else if (status === 'joined') {
@@ -726,8 +739,11 @@ export function availableActions(input: AvailableActionsInput): AppointmentActio
     if (canCancel) out.push('cancel');
     if (canResend) out.push('resend_confirmation');
   } else if (status === 'arrived' || status === 'complete') {
-    // Virtual appointments never produce a visit row, so offer Rejoin instead.
-    if (isVirtual) out.push('rejoin_meeting');
+    // A voice call logged as "Answered" can still be corrected —
+    // same reversibility as a mistaken no-show.
+    if (isVoiceCall) {
+      if (status === 'complete') out.push('reverse_call_outcome');
+    } else if (isVirtual) out.push('rejoin_meeting'); // Virtual appointments never produce a visit row, so offer Rejoin instead.
     else if (hasVisit) out.push('view_visit');
   }
 

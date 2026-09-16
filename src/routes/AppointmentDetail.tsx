@@ -18,6 +18,7 @@ import {
   Mail,
   MapPin,
   PackageCheck,
+  PhoneCall,
   RotateCcw,
   User as UserIcon,
   UserCheck,
@@ -53,6 +54,12 @@ import { SourceGlyph } from '../components/AppointmentCard/AppointmentCard.tsx';
 import { AppointmentItemsCard } from '../components/AppointmentItemsCard/AppointmentItemsCard.tsx';
 import { useAppointmentItems } from '../lib/queries/appointmentItems.ts';
 import { StaffNotesCard } from '../components/StaffNotesCard/StaffNotesCard.tsx';
+import { VoiceCallActionCard } from '../components/VoiceCallActionCard/VoiceCallActionCard.tsx';
+import { CallOutcomeSheet } from '../components/CallOutcomeSheet/CallOutcomeSheet.tsx';
+import { CallRecordCard } from '../components/CallRecordCard/CallRecordCard.tsx';
+import { PreviousCallsCard } from '../components/PreviousCallsCard/PreviousCallsCard.tsx';
+import { isVoiceCall } from '../lib/voiceCall.ts';
+import { reverseVoiceCallOutcome } from '../lib/queries/voiceCallLog.ts';
 import { CustomerNoteHero } from '../components/CustomerNoteHero/CustomerNoteHero.tsx';
 import { VirtualCallReminder } from '../components/VirtualCallReminder/VirtualCallReminder.tsx';
 import { BOTTOM_NAV_HEIGHT } from '../components/BottomNav/BottomNav.tsx';
@@ -382,6 +389,11 @@ function Loaded({
   const [confirmNoShowOpen, setConfirmNoShowOpen] = useState(false);
   const [confirmReverseCancelOpen, setConfirmReverseCancelOpen] = useState(false);
   const [confirmReverseNoShowOpen, setConfirmReverseNoShowOpen] = useState(false);
+  // Voice calls: "Log this call" replaces the arrival/no-show pair,
+  // and its own reversal has no visit-vs-no-visit branch to consider.
+  const [callOutcomeOpen, setCallOutcomeOpen] = useState(false);
+  const [confirmReverseCallOutcomeOpen, setConfirmReverseCallOutcomeOpen] = useState(false);
+  const [reversingCallOutcome, setReversingCallOutcome] = useState(false);
   const [resending, setResending] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [timelineTick, setTimelineTick] = useState(0);
@@ -453,6 +465,7 @@ function Loaded({
     patient_last_name: appt.patient.last_name,
   } as never);
   const tone = STATUS_TONE[appt.status];
+  const isVoiceCallAppt = isVoiceCall(appt);
   const actions = useMemo(
     () =>
       availableActions({
@@ -462,6 +475,7 @@ function Loaded({
         hasVisit: !!appt.visit,
         hasRescheduleTarget: !!appt.reschedule_to_id,
         isVirtual: !!appt.join_url,
+        isVoiceCall: isVoiceCallAppt,
       }),
     [
       appt.status,
@@ -470,6 +484,7 @@ function Loaded({
       appt.visit,
       appt.reschedule_to_id,
       appt.join_url,
+      isVoiceCallAppt,
     ],
   );
 
@@ -628,6 +643,30 @@ function Loaded({
     }
   };
 
+  // Voice calls only ever reset to 'booked' — there is no visit to
+  // consider, so this has none of reverseNoShow's arrived/booked branch.
+  const handleReverseCallOutcome = async () => {
+    if (reversingCallOutcome) return;
+    setActionError(null);
+    setReversingCallOutcome(true);
+    try {
+      await reverseVoiceCallOutcome(appt.id, appt.patient_id);
+      setConfirmReverseCallOutcomeOpen(false);
+      onChanged();
+    } catch (e) {
+      const message = e instanceof Error ? e.message : 'Could not reverse this call';
+      await logFailure({
+        source: 'AppointmentDetail.reverseVoiceCallOutcome',
+        severity: 'error',
+        message,
+        context: { appointmentId: appt.id },
+      });
+      setActionError(message);
+    } finally {
+      setReversingCallOutcome(false);
+    }
+  };
+
   const isPreLaunch = !!launchDate && appt.start_at < launchDate;
 
   return (
@@ -681,8 +720,17 @@ function Loaded({
         ) : appt.service_type === 'virtual_impression_appointment' &&
           appt.status !== 'no_show' && appt.status !== 'complete' ? (
           <GenerateMeetLinkCard appointmentId={appt.id} currentHostId={appt.meet_host_id} onCreated={onChanged} />
+        ) : isVoiceCallAppt ? (
+          <VoiceCallActionCard patientPhone={appt.patient.phone} />
         ) : null}
         <BookingFactsCard appt={appt} />
+        {isVoiceCallAppt ? (
+          <PreviousCallsCard
+            patientId={appt.patient_id}
+            patientName={fullName}
+            excludeAppointmentId={appt.id}
+          />
+        ) : null}
         {appt.free_upgrade ? (
           <div
             style={{
@@ -819,6 +867,15 @@ function Loaded({
         ) : null}
       </section>
 
+      {/* The call record — every attempt logged against this booking,
+          outcome first. Sits at the foot of the informational content,
+          right before the actions that add to it. */}
+      {isVoiceCallAppt ? (
+        <div style={{ marginTop: theme.space[5] }}>
+          <CallRecordCard appointmentId={appt.id} />
+        </div>
+      ) : null}
+
       {actionError ? (
         <div
           role="alert"
@@ -869,6 +926,8 @@ function Loaded({
         onResendConfirmation={handleResendConfirmation}
         onReverseCancellation={() => setConfirmReverseCancelOpen(true)}
         onReverseNoShow={() => setConfirmReverseNoShowOpen(true)}
+        onLogCallOutcome={() => setCallOutcomeOpen(true)}
+        onReverseCallOutcome={() => setConfirmReverseCallOutcomeOpen(true)}
         onViewRescheduledTo={() =>
           appt.reschedule_to_id ? navigate(`/appointment/${appt.reschedule_to_id}`) : undefined
         }
@@ -1011,6 +1070,33 @@ function Loaded({
           confirming={reversingNoShow}
           onConfirm={handleReverseNoShow}
           onClose={() => setConfirmReverseNoShowOpen(false)}
+        />
+      ) : null}
+
+      <CallOutcomeSheet
+        open={callOutcomeOpen}
+        appointmentId={appt.id}
+        patientId={appt.patient_id}
+        onClose={() => setCallOutcomeOpen(false)}
+        onLogged={(result) => {
+          setCallOutcomeOpen(false);
+          if (result.logWriteFailed) {
+            setActionError(
+              'The call was logged on the booking, but the entry could not be saved to the call record. Try again from here so it shows up below.',
+            );
+          }
+          onChanged();
+        }}
+      />
+
+      {confirmReverseCallOutcomeOpen ? (
+        <ConfirmDialog
+          title="Undo this call's outcome?"
+          description="The booking returns to booked, ready to log again. The earlier attempt stays on the call record below."
+          confirmLabel="Undo, log again"
+          confirming={reversingCallOutcome}
+          onConfirm={handleReverseCallOutcome}
+          onClose={() => setConfirmReverseCallOutcomeOpen(false)}
         />
       ) : null}
 
@@ -2069,6 +2155,11 @@ function GenerateMeetLinkCard({
 function BookingFactsCard({ appt }: { appt: AppointmentDetailRow }) {
   const { data: clinicSettings } = useClinicSettings();
   const isVirtual = !!appt.join_url;
+  // A voice call has no physical location and no meeting link to
+  // show — the address row would be actively wrong (it's the
+  // clinic's own postcode, nowhere the call happens), so it's the one
+  // service type this card skips entirely rather than adapts.
+  const isVoiceCallAppt = isVoiceCall(appt);
 
   // In-person bookings show the deliverable address only — staff
   // already know which clinic they're at, repeating the clinic name
@@ -2076,7 +2167,9 @@ function BookingFactsCard({ appt }: { appt: AppointmentDetailRow }) {
   // postcode share line 2 so the postcode reads next to its city.
   // Source is the locations row that the Branding admin tab writes
   // to (now including the postcode added by the 20260514 migration).
-  const locationLine: ReactNode = isVirtual
+  const locationLine: ReactNode = isVoiceCallAppt
+    ? null
+    : isVirtual
     ? platformLabel(appt.meeting_platform, appt.join_url)
     : (() => {
         const l = appt.location;
@@ -2121,9 +2214,10 @@ function BookingFactsCard({ appt }: { appt: AppointmentDetailRow }) {
   // surface the actual host whose Google account owns the room
   // (Karly / Lab / Venneirlaboratory). Legacy / Calendly-imported
   // rows fall back to the clinic-wide setting so they keep their
-  // current behaviour.
+  // current behaviour. Never applies to a voice call — there is no
+  // host account, the agent dials from their own line.
   const joinFromEmail = appt.meet_host_email ?? clinicSettings.virtualHostEmail;
-  if (isVirtual && joinFromEmail) {
+  if (!isVoiceCallAppt && isVirtual && joinFromEmail) {
     rows.push({
       icon: <Mail size={13} aria-hidden />,
       label: 'Join from',
@@ -2873,6 +2967,8 @@ function Actions({
   onResendConfirmation,
   onReverseCancellation,
   onReverseNoShow,
+  onLogCallOutcome,
+  onReverseCallOutcome,
   onViewRescheduledTo,
 }: {
   appt: AppointmentDetailRow;
@@ -2897,6 +2993,8 @@ function Actions({
   onResendConfirmation: () => void;
   onReverseCancellation: () => void;
   onReverseNoShow: () => void;
+  onLogCallOutcome: () => void;
+  onReverseCallOutcome: () => void;
   onViewRescheduledTo: () => void;
 }) {
   // Wrap `actions.includes` with a CS-aware filter: CS-only staff
@@ -2916,7 +3014,7 @@ function Actions({
     if (a === 'mark_virtual_complete' && !canRunVirtualCall) return false;
     return actions.includes(a);
   };
-  const isFirstAction = !has('join_meeting') && !has('mark_arrived');
+  const isFirstAction = !has('join_meeting') && !has('mark_arrived') && !has('log_call_outcome');
   return (
     <section
       aria-label="Actions"
@@ -2955,6 +3053,16 @@ function Actions({
           label="Mark patient as arrived"
           description="Opens the arrival form (intake, waivers, JB assignment)"
           onClick={onMarkArrived}
+          accent
+        />
+      ) : null}
+      {has('log_call_outcome') ? (
+        <ActionRow
+          first
+          icon={<PhoneCall size={16} aria-hidden />}
+          label="Log this call"
+          description="Answered, no answer, voicemail, wrong number…"
+          onClick={onLogCallOutcome}
           accent
         />
       ) : null}
@@ -3033,6 +3141,14 @@ function Actions({
           label="Reverse no-show"
           description="Patient turned up late"
           onClick={onReverseNoShow}
+        />
+      ) : null}
+      {has('reverse_call_outcome') ? (
+        <ActionRow
+          icon={<RotateCcw size={16} aria-hidden />}
+          label="Undo, log again"
+          description="Resets to booked so you can log the real outcome"
+          onClick={onReverseCallOutcome}
         />
       ) : null}
       {has('view_rescheduled_to') ? (

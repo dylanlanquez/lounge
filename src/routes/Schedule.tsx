@@ -99,6 +99,8 @@ import { useCurrentLocation } from '../lib/queries/locations.ts';
 import googleMeetIcon from '../assets/google-meet.png';
 import { useVoiceCallMode } from '../lib/voiceCallMode.tsx';
 import { VOICE_CALL_SERVICE_TYPE, isVoiceCall, telHref, voiceCallIsLive } from '../lib/voiceCall.ts';
+import { reverseVoiceCallOutcome } from '../lib/queries/voiceCallLog.ts';
+import { CallOutcomeSheet } from '../components/CallOutcomeSheet/CallOutcomeSheet.tsx';
 import { VoiceCallDayHero } from '../components/VoiceCallDayHero/VoiceCallDayHero.tsx';
 
 
@@ -165,6 +167,10 @@ export function Schedule() {
   // True when staff has tapped "No-show" inside the BottomSheet and we're
   // waiting for them to pick a reason. Cleared on cancel or successful submit.
   const [pickingNoShowReason, setPickingNoShowReason] = useState(false);
+  // Same "Log this call" sheet AppointmentDetail uses — one outcome
+  // picker for voice calls, everywhere a voice call can be marked.
+  const [callOutcomeOpen, setCallOutcomeOpen] = useState(false);
+  const [undoingCallOutcome, setUndoingCallOutcome] = useState(false);
   // The appointment currently being rescheduled. When non-null the
   // RescheduleSheet renders on top of the existing detail sheet
   // (BottomSheet stacking is handled by their respective z-indices).
@@ -938,6 +944,7 @@ export function Schedule() {
                   const showNoShow =
                     !isVirtualOnNonDesktop &&
                     !isCsOnly &&
+                    !isVoiceRow &&
                     (status === 'booked' || (isVirtual && (status === 'arrived' || status === 'joined')));
                   // Join button is always visible on virtual rows at
                   // join-eligible statuses, regardless of device or
@@ -956,8 +963,17 @@ export function Schedule() {
                   // the number to the device's dialler.
                   const showMarkArrived = !isVirtual && !isVoiceRow && status === 'booked' && !isCsOnly;
                   const showCallPatient = isVoiceRow && !!callHref && voiceCallIsLive(status);
+                  const showLogCall = isVoiceRow && !isCsOnly && status === 'booked';
+                  const showUndoCallOutcome =
+                    isVoiceRow && !isCsOnly && (status === 'no_show' || status === 'complete');
                   const showCloseOnly =
-                    !showNoShow && !showVirtualJoin && !showMarkArrived && !showCallPatient && status !== 'no_show';
+                    !showNoShow &&
+                    !showVirtualJoin &&
+                    !showMarkArrived &&
+                    !showCallPatient &&
+                    !showLogCall &&
+                    !showUndoCallOutcome &&
+                    status !== 'no_show';
                   if (showCloseOnly) {
                     return (
                       <Button variant="secondary" onClick={closeSheet}>
@@ -967,7 +983,7 @@ export function Schedule() {
                   }
                   const joinLabel =
                     status === 'arrived' || status === 'joined' || status === 'no_show' ? 'Re-join meeting' : 'Join meeting';
-                  const showUndoNoShow = status === 'no_show' && !isCsOnly;
+                  const showUndoNoShow = status === 'no_show' && !isCsOnly && !isVoiceRow;
                   return (
                     <div style={{ display: 'flex', gap: theme.space[2], flexWrap: 'wrap' }}>
                       {showUndoNoShow ? (
@@ -997,6 +1013,45 @@ export function Schedule() {
                         >
                           Undo no-show
                         </Button>
+                      ) : null}
+                      {showUndoCallOutcome ? (
+                        <Button
+                          variant="secondary"
+                          disabled={undoingCallOutcome}
+                          loading={undoingCallOutcome}
+                          onClick={async () => {
+                            if (!selected) return;
+                            setUndoingCallOutcome(true);
+                            try {
+                              await reverseVoiceCallOutcome(selected.id, selected.patient_id);
+                              setSelected(null);
+                              day.refresh();
+                              weekCounts.refresh();
+                            } catch (e) {
+                              setError(e instanceof Error ? e.message : "Could not undo this call's outcome");
+                            } finally {
+                              setUndoingCallOutcome(false);
+                            }
+                          }}
+                        >
+                          Undo, log again
+                        </Button>
+                      ) : null}
+                      {showLogCall ? (
+                        (() => {
+                          const late = isBookingLate(selected.start_at, now);
+                          return (
+                            <Button
+                              variant={late ? 'primary' : 'secondary'}
+                              disabled={busy}
+                              onClick={() => setCallOutcomeOpen(true)}
+                            >
+                              <span style={{ display: 'inline-flex', alignItems: 'center', gap: theme.space[1] }}>
+                                <PhoneCall size={16} /> Log this call
+                              </span>
+                            </Button>
+                          );
+                        })()
                       ) : null}
                       {showNoShow ? (
                         (() => {
@@ -1440,6 +1495,21 @@ export function Schedule() {
             </div>
           ) : null}
         </BottomSheet>
+      ) : null}
+
+      {selected ? (
+        <CallOutcomeSheet
+          open={callOutcomeOpen}
+          appointmentId={selected.id}
+          patientId={selected.patient_id}
+          onClose={() => setCallOutcomeOpen(false)}
+          onLogged={() => {
+            setCallOutcomeOpen(false);
+            setSelected(null);
+            day.refresh();
+            weekCounts.refresh();
+          }}
+        />
       ) : null}
 
       {reschedulingRow ? (

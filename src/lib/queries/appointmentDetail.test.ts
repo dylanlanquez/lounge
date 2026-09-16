@@ -13,6 +13,7 @@ const base: AvailableActionsInput = {
   hasVisit: false,
   hasRescheduleTarget: false,
   isVirtual: false,
+  isVoiceCall: false,
 };
 
 describe('availableActions', () => {
@@ -162,6 +163,51 @@ describe('availableActions', () => {
         isVirtual: true,
       });
       expect(out).toContain('reschedule');
+    });
+  });
+
+  describe('voice call', () => {
+    // A voice call replaces the arrival/no-show pair with a single
+    // "log this call" action and never offers Join/Rejoin/Mark-
+    // complete — there is no join_url and no visit for it.
+
+    it('booked + voice call: log_call_outcome replaces mark_arrived/mark_no_show', () => {
+      const out = availableActions({ ...base, status: 'booked', isVoiceCall: true });
+      expect(out).toEqual([
+        'view_patient_profile',
+        'log_call_outcome',
+        'reschedule',
+        'cancel',
+        'resend_confirmation',
+      ]);
+    });
+
+    it('booked + voice call: mark_arrived and mark_no_show are never offered', () => {
+      const out = availableActions({ ...base, status: 'booked', isVoiceCall: true });
+      expect(out).not.toContain('mark_arrived');
+      expect(out).not.toContain('mark_no_show');
+    });
+
+    it('no_show + voice call: reverse_call_outcome replaces reverse_no_show', () => {
+      const out = availableActions({ ...base, status: 'no_show', isVoiceCall: true });
+      expect(out).toEqual(['view_patient_profile', 'reverse_call_outcome']);
+    });
+
+    it('complete + voice call: reverse_call_outcome is offered (a mistaken "Answered" can be undone)', () => {
+      const out = availableActions({ ...base, status: 'complete', isVoiceCall: true });
+      expect(out).toEqual(['view_patient_profile', 'reverse_call_outcome']);
+    });
+
+    it('arrived + voice call: no view_visit, no reverse_call_outcome (a voice call cannot reach "arrived")', () => {
+      const out = availableActions({ ...base, status: 'arrived', isVoiceCall: true });
+      expect(out).toEqual(['view_patient_profile']);
+    });
+
+    it('booked + voice call: never offers join_meeting, rejoin_meeting, or mark_virtual_complete', () => {
+      const out = availableActions({ ...base, status: 'booked', isVoiceCall: true, isVirtual: false });
+      expect(out).not.toContain('join_meeting');
+      expect(out).not.toContain('rejoin_meeting');
+      expect(out).not.toContain('mark_virtual_complete');
     });
   });
 
