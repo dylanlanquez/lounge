@@ -58,15 +58,29 @@ const ActiveCallContext = createContext<ActiveCallValue | null>(null);
 // types, and importing purely for types pulls the whole module graph
 // into `tsc`'s resolution either way, so the minimal, honest shape
 // used here is what's actually called.
+interface DeviceError {
+  message?: string;
+  code?: number;
+}
 interface TwilioCall {
-  on: (event: 'accept' | 'disconnect' | 'error', cb: (arg?: unknown) => void) => void;
+  on: (event: 'accept' | 'disconnect' | 'error', cb: (arg?: DeviceError) => void) => void;
   disconnect: () => void;
   mute: (shouldMute: boolean) => void;
   isMuted: () => boolean;
 }
-interface DeviceError {
-  message?: string;
-  code?: number;
+// Twilio's own message for these is accurate but reads like a stack
+// trace, not something to show a receptionist mid-shift. 31401/31402
+// are the SDK's getUserMedia failure codes (denied vs no device/track
+// found) — the two an agent will actually hit if their browser or OS
+// hasn't granted mic access to this site yet.
+function friendlyCallErrorMessage(err: DeviceError | undefined): string {
+  if (err?.code === 31401) {
+    return 'Microphone access is blocked. Allow microphone access for this site in your browser, then try again.';
+  }
+  if (err?.code === 31402) {
+    return 'No microphone was found. Check a microphone is connected and try again.';
+  }
+  return err?.message ?? 'The call failed';
 }
 interface TwilioDevice {
   register: () => Promise<void>;
@@ -165,9 +179,7 @@ export function ActiveCallProvider({ children }: { children: ReactNode }) {
         try {
           await device.register();
         } catch (e) {
-          throw e instanceof Error
-            ? e
-            : new Error(lastDeviceError?.message ?? `Twilio registration failed (code ${lastDeviceError?.code ?? 'unknown'})`);
+          throw e instanceof Error && !lastDeviceError ? e : new Error(friendlyCallErrorMessage(lastDeviceError));
         }
         device.on('tokenWillExpire', () => {
           mintToken()
@@ -188,9 +200,7 @@ export function ActiveCallProvider({ children }: { children: ReactNode }) {
             params: { sessionId, To: args.patientPhone },
           });
         } catch (e) {
-          throw e instanceof Error
-            ? e
-            : new Error(lastDeviceError?.message ?? `Could not connect the call (code ${lastDeviceError?.code ?? 'unknown'})`);
+          throw e instanceof Error && !lastDeviceError ? e : new Error(friendlyCallErrorMessage(lastDeviceError));
         }
         callRef.current = call;
         setState('ringing');
@@ -213,15 +223,14 @@ export function ActiveCallProvider({ children }: { children: ReactNode }) {
           }, 1500);
         });
         call.on('error', (err) => {
-          const message = err instanceof Error ? err.message : 'The call failed';
           teardown();
           setState('error');
-          setErrorMessage(message);
+          setErrorMessage(friendlyCallErrorMessage(err));
           logFailure({
             source: 'activeCall.callError',
             severity: 'error',
-            message,
-            context: { appointmentId: args.appointmentId },
+            message: err?.message ?? 'The call failed',
+            context: { appointmentId: args.appointmentId, code: err?.code },
           });
         });
       } catch (e) {
