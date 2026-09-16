@@ -62,3 +62,22 @@ verify_jwt = false
 #   x-reconcile-token header, so the platform JWT check is redundant.
 [functions.reconcile-sms-status]
 verify_jwt = false
+
+# twilio-voice-twiml
+#   Public webhook Twilio calls the instant a staff browser's Voice
+#   SDK Device places an outbound call. Twilio sends no Authorization
+#   header, so the platform's `verify_jwt = true` would reject every
+#   call attempt with 401 and the patient never gets dialled. The
+#   function's own auth is a mandatory X-Twilio-Signature check
+#   (HMAC-SHA1 against TWILIO_AUTH_TOKEN); a bad or missing signature
+#   returns <Reject/> rather than proceeding.
+[functions.twilio-voice-twiml]
+verify_jwt = false
+
+# twilio-voice-status
+#   Public status-callback webhook for the bridged call leg (queued ->
+#   ringing -> in-progress -> completed/busy/failed/no-answer). Same
+#   reasoning as twilio-voice-twiml: no Authorization header from
+#   Twilio, gated by X-Twilio-Signature instead.
+[functions.twilio-voice-status]
+verify_jwt = false

@@ -56,6 +56,7 @@ import { useAppointmentItems } from '../lib/queries/appointmentItems.ts';
 import { StaffNotesCard } from '../components/StaffNotesCard/StaffNotesCard.tsx';
 import { VoiceCallActionCard } from '../components/VoiceCallActionCard/VoiceCallActionCard.tsx';
 import { CallOutcomeSheet } from '../components/CallOutcomeSheet/CallOutcomeSheet.tsx';
+import { useActiveCall } from '../lib/activeCall.tsx';
 import { CallRecordCard } from '../components/CallRecordCard/CallRecordCard.tsx';
 import { PreviousCallsCard } from '../components/PreviousCallsCard/PreviousCallsCard.tsx';
 import { isVoiceCall } from '../lib/voiceCall.ts';
@@ -393,6 +394,18 @@ function Loaded({
   // and its own reversal has no visit-vs-no-visit branch to consider.
   const [callOutcomeOpen, setCallOutcomeOpen] = useState(false);
   const [callLogRefreshKey, setCallLogRefreshKey] = useState(0);
+  // The softphone call itself is a separate concern from logging its
+  // outcome (see ActiveCallProvider / CallBar) — this just opens the
+  // existing "Log this call" sheet the moment the agent's own call on
+  // THIS appointment ends, so they don't have to remember to.
+  const { onCallEnded } = useActiveCall();
+  useEffect(
+    () =>
+      onCallEnded(({ appointmentId: endedAppointmentId }) => {
+        if (endedAppointmentId === appt.id) setCallOutcomeOpen(true);
+      }),
+    [onCallEnded, appt.id],
+  );
   const [confirmReverseCallOutcomeOpen, setConfirmReverseCallOutcomeOpen] = useState(false);
   const [reversingCallOutcome, setReversingCallOutcome] = useState(false);
   const [resending, setResending] = useState(false);
@@ -723,7 +736,12 @@ function Loaded({
           appt.status !== 'no_show' && appt.status !== 'complete' ? (
           <GenerateMeetLinkCard appointmentId={appt.id} currentHostId={appt.meet_host_id} onCreated={onChanged} />
         ) : isVoiceCallAppt ? (
-          <VoiceCallActionCard patientPhone={appt.patient.phone} />
+          <VoiceCallActionCard
+            appointmentId={appt.id}
+            patientId={appt.patient_id}
+            patientPhone={appt.patient.phone}
+            patientName={fullName}
+          />
         ) : null}
         <BookingFactsCard appt={appt} />
         {isVoiceCallAppt ? (

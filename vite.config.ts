@@ -126,6 +126,7 @@ function mainOrLegacyConfig(): UserConfig {
             'react-vendor': ['react', 'react-dom', 'react-router-dom'],
             supabase: ['@supabase/supabase-js'],
             stripe: ['@stripe/stripe-js'],
+            'twilio-voice': ['@twilio/voice-sdk'],
             icons: ['lucide-react'],
           },
         },

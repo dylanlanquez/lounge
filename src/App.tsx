@@ -11,8 +11,10 @@ import { theme } from './theme/index.ts';
 import { Button } from './components/Button/Button.tsx';
 import { BottomNav } from './components/BottomNav/BottomNav.tsx';
 import { KioskStatusBar } from './components/KioskStatusBar/KioskStatusBar.tsx';
+import { CallBar } from './components/CallBar/CallBar.tsx';
 import { WalkthroughProvider } from './components/Walkthrough/Walkthrough.tsx';
 import { VoiceCallModeProvider } from './lib/voiceCallMode.tsx';
+import { ActiveCallProvider } from './lib/activeCall.tsx';
 import { MarketingWalkthroughAutoStart } from './lib/walkthroughs/marketingWalkthrough.tsx';
 import { ErrorBoundary } from './components/ErrorBoundary/ErrorBoundary.tsx';
 import { lazyWithRetry } from './lib/lazyWithRetry.ts';
@@ -114,6 +116,14 @@ export function App() {
             the status bar and the bottom nav too, and the profile sheet
             inside KioskStatusBar needs its "Lock" control. */}
         <IdleLockProvider>
+        {/* ActiveCallProvider wraps VoiceCallModeProvider from the
+            outside: the softphone Device and CallBar must work
+            regardless of which UI mode is active (the "Call patient"
+            button only ever appears on a voice-call appointment page
+            in the first place), and it needs CurrentAccountProvider
+            above it to attribute a placed call to the right staff
+            account. */}
+        <ActiveCallProvider>
         {/* VoiceCallModeProvider reads the account (is the signed-in
             staff member a voice call agent?) and hands the Clinic /
             Voice calls switch state to the top bar, the bottom nav,
@@ -122,11 +132,13 @@ export function App() {
           <WalkthroughProvider>
             <MarketingWalkthroughAutoStart />
             <KioskStatusBar />
+            <CallBar />
             <ScrollToTop />
             <RoutedErrorBoundary />
             <BottomNav />
           </WalkthroughProvider>
         </VoiceCallModeProvider>
+        </ActiveCallProvider>
         </IdleLockProvider>
       </CurrentAccountProvider>
     </AuthProvider>
