@@ -167,10 +167,10 @@ function CallRecordEntry({ entry, isLatest }: { entry: VoiceCallLogRow; isLatest
                 alignItems: 'center',
                 gap: theme.space[2],
                 height: 32,
-                padding: `0 ${theme.space[3]}px`,
+                padding: `0 ${theme.space[3]}px 0 ${theme.space[2]}px`,
                 borderRadius: theme.radius.pill,
-                border: `1px solid ${theme.color.border}`,
-                background: theme.color.surface,
+                border: `1px solid ${theme.category.voiceCall}33`,
+                background: `${theme.category.voiceCall}0D`,
                 color: theme.category.voiceCall,
                 fontFamily: 'inherit',
                 fontSize: theme.type.size.xs,
@@ -179,8 +179,8 @@ function CallRecordEntry({ entry, isLatest }: { entry: VoiceCallLogRow; isLatest
                 opacity: recordingState === 'loading' ? 0.7 : 1,
               }}
             >
-              <PlayCircle size={14} aria-hidden />
-              {recordingState === 'loading' ? 'Loading…' : 'Play recording'}
+              <PlayCircle size={15} aria-hidden />
+              {recordingState === 'loading' ? 'Loading recording…' : 'Play recording'}
             </button>
           )}
           {recordingState === 'error' && recordingError ? (
@@ -192,6 +192,10 @@ function CallRecordEntry({ entry, isLatest }: { entry: VoiceCallLogRow; isLatest
       ) : entry.recording_status === 'deleted' ? (
         <p style={{ margin: `${theme.space[2]}px 0 0`, fontSize: theme.type.size.xs, color: theme.color.inkSubtle, fontStyle: 'italic' }}>
           Recording and transcript removed after the retention period.
+        </p>
+      ) : entry.recording_status === 'pending' ? (
+        <p style={{ margin: `${theme.space[2]}px 0 0`, fontSize: theme.type.size.xs, color: theme.color.inkMuted }}>
+          Recording…
         </p>
       ) : null}
 
@@ -228,6 +232,7 @@ function CallRecordEntry({ entry, isLatest }: { entry: VoiceCallLogRow; isLatest
                 margin: `${theme.space[2]}px 0 0`,
                 padding: theme.space[3],
                 borderRadius: theme.radius.input,
+                borderLeft: `3px solid ${theme.color.border}`,
                 background: theme.color.bg,
                 fontSize: theme.type.size.sm,
                 color: theme.color.ink,

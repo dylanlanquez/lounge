@@ -708,12 +708,20 @@ function Loaded({
           />
         </div>
       ) : null}
-      <div style={{ marginTop: theme.space[5] }}>
-        <StaffNotesCard
-          appointmentId={appt.id}
-          patientId={appt.patient_id ?? null}
-        />
-      </div>
+      {/* For a voice call, Staff notes moves down to sit right above
+          the Timeline instead — the top of the page leads with the
+          actionable Voice call card, and the two read-back sections
+          (the human note, the automatic audit trail) stay grouped
+          together at the foot of the page. Every other appointment
+          type keeps notes in the hero position. */}
+      {!isVoiceCallAppt ? (
+        <div style={{ marginTop: theme.space[5] }}>
+          <StaffNotesCard
+            appointmentId={appt.id}
+            patientId={appt.patient_id ?? null}
+          />
+        </div>
+      ) : null}
 
       <section
         style={{
@@ -988,6 +996,15 @@ function Loaded({
         </section>
       ) : null}
 
+      {isVoiceCallAppt ? (
+        <div style={{ marginTop: theme.space[5] }}>
+          <StaffNotesCard
+            appointmentId={appt.id}
+            patientId={appt.patient_id ?? null}
+          />
+        </div>
+      ) : null}
+
       <section style={{ marginTop: theme.space[5] }}>
         {/* ContinuousTimeline drives both pre- and post-arrival pages,
             so the patient's audit trail reads as one stream regardless
@@ -1166,6 +1183,11 @@ function Hero({
 }) {
   const navigate = useNavigate();
   const { account: currentAccount } = useCurrentAccount();
+  // A voice call has no physical location or meeting link, so its
+  // Booking details card would otherwise hold nothing but the
+  // patient's email — not worth a whole card. Surfaced in the hero's
+  // subtitle instead, right under the ref line.
+  const isVoiceCallAppt = isVoiceCall(appt);
   // Sheet state for the phase timeline. Lives in the hero because
   // the "Estimated appointment length" affordance lives in the
   // hero's timeLine. Sheet itself renders via portal so DOM position
@@ -1286,6 +1308,12 @@ function Hero({
         >
           Booked through Checkpoint
           {appt.created_via_actor ? ` by ${appt.created_via_actor}` : ''}
+        </span>
+      ) : null}
+      {isVoiceCallAppt && appt.patient.email ? (
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: theme.color.inkMuted }}>
+          <Mail size={12} aria-hidden />
+          {appt.patient.email}
         </span>
       ) : null}
     </span>
@@ -2226,7 +2254,11 @@ function BookingFactsCard({ appt }: { appt: AppointmentDetailRow }) {
     ? [properCase(appt.staff.first_name), properCase(appt.staff.last_name)].filter(Boolean).join(' ').trim()
     : null;
 
-  const hasContent = !!locationLine || !!staffLine || !!appt.patient.email;
+  // A voice call's email now lives in the hero subtitle instead (see
+  // Hero's refLine) — leaving it here too would either duplicate it
+  // or, for the common case of no location/staff, leave this card
+  // holding nothing but that one row.
+  const hasContent = !!locationLine || !!staffLine || (!isVoiceCallAppt && !!appt.patient.email);
   if (!hasContent) return null;
 
   const rows: Array<{ icon: ReactNode; label: string; value: ReactNode }> = [];
@@ -2254,7 +2286,7 @@ function BookingFactsCard({ appt }: { appt: AppointmentDetailRow }) {
   if (staffLine) {
     rows.push({ icon: <UserCheck size={13} aria-hidden />, label: 'Staff', value: staffLine });
   }
-  if (appt.patient.email) {
+  if (appt.patient.email && !isVoiceCallAppt) {
     rows.push({ icon: <Mail size={13} aria-hidden />, label: 'Patient email', value: appt.patient.email });
   }
 
