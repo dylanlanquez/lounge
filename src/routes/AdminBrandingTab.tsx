@@ -5,6 +5,7 @@ import {
   CreditCard,
   Image as ImageIcon,
   Mail,
+  Mic,
   Scale,
   TestTube2,
   Trash2,
@@ -101,6 +102,7 @@ export function AdminBrandingTab() {
           <LegalCard data={settings.data} onRefresh={settings.refresh} onToast={setToast} />
           <VirtualMeetingCard data={settings.data} onRefresh={settings.refresh} onToast={setToast} />
           <StripeModeCard data={settings.data} onRefresh={settings.refresh} onToast={setToast} />
+          <RecordingCard data={settings.data} onRefresh={settings.refresh} onToast={setToast} />
         </>
       )}
 
@@ -1280,6 +1282,195 @@ function StripeModeCard({
             Real cards will fail. Remember to flip back to Live mode when you're done testing.
           </p>
         ) : null}
+      </div>
+    </Section>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Recording card — off by default. Recording and transcribing patient
+// phone calls makes Twilio a processor of real conversation content,
+// not just delivery metadata, which docs/02-data-protection.md does
+// not yet account for (no processor entry, no DPIA risk entry, no
+// documented retention period for audio). This toggle is the one
+// thing standing between "built" and "actually recording real
+// patients" — leave it off until that review is done.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function RecordingCard({
+  data,
+  onRefresh,
+  onToast,
+}: {
+  data: ClinicSettings;
+  onRefresh: () => void;
+  onToast: (t: Toast) => void;
+}) {
+  const [noticeText, setNoticeText] = useState(data.recordingNoticeText);
+  const [saving, setSaving] = useState(false);
+  const [savingNotice, setSavingNotice] = useState(false);
+
+  useEffect(() => {
+    setNoticeText(data.recordingNoticeText);
+  }, [data.recordingNoticeText]);
+
+  const noticeDirty = noticeText !== data.recordingNoticeText;
+
+  const onToggle = async (nextEnabled: boolean) => {
+    if (saving) return;
+    setSaving(true);
+    try {
+      await saveClinicSetting('recordingEnabled', nextEnabled);
+      onRefresh();
+      onToast({
+        tone: nextEnabled ? 'success' : 'success',
+        title: nextEnabled ? 'Call recording turned on' : 'Call recording turned off',
+        description: nextEnabled
+          ? 'New calls will be recorded and transcribed. Confirm the compliance review (docs/02-data-protection.md) is done before relying on this with real patients.'
+          : 'New calls will no longer be recorded.',
+      });
+    } catch (e) {
+      onToast({
+        tone: 'error',
+        title: 'Could not change recording setting',
+        description: e instanceof Error ? e.message : 'Unknown error',
+      });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const onSaveNotice = async () => {
+    setSavingNotice(true);
+    try {
+      await saveClinicSetting('recordingNoticeText', noticeText.trim());
+      onRefresh();
+      onToast({ tone: 'success', title: 'Recording notice saved' });
+    } catch (e) {
+      onToast({
+        tone: 'error',
+        title: 'Could not save the recording notice',
+        description: e instanceof Error ? e.message : 'Unknown error',
+      });
+    } finally {
+      setSavingNotice(false);
+    }
+  };
+
+  const enabled = data.recordingEnabled;
+
+  return (
+    <Section
+      icon={<Mic size={16} aria-hidden />}
+      title="Call recording"
+      description="Records and transcribes voice calls placed through the softphone, playable from the Call record card. Off by default — this makes Twilio a processor of real patient conversations, which needs its own compliance review before it's switched on."
+    >
+      <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: theme.space[3],
+            padding: theme.space[3],
+            borderRadius: theme.radius.card,
+            border: `1px solid ${enabled ? '#d97706' : theme.color.border}`,
+            background: enabled ? 'rgba(245, 158, 11, 0.08)' : theme.color.bg,
+          }}
+        >
+          <span
+            aria-hidden
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              width: 40,
+              height: 40,
+              borderRadius: '50%',
+              background: enabled ? '#d97706' : theme.color.inkSubtle,
+              color: '#fff',
+              flexShrink: 0,
+            }}
+          >
+            <Mic size={18} aria-hidden />
+          </span>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <p
+              style={{
+                margin: 0,
+                fontSize: theme.type.size.md,
+                fontWeight: theme.type.weight.semibold,
+                color: theme.color.ink,
+                letterSpacing: theme.type.tracking.tight,
+              }}
+            >
+              {enabled ? 'Recording is on' : 'Recording is off'}
+            </p>
+            <p
+              style={{
+                margin: `${theme.space[1]}px 0 0`,
+                fontSize: theme.type.size.sm,
+                color: theme.color.inkMuted,
+                lineHeight: theme.type.leading.snug,
+              }}
+            >
+              {enabled
+                ? 'Every new call is recorded and transcribed. The patient hears the notice below before their leg joins.'
+                : 'No calls are recorded. Nothing changes for staff or patients until this is turned on.'}
+            </p>
+          </div>
+          <Toggle checked={enabled} disabled={saving} onChange={onToggle} />
+        </div>
+        {enabled ? (
+          <p
+            style={{
+              margin: 0,
+              padding: `${theme.space[2]}px ${theme.space[3]}px`,
+              fontSize: theme.type.size.xs,
+              color: '#92400e',
+              background: 'rgba(245, 158, 11, 0.12)',
+              border: '1px solid rgba(245, 158, 11, 0.35)',
+              borderRadius: theme.radius.input,
+              lineHeight: theme.type.leading.snug,
+            }}
+          >
+            ⚠ Confirm docs/02-data-protection.md has been updated (Twilio as a processor, a DPIA entry,
+            a retention period) before relying on this with real patient calls.
+          </p>
+        ) : null}
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
+          <label
+            htmlFor="recording-notice-text"
+            style={{ fontSize: theme.type.size.sm, fontWeight: theme.type.weight.medium, color: theme.color.ink }}
+          >
+            Recording notice
+          </label>
+          <p style={{ margin: 0, fontSize: theme.type.size.xs, color: theme.color.inkMuted }}>
+            Spoken to the patient, not the agent, before their leg joins the call. Placeholder wording — confirm
+            with a legal reviewer before this is heard by a real patient.
+          </p>
+          <textarea
+            id="recording-notice-text"
+            value={noticeText}
+            onChange={(e) => setNoticeText(e.target.value)}
+            rows={3}
+            style={{
+              width: '100%',
+              resize: 'vertical',
+              minHeight: 72,
+              border: `1px solid ${theme.color.border}`,
+              borderRadius: theme.radius.input,
+              padding: theme.space[3],
+              fontFamily: 'inherit',
+              fontSize: theme.type.size.base,
+              lineHeight: theme.type.leading.normal,
+              color: theme.color.ink,
+              background: theme.color.surface,
+              outline: 'none',
+            }}
+          />
+          <SaveRow dirty={noticeDirty} saving={savingNotice} onSave={onSaveNotice} onReset={() => setNoticeText(data.recordingNoticeText)} />
+        </div>
       </div>
     </Section>
   );

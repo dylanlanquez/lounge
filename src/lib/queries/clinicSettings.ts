@@ -68,6 +68,11 @@ export interface ClinicSettings {
   registeredAddress: string;
   // Virtual meetings
   virtualHostEmail: string;
+  // Voice call recording — off until the Twilio processor/DPIA
+  // update to docs/02-data-protection.md is signed off. See
+  // AdminBrandingTab's RecordingCard.
+  recordingEnabled: boolean;
+  recordingNoticeText: string;
 }
 
 const DEFAULT_OPENING: OpeningHoursWeek = [
@@ -98,6 +103,8 @@ const DEFAULTS: ClinicSettings = {
   vatNumber: '',
   registeredAddress: '',
   virtualHostEmail: '',
+  recordingEnabled: false,
+  recordingNoticeText: 'This call may be recorded and transcribed for quality and training purposes.',
 };
 
 /** Storage key → ClinicSettings field name. Keep in lockstep with
@@ -121,6 +128,8 @@ const KEY_MAP = {
   'legal.vat_number': 'vatNumber',
   'legal.registered_address': 'registeredAddress',
   'virtual.host_email': 'virtualHostEmail',
+  'voice_call.recording_enabled': 'recordingEnabled',
+  'voice_call.recording_notice': 'recordingNoticeText',
 } as const satisfies Record<string, keyof ClinicSettings>;
 
 type SettingsKey = keyof typeof KEY_MAP;

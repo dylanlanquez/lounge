@@ -96,3 +96,28 @@ verify_jwt = false
 #   reasoning as every other Twilio webhook here.
 [functions.twilio-voice-conference-status]
 verify_jwt = false
+
+# twilio-voice-recording-status
+#   Public recordingStatusCallback for the Conference recording. Same
+#   reasoning as every other Twilio webhook here — no Authorization
+#   header from Twilio, gated by X-Twilio-Signature instead.
+[functions.twilio-voice-recording-status]
+verify_jwt = false
+
+# twilio-voice-transcription-status
+#   Public TranscriptionCallback, requested by
+#   twilio-voice-recording-status. Same reasoning as every other
+#   Twilio webhook here.
+[functions.twilio-voice-transcription-status]
+verify_jwt = false
+
+# voice-recording-retention-sweep
+#   Cron-driven daily sweep that deletes recordings/transcripts past
+#   the retention window. Same key-system mismatch as
+#   meet-attendance-sweep: the service-role bearer is an opaque
+#   token, not a platform-verifiable JWT, so the platform's
+#   verify_jwt = true would reject every run with
+#   UNAUTHORIZED_INVALID_JWT_FORMAT. The function's own auth
+#   (decoded-bearer role + project-ref check) is the real gate.
+[functions.voice-recording-retention-sweep]
+verify_jwt = false
