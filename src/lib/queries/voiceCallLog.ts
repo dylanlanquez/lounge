@@ -39,6 +39,14 @@ export function voiceCallOutcomeLabel(outcome: string): string {
   return VOICE_CALL_OUTCOMES.find((o) => o.value === outcome)?.label ?? outcome;
 }
 
+// A voice call's missed outcomes reuse the shared 'no_show' patient_event
+// type (see logVoiceCallOutcome below), so the timeline needs a way to
+// tell "clinic no-show" and "call not reached" apart by payload.reason
+// alone, since both land on the same event_type.
+export function isVoiceCallOutcome(reason: string | null): reason is VoiceCallOutcome {
+  return reason != null && VOICE_CALL_OUTCOMES.some((o) => o.value === reason);
+}
+
 export function voiceCallOutcomeTone(outcome: string): 'good' | 'bad' | 'warn' {
   return VOICE_CALL_OUTCOMES.find((o) => o.value === outcome)?.tone ?? 'warn';
 }

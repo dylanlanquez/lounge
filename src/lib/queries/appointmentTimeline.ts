@@ -5,6 +5,7 @@ import { useStaleQueryLoading } from '../useStaleQueryLoading.ts';
 import { useRealtimeRefresh } from '../useRealtimeRefresh.ts';
 import type { TimelineEvent, TimelineFact, TimelineTone } from './visitTimeline.ts';
 import { humaniseCancelReason } from './visits.ts';
+import { voiceCallOutcomeLabel, isVoiceCallOutcome } from './voiceCallLog.ts';
 import { fmtTzAbbr } from '../dateFormat.ts';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -680,6 +681,22 @@ function mapEvent(
 
     case 'no_show': {
       const reason = readString(row.payload, 'reason');
+      if (isVoiceCallOutcome(reason)) {
+        // A voice call that wasn't reached. Reuses 'no_show' as the
+        // event_type (see logVoiceCallOutcome), but the reason vocabulary
+        // is the call outcome list, not the clinic no-show list, so it
+        // needs its own title and label lookup rather than
+        // humaniseCancelReason.
+        const note = readString(row.payload, 'note');
+        return {
+          ...base,
+          type: 'patient_event',
+          title: `Call outcome: ${voiceCallOutcomeLabel(reason)}`,
+          detail: note ?? undefined,
+          hint: 'flag',
+          tone: 'warn',
+        };
+      }
       const wasVirtual = readBool(row.payload, 'was_virtual');
       const joinedBefore = readBool(row.payload, 'joined_before_no_show');
       const detail = joinDetail(
@@ -706,6 +723,18 @@ function mapEvent(
         hint: 'check',
         tone: 'accent',
       };
+
+    case 'voice_call_answered': {
+      const note = readString(row.payload, 'note');
+      return {
+        ...base,
+        type: 'patient_event',
+        title: 'Call answered',
+        detail: note ?? undefined,
+        hint: 'check',
+        tone: 'accent',
+      };
+    }
 
     case 'virtual_meeting_joined':
       return {
