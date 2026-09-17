@@ -201,6 +201,18 @@ export function ActiveCallProvider({ children }: { children: ReactNode }) {
       try {
         await ensureMicrophoneAccess();
 
+        // A redial on this same appointment (no answer, tried again,
+        // etc) leaves its earlier attempt's session row open forever
+        // if that attempt never reached a Twilio-reported terminal
+        // status — closing every other still-open session for this
+        // appointment before starting a new one keeps Admin -> Calls'
+        // "Live now" panel from showing a superseded attempt as
+        // though it were still happening.
+        await supabase.rpc('lng_close_stale_voice_call_sessions', {
+          p_appointment_id: args.appointmentId,
+          p_except_session_id: null,
+        });
+
         const { data: session, error: sessionErr } = await supabase
           .from('lng_voice_call_sessions')
           .insert({

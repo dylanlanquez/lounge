@@ -451,6 +451,17 @@ export async function logVoiceCallOutcome(args: {
       p_status: SESSION_CLOSE_STATUS[args.outcome],
     });
   }
+  // Belt and braces: an outcome logged manually (no sessionId, the
+  // "Log this call" flow off the appointment page rather than fresh
+  // off the softphone) or a redial abandoned without ever starting a
+  // new call both leave earlier attempts on this appointment open.
+  // Logging any outcome means the whole call effort for this
+  // appointment is done, so every other still-open session for it
+  // gets closed here too, not just the one this outcome names.
+  await supabase.rpc('lng_close_stale_voice_call_sessions', {
+    p_appointment_id: args.appointmentId,
+    p_except_session_id: args.sessionId ?? null,
+  });
 
   return { status, logWriteFailed };
 }
