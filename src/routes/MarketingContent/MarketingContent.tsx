@@ -1,6 +1,6 @@
-import { type CSSProperties, useEffect, useRef, useState } from 'react';
-import { ChevronDown, ChevronLeft, ChevronRight, ImageOff, Megaphone } from 'lucide-react';
-import { Card, EmptyState, Skeleton, StatCard } from '../../components/index.ts';
+import { type CSSProperties, useEffect, useMemo, useRef, useState } from 'react';
+import { CalendarSearch, ChevronDown, ChevronLeft, ChevronRight, ImageOff, Megaphone } from 'lucide-react';
+import { Button, Card, DateRangePicker, EmptyState, Skeleton, StatCard } from '../../components/index.ts';
 import { PhotoLightbox, type LightboxPhoto } from '../../components/PhotoLightbox/PhotoLightbox.tsx';
 import { BOTTOM_NAV_HEIGHT } from '../../components/BottomNav/BottomNav.tsx';
 import { KIOSK_STATUS_BAR_HEIGHT } from '../../components/KioskStatusBar/KioskStatusBar.tsx';
@@ -8,6 +8,12 @@ import { theme } from '../../theme/index.ts';
 import { useIsMobile } from '../../lib/useIsMobile.ts';
 import { formatDateLongOrdinal } from '../../lib/dateFormat.ts';
 import { signedUrlFor, type SignedUrlTransform } from '../../lib/queries/patientFiles.ts';
+import {
+  type DateRange,
+  dateRangeLabel,
+  dateRangeToUtcBounds,
+  defaultDateRange,
+} from '../../lib/dateRange.ts';
 import {
   type MarketingAppointment,
   type MarketingKind,
@@ -282,8 +288,8 @@ function AppointmentRow({ appt }: { appt: MarketingAppointment }) {
         aria-expanded={open}
         style={{
           display: 'flex',
-          alignItems: 'center',
-          gap: theme.space[3],
+          flexDirection: 'column',
+          gap: theme.space[2],
           padding: `${theme.space[3]}px 0`,
           width: '100%',
           background: 'none',
@@ -294,59 +300,61 @@ function AppointmentRow({ appt }: { appt: MarketingAppointment }) {
           fontFamily: 'inherit',
         }}
       >
-        <div style={{ flex: '1 1 0', minWidth: 0 }}>
-          <p
-            style={{
-              margin: 0,
-              fontSize: theme.type.size.base,
-              fontWeight: theme.type.weight.medium,
-              color: theme.color.ink,
-              whiteSpace: 'nowrap',
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-            }}
-          >
-            {appt.patientName}
-          </p>
-          {meta && (
+        {/* Name + chevron share a row, chips get their own row below.
+            An appointment with three chips (before/after/marketing) on
+            a phone-width screen used to share the name's row, and the
+            name column would collapse to nothing rather than truncate.
+            Splitting the rows means the chip count can never push the
+            patient's name off the card. */}
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: theme.space[3] }}>
+          <div style={{ flex: '1 1 auto', minWidth: 0 }}>
             <p
               style={{
-                margin: '2px 0 0',
-                fontSize: theme.type.size.sm,
-                color: theme.color.inkMuted,
+                margin: 0,
+                fontSize: theme.type.size.base,
+                fontWeight: theme.type.weight.medium,
+                color: theme.color.ink,
                 whiteSpace: 'nowrap',
                 overflow: 'hidden',
                 textOverflow: 'ellipsis',
               }}
             >
-              {meta}
+              {appt.patientName}
             </p>
-          )}
+            {meta && (
+              <p
+                style={{
+                  margin: '2px 0 0',
+                  fontSize: theme.type.size.sm,
+                  color: theme.color.inkMuted,
+                  whiteSpace: 'nowrap',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                }}
+              >
+                {meta}
+              </p>
+            )}
+          </div>
+          <ChevronDown
+            size={18}
+            aria-hidden
+            style={{
+              flexShrink: 0,
+              marginTop: 2,
+              color: theme.color.inkSubtle,
+              transition: `transform ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
+              transform: open ? 'rotate(180deg)' : 'none',
+            }}
+          />
         </div>
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: theme.space[2],
-            flexShrink: 0,
-          }}
-        >
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: theme.space[2] }}>
           {kindCounts(appt.photos).map(({ kind, count }) => (
             <span key={kind} style={kindChipStyle(kind)}>
               {count} {KIND_LABEL[kind]}
             </span>
           ))}
         </div>
-        <ChevronDown
-          size={18}
-          aria-hidden
-          style={{
-            flexShrink: 0,
-            color: theme.color.inkSubtle,
-            transition: `transform ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
-            transform: open ? 'rotate(180deg)' : 'none',
-          }}
-        />
       </button>
 
       {open && (
@@ -457,6 +465,25 @@ function HeroFeatured({
 export function MarketingContent() {
   const isMobile = useIsMobile(640);
   const { data, loading, error } = useMarketingContent();
+  const [range, setRange] = useState<DateRange | null>(() => defaultDateRange());
+
+  // The gallery keeps every photo ever captured, so the list of
+  // appointments only grows. Scope the browsable list to the selected
+  // range (by appointment date, not upload date) so a clinic running
+  // for years doesn't turn this into an endless scroll. Defaults to
+  // the last 30 days; "All time" (range === null) removes the filter.
+  const filteredAppointments = useMemo(() => {
+    if (!data) return [];
+    if (!range) return data.appointments;
+    const { fromIso, toIso } = dateRangeToUtcBounds(range);
+    const from = new Date(fromIso).getTime();
+    const to = new Date(toIso).getTime();
+    return data.appointments.filter((a) => {
+      if (!a.startAt) return false;
+      const t = new Date(a.startAt).getTime();
+      return t >= from && t <= to;
+    });
+  }, [data, range]);
 
   return (
     <main
@@ -543,32 +570,65 @@ export function MarketingContent() {
               <div
                 style={{
                   display: 'flex',
+                  flexWrap: 'wrap',
                   justifyContent: 'space-between',
-                  alignItems: 'baseline',
-                  marginBottom: theme.space[1],
+                  alignItems: isMobile ? 'stretch' : 'center',
+                  gap: theme.space[3],
+                  marginBottom: theme.space[4],
                 }}
               >
-                <h2
-                  style={{
-                    margin: 0,
-                    fontSize: theme.type.size.lg,
-                    fontWeight: theme.type.weight.semibold,
-                    letterSpacing: theme.type.tracking.tight,
-                    color: theme.color.ink,
-                  }}
-                >
-                  Every appointment
-                </h2>
-                <span style={{ fontSize: theme.type.size.sm, color: theme.color.inkMuted }}>
-                  {data.totalAppointments}{' '}
-                  {data.totalAppointments === 1 ? 'appointment' : 'appointments'}
-                </span>
+                <div>
+                  <h2
+                    style={{
+                      margin: 0,
+                      fontSize: theme.type.size.lg,
+                      fontWeight: theme.type.weight.semibold,
+                      letterSpacing: theme.type.tracking.tight,
+                      color: theme.color.ink,
+                    }}
+                  >
+                    Every appointment
+                  </h2>
+                  <p
+                    style={{
+                      margin: `${theme.space[1]}px 0 0`,
+                      fontSize: theme.type.size.sm,
+                      color: theme.color.inkMuted,
+                    }}
+                  >
+                    {filteredAppointments.length}{' '}
+                    {filteredAppointments.length === 1 ? 'appointment' : 'appointments'} ·{' '}
+                    {range ? dateRangeLabel(range) : 'All time'}
+                  </p>
+                </div>
+                <DateRangePicker
+                  value={range}
+                  onChange={setRange}
+                  onClear={() => setRange(null)}
+                  placeholder="All time"
+                  size={isMobile ? 'sm' : 'md'}
+                />
               </div>
-              <div>
-                {data.appointments.map((appt) => (
-                  <AppointmentRow key={appt.appointmentId} appt={appt} />
-                ))}
-              </div>
+              {filteredAppointments.length === 0 ? (
+                <EmptyState
+                  icon={<CalendarSearch size={20} />}
+                  title="No appointments in this range"
+                  description={`No before and after or marketing photos were captured in ${
+                    range ? dateRangeLabel(range).toLowerCase() : 'this range'
+                  }. Widen the date range to see older appointments.`}
+                  action={
+                    <Button variant="secondary" size="sm" onClick={() => setRange(null)}>
+                      Show all time
+                    </Button>
+                  }
+                />
+              ) : (
+                <div>
+                  {filteredAppointments.map((appt) => (
+                    <AppointmentRow key={appt.appointmentId} appt={appt} />
+                  ))}
+                </div>
+              )}
             </Card>
           </div>
         )}
