@@ -2132,6 +2132,7 @@ export function VisitDetail() {
                     loading={galleryFilesLoading}
                     refresh={refreshGalleryFiles}
                     isMobile={isMobile}
+                    appointmentId={visit.appointment_id}
                   />
                   <MarketingGallery
                     patient={patient}
@@ -2139,6 +2140,7 @@ export function VisitDetail() {
                     loading={galleryFilesLoading}
                     refresh={refreshGalleryFiles}
                     isMobile={isMobile}
+                    appointmentId={visit.appointment_id}
                   />
                   <ContinuousTimeline
                     appointmentId={visit.appointment_id ?? null}

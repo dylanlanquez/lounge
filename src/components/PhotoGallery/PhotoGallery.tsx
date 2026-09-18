@@ -78,6 +78,12 @@ interface CommonProps {
   // When true, hide all upload affordances. Used on the patient
   // profile so staff upload exclusively from the appointment page.
   readOnly?: boolean;
+  // The appointment this gallery is showing on. Stamped onto every
+  // upload as source_appointment_id so the /marketing page (which
+  // groups photos by appointment) can find them. Omitted on the
+  // patient profile, which has no single appointment in scope, but
+  // that's fine there since readOnly hides uploads anyway.
+  appointmentId?: string | null;
 }
 
 export function BeforeAfterGallery({
@@ -87,6 +93,7 @@ export function BeforeAfterGallery({
   refresh,
   isMobile,
   readOnly = false,
+  appointmentId = null,
 }: CommonProps) {
   const items = useMemo<GalleryItem[]>(() => {
     return files
@@ -123,6 +130,7 @@ export function BeforeAfterGallery({
           : 'Snap a before photo at arrival and an after photo at collection.'
       }
       readOnly={readOnly}
+      appointmentId={appointmentId}
     />
   );
 }
@@ -134,6 +142,7 @@ export function MarketingGallery({
   refresh,
   isMobile,
   readOnly = false,
+  appointmentId = null,
 }: CommonProps) {
   const items = useMemo<GalleryItem[]>(
     () => files.filter((f) => f.status === 'active' && f.label_key === LABEL_MARKETING),
@@ -158,6 +167,7 @@ export function MarketingGallery({
           : 'Photos uploaded here are available to the marketing team for content and case studies.'
       }
       readOnly={readOnly}
+      appointmentId={appointmentId}
     />
   );
 }
@@ -176,6 +186,7 @@ function GalleryCard({
   emptyTitle,
   emptyDescription,
   readOnly = false,
+  appointmentId = null,
 }: {
   icon: ReactNode;
   title: string;
@@ -192,6 +203,7 @@ function GalleryCard({
   emptyTitle: string;
   emptyDescription: string;
   readOnly?: boolean;
+  appointmentId?: string | null;
 }) {
   const [openIndex, setOpenIndex] = useState<number | null>(null);
   const [busyKey, setBusyKey] = useState<string | null>(null);
@@ -225,6 +237,7 @@ function GalleryCard({
         labelKey,
         labelDisplayName: LABEL_DISPLAY[labelKey] ?? labelKey,
         uploaderAccountId: (accId as string | null) ?? null,
+        sourceAppointmentId: appointmentId,
       });
       refresh();
     } catch (e) {
