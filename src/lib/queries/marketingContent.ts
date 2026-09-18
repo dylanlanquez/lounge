@@ -37,6 +37,7 @@ export const KIND_LABEL: Record<MarketingKind, string> = {
 export interface McFileRow {
   id: string;
   file_url: string;
+  lng_thumbnail_path: string | null;
   file_name: string | null;
   uploaded_at: string;
   source_appointment_id: string;
@@ -63,7 +64,8 @@ export interface McPatientRow {
 
 export interface MarketingPhoto {
   id: string;
-  filePath: string; // patient_files.file_url — a storage path, signed on demand
+  filePath: string; // patient_files.file_url — the original, signed on demand for the lightbox
+  thumbnailPath: string | null; // lng_thumbnail_path — a small JPEG for the grid/strip, falls back to filePath when null
   fileName: string;
   kind: MarketingKind;
   uploadedAt: string;
@@ -116,6 +118,7 @@ export function aggregateMarketingContent(
     const photo: MarketingPhoto = {
       id: f.id,
       filePath: f.file_url,
+      thumbnailPath: f.lng_thumbnail_path,
       fileName: f.file_name ?? 'Photo',
       kind,
       uploadedAt: f.uploaded_at,
@@ -225,7 +228,9 @@ export function useMarketingContent(): MarketingContentResult {
 
         const fileRes = await supabase
           .from('patient_files')
-          .select('id, file_url, file_name, uploaded_at, source_appointment_id, patient_id, label_id')
+          .select(
+            'id, file_url, lng_thumbnail_path, file_name, uploaded_at, source_appointment_id, patient_id, label_id',
+          )
           .eq('status', 'active')
           .in('label_id', labelIds)
           .not('source_appointment_id', 'is', null)
@@ -235,6 +240,7 @@ export function useMarketingContent(): MarketingContentResult {
         const files: McFileRow[] = (fileRes.data ?? []).map((r) => ({
           id: r.id as string,
           file_url: r.file_url as string,
+          lng_thumbnail_path: r.lng_thumbnail_path as string | null,
           file_name: r.file_name as string | null,
           uploaded_at: r.uploaded_at as string,
           source_appointment_id: r.source_appointment_id as string,

@@ -38,6 +38,7 @@ function file(key: string, id: string, uploaded_at: string): PatientFileEntry {
     uploaded_by_name: 'Staff',
     version: 1,
     thumbnail_path: null,
+    lng_thumbnail_path: null,
   };
 }
 

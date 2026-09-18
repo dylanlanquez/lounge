@@ -16,6 +16,7 @@ function file(
   return {
     id,
     file_url: `case-files/${id}.jpg`,
+    lng_thumbnail_path: null,
     file_name: `${id}.jpg`,
     uploaded_at: uploadedAt,
     source_appointment_id: apptId,

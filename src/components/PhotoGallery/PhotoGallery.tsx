@@ -19,18 +19,9 @@ import { fmtTzAbbr } from '../../lib/dateFormat.ts';
 import { useScrollLock } from '../../lib/useScrollLock.ts';
 import {
   setPatientFileLabel,
-  signedUrlFor,
   uploadPatientFile,
-  type SignedUrlTransform,
+  useSignedPhotoUrl,
 } from '../../lib/queries/patientFiles.ts';
-
-// Case-file photos come straight off a phone camera, often 1.5-2MB
-// apiece. Signing and serving that untouched for a small grid tile or
-// even the lightbox is needless weight, so both request a downscaled
-// render from Storage. See signedUrlFor's docstring for the fallback
-// when transformation isn't enabled on the project's plan.
-const TILE_TRANSFORM: SignedUrlTransform = { width: 480, height: 480, quality: 70, resize: 'cover' };
-const LIGHTBOX_TRANSFORM: SignedUrlTransform = { width: 1800, height: 1800, quality: 85 };
 import {
   type PatientFileEntry,
 } from '../../lib/queries/patientProfile.ts';
@@ -482,29 +473,10 @@ function PhotoTile({
   relabelling?: boolean;
   onRelabel?: (item: GalleryItem, labelKey: string) => void;
 }) {
-  const [url, setUrl] = useState<string | null>(null);
-  const [failed, setFailed] = useState(false);
+  const { url, failed, onImgError } = useSignedPhotoUrl(item.lng_thumbnail_path ?? item.file_url);
   // Only the label this photo is not already on, so a before/after
   // photo has exactly one target and the control needs no menu.
   const swapTo = relabelTo.find((o) => o.labelKey !== item.label_key) ?? null;
-
-  useEffect(() => {
-    let cancelled = false;
-    setUrl(null);
-    setFailed(false);
-    (async () => {
-      const signed = await signedUrlFor(item.file_url, 300, TILE_TRANSFORM);
-      if (cancelled) return;
-      if (!signed) {
-        setFailed(true);
-        return;
-      }
-      setUrl(signed);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [item.file_url]);
 
   return (
     <div style={{ position: 'relative' }}>
@@ -533,7 +505,7 @@ function PhotoTile({
             alt=""
             loading="lazy"
             style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
-            onError={() => setFailed(true)}
+            onError={onImgError}
           />
         ) : failed ? (
           <span
@@ -677,23 +649,7 @@ function PhotoLightbox({
 }) {
   const open = index !== null;
   const current = open ? items[index!] ?? null : null;
-  const [url, setUrl] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!current) {
-      setUrl(null);
-      return;
-    }
-    let cancelled = false;
-    (async () => {
-      const signed = await signedUrlFor(current.file_url, 300, LIGHTBOX_TRANSFORM);
-      if (cancelled) return;
-      setUrl(signed);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [current]);
+  const { url, failed, onImgError } = useSignedPhotoUrl(current?.file_url ?? null);
 
   // Page scroll lock + scrollbar-width compensation are owned by
   // the shared useScrollLock hook so every modal surface across
@@ -778,6 +734,7 @@ function PhotoLightbox({
           <img
             src={url}
             alt=""
+            onError={onImgError}
             style={{
               maxWidth: '92vw',
               maxHeight: '78vh',
@@ -786,6 +743,23 @@ function PhotoLightbox({
               boxShadow: '0 20px 60px rgba(0, 0, 0, 0.5)',
             }}
           />
+        ) : failed ? (
+          <div
+            style={{
+              width: 400,
+              height: 400,
+              maxWidth: '92vw',
+              maxHeight: '78vh',
+              borderRadius: theme.radius.card,
+              background: 'rgba(255, 255, 255, 0.06)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: 'rgba(255, 255, 255, 0.6)',
+            }}
+          >
+            <ImageOff size={32} aria-hidden />
+          </div>
         ) : (
           <Skeleton width={400} height={400} radius={theme.radius.card} />
         )}

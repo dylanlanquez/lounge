@@ -150,6 +150,11 @@ export interface PatientFileEntry {
   uploaded_by_name: string | null;
   version: number | null;
   thumbnail_path: string | null;
+  // Lounge-owned, distinct from thumbnail_path (Meridian's STL/OBJ
+  // scan preview cache): a small JPEG generated at upload time for
+  // before/after and marketing-content photos. Null on rows uploaded
+  // before this existed, or not yet backfilled.
+  lng_thumbnail_path: string | null;
 }
 
 interface FilesResult {
@@ -187,7 +192,7 @@ export function usePatientProfileFiles(patientId: string | null | undefined): Fi
       const { data: rows, error: err } = await supabase
         .from('patient_files')
         .select(
-          'id, patient_id, custom_label, file_url, file_name, file_size_bytes, mime_type, status, uploaded_at, version, thumbnail_path, file_labels:label_id(key, label), uploader:uploaded_by(first_name, last_name)'
+          'id, patient_id, custom_label, file_url, file_name, file_size_bytes, mime_type, status, uploaded_at, version, thumbnail_path, lng_thumbnail_path, file_labels:label_id(key, label), uploader:uploaded_by(first_name, last_name)'
         )
         .eq('patient_id', patientId)
         .eq('status', 'active')
@@ -225,6 +230,7 @@ export function usePatientProfileFiles(patientId: string | null | undefined): Fi
           uploaded_by_name: uploaderName,
           version: (r.version as number | null) ?? null,
           thumbnail_path: (r.thumbnail_path as string | null) ?? null,
+          lng_thumbnail_path: (r.lng_thumbnail_path as string | null) ?? null,
         };
       });
       setData(mapped);
@@ -297,7 +303,7 @@ export function usePatientDeliveryFiles(patientId: string | null | undefined): D
       const { data: rows, error: err } = await supabase
         .from('patient_files')
         .select(
-          `id, patient_id, custom_label, file_url, file_name, file_size_bytes, mime_type, status, uploaded_at, version, thumbnail_path,
+          `id, patient_id, custom_label, file_url, file_name, file_size_bytes, mime_type, status, uploaded_at, version, thumbnail_path, lng_thumbnail_path,
            file_labels:label_id(key, label),
            uploader:uploaded_by(first_name, last_name),
            attachments:case_file_attachments(
@@ -350,6 +356,7 @@ export function usePatientDeliveryFiles(patientId: string | null | undefined): D
           uploaded_by_name: uploaderName,
           version: (r.version as number | null) ?? null,
           thumbnail_path: (r.thumbnail_path as string | null) ?? null,
+          lng_thumbnail_path: (r.lng_thumbnail_path as string | null) ?? null,
         };
         const attachments = (r.attachments as Array<Record<string, unknown>>) ?? [];
         for (const att of attachments) {

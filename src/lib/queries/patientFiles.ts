@@ -72,6 +72,7 @@ export interface PatientFileRow {
   status: 'active' | 'archived' | 'pending' | 'pending_review';
   is_delivery: boolean;
   uploaded_at: string;
+  lng_thumbnail_path: string | null;
 }
 
 // Resolve a file_labels.key to its id. Read-only by design.
@@ -173,6 +174,54 @@ function isRlsRefusal(err: { code?: string; message?: string } | null): boolean 
   return err.code === '42501' || /row-level security/i.test(err.message ?? '');
 }
 
+const THUMBNAIL_MAX_EDGE = 800;
+const THUMBNAIL_QUALITY = 0.75;
+
+function loadImageElement(file: File): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error('Could not decode image'));
+    };
+    img.src = url;
+  });
+}
+
+// Downscales a photo to a small JPEG (long edge capped at
+// THUMBNAIL_MAX_EDGE) entirely in the browser, so a phone-camera
+// original (typically 1.5-2MB) never has to be signed and downloaded
+// in full just to render a few-hundred-pixel thumbnail. Best-effort:
+// on any failure (a non-image file, a HEIC the browser can't decode,
+// a canvas security error) returns null and the caller falls back to
+// the original, uploaded but without a thumbnail.
+async function makeThumbnail(file: File): Promise<Blob | null> {
+  if (!file.type.startsWith('image/')) return null;
+  let objectUrl: string | null = null;
+  try {
+    const img = await loadImageElement(file);
+    objectUrl = img.src;
+    const scale = Math.min(1, THUMBNAIL_MAX_EDGE / Math.max(img.naturalWidth, img.naturalHeight));
+    const width = Math.max(1, Math.round(img.naturalWidth * scale));
+    const height = Math.max(1, Math.round(img.naturalHeight * scale));
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+    ctx.drawImage(img, 0, 0, width, height);
+    return await new Promise<Blob | null>((resolve) => {
+      canvas.toBlob((blob) => resolve(blob), 'image/jpeg', THUMBNAIL_QUALITY);
+    });
+  } catch {
+    return null;
+  } finally {
+    if (objectUrl) URL.revokeObjectURL(objectUrl);
+  }
+}
+
 export async function uploadPatientFile(args: {
   patientId: string;
   patientName: string;
@@ -201,6 +250,29 @@ export async function uploadPatientFile(args: {
     .upload(path, args.file, { contentType: args.file.type, upsert: false });
   if (uploadErr) throw new Error(`Upload failed: ${uploadErr.message}`);
 
+  // Best-effort thumbnail, generated and uploaded alongside the
+  // original. A failure here (a HEIC the browser can't decode, a
+  // canvas error) must not fail the upload: the row lands with
+  // lng_thumbnail_path null and readers fall back to the original.
+  let thumbnailPath: string | null = null;
+  const thumbnailBlob = await makeThumbnail(args.file);
+  if (thumbnailBlob) {
+    const thumbPath = `patient_${slug}/${args.labelKey}_${uid}_thumb.jpg`;
+    const { error: thumbErr } = await supabase.storage
+      .from('case-files')
+      .upload(thumbPath, thumbnailBlob, { contentType: 'image/jpeg', upsert: false });
+    if (thumbErr) {
+      await logFailure({
+        source: 'patient_files.uploadPatientFile',
+        severity: 'warning',
+        message: `Thumbnail upload failed for label "${args.labelKey}": ${thumbErr.message}`,
+        context: { patientId: args.patientId, labelKey: args.labelKey, storagePath: path },
+      });
+    } else {
+      thumbnailPath = thumbPath;
+    }
+  }
+
   // `description` is NOT NULL on patient_files with a CHECK that
   // trims to >= 3 chars. Use the label's display name — that's what
   // the file is, and the names we feed in (Before photo, Marketing
@@ -219,16 +291,19 @@ export async function uploadPatientFile(args: {
       uploaded_by: args.uploaderAccountId,
       description: args.labelDisplayName,
       source_appointment_id: args.sourceAppointmentId ?? null,
+      lng_thumbnail_path: thumbnailPath,
     })
     .select('*')
     .single();
   if (insertErr || !row) {
-    // The object is already in case-files at this point. Without this
-    // cleanup every failed insert (an RLS denial on patient_files, a
-    // constraint trip) leaves an unreferenced file in the bucket that
-    // no query can ever reach, and retrying compounds it because the
-    // path carries a fresh uid each time. Remove it, then fail loud.
-    const { error: cleanupErr } = await supabase.storage.from('case-files').remove([path]);
+    // The object(s) are already in case-files at this point. Without
+    // this cleanup every failed insert (an RLS denial on
+    // patient_files, a constraint trip) leaves unreferenced files in
+    // the bucket that no query can ever reach, and retrying compounds
+    // it because the path carries a fresh uid each time. Remove them,
+    // then fail loud.
+    const cleanupPaths = thumbnailPath ? [path, thumbnailPath] : [path];
+    const { error: cleanupErr } = await supabase.storage.from('case-files').remove(cleanupPaths);
     const refusal = isRlsRefusal(insertErr) ? await describeInsertRefusal(args.patientId) : '';
     await logFailure({
       source: 'patient_files.uploadPatientFile',
@@ -273,46 +348,58 @@ export async function uploadPatientFile(args: {
   return row as PatientFileRow;
 }
 
-export interface SignedUrlTransform {
-  width?: number;
-  height?: number;
-  quality?: number;
-  resize?: 'cover' | 'contain' | 'fill';
-}
-
-// Signs a storage path, optionally asking Storage to downscale the
-// image server-side first (via Supabase's image transformation).
-//
-// Case-file photos come straight off a phone camera, typically
-// 1.5-2MB apiece. Signing and serving that untouched for a 230x168
-// thumbnail strip is the entire cost of an otherwise-instant page: the
-// browser downloads megabytes to display a few hundred pixels, and on
-// a slow connection some requests stall out and never resolve at all.
-//
-// If transformation isn't enabled on this project's plan, Storage
-// rejects the transform option rather than silently ignoring it, so
-// on that specific failure we retry once at full resolution. A slow
-// image beats a broken one; the retry is logged so the gap doesn't
-// stay invisible.
-export async function signedUrlFor(
-  filePath: string,
-  ttlSeconds = 300,
-  transform?: SignedUrlTransform,
-): Promise<string | null> {
-  const { data, error } = await supabase.storage
-    .from('case-files')
-    .createSignedUrl(filePath, ttlSeconds, transform ? { transform } : undefined);
+// Signs a storage path (never stored, always generated on demand).
+export async function signedUrlFor(filePath: string, ttlSeconds = 300): Promise<string | null> {
+  const { data, error } = await supabase.storage.from('case-files').createSignedUrl(filePath, ttlSeconds);
   if (error || !data) {
     await logFailure({
       source: 'patient_files.signedUrlFor',
       severity: 'warning',
       message: `Could not sign storage path "${filePath}": ${error?.message ?? 'no data returned'}`,
-      context: { filePath, ttlSeconds, transform: transform ?? null },
+      context: { filePath, ttlSeconds },
     });
-    if (transform) return signedUrlFor(filePath, ttlSeconds);
     return null;
   }
   return data.signedUrl;
+}
+
+// Signs and renders a case-file photo. Used everywhere one shows up as
+// an <img> (marketing content, before/after galleries, lightboxes) so
+// the loading/failed states live in exactly one place. Callers pass
+// lng_thumbnail_path for a grid/strip and file_url for a full view;
+// this hook doesn't care which, it just signs whatever path it's
+// given and re-signs when that path changes.
+export function useSignedPhotoUrl(filePath: string | null): {
+  url: string | null;
+  failed: boolean;
+  onImgError: () => void;
+} {
+  const [url, setUrl] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    if (!filePath) {
+      setUrl(null);
+      setFailed(false);
+      return;
+    }
+    let cancelled = false;
+    setUrl(null);
+    setFailed(false);
+    void signedUrlFor(filePath, 600).then((u) => {
+      if (cancelled) return;
+      if (!u) {
+        setFailed(true);
+        return;
+      }
+      setUrl(u);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [filePath]);
+
+  return { url, failed, onImgError: () => setFailed(true) };
 }
 
 // Move an already-uploaded file to a different label.

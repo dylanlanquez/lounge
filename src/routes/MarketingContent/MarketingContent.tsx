@@ -1,19 +1,13 @@
 import { type CSSProperties, useEffect, useMemo, useRef, useState } from 'react';
 import { CalendarSearch, ChevronDown, ChevronLeft, ChevronRight, ImageOff, Megaphone } from 'lucide-react';
-import { Button, Card, DateRangePicker, EmptyState, Skeleton, StatCard } from '../../components/index.ts';
+import { Button, Card, EmptyState, SegmentedControl, Skeleton, StatCard } from '../../components/index.ts';
 import { PhotoLightbox, type LightboxPhoto } from '../../components/PhotoLightbox/PhotoLightbox.tsx';
 import { BOTTOM_NAV_HEIGHT } from '../../components/BottomNav/BottomNav.tsx';
 import { KIOSK_STATUS_BAR_HEIGHT } from '../../components/KioskStatusBar/KioskStatusBar.tsx';
 import { theme } from '../../theme/index.ts';
 import { useIsMobile } from '../../lib/useIsMobile.ts';
 import { formatDateLongOrdinal } from '../../lib/dateFormat.ts';
-import { signedUrlFor, type SignedUrlTransform } from '../../lib/queries/patientFiles.ts';
-import {
-  type DateRange,
-  dateRangeLabel,
-  dateRangeToUtcBounds,
-  defaultDateRange,
-} from '../../lib/dateRange.ts';
+import { signedUrlFor, useSignedPhotoUrl } from '../../lib/queries/patientFiles.ts';
 import {
   type MarketingAppointment,
   type MarketingKind,
@@ -25,45 +19,29 @@ import {
 const CARD_W = 230;
 const THUMB_H = 168;
 
-// Sign a storage path on demand (never stored). Re-signs when the path
-// or the requested size changes; clears while a new one loads so a
-// stale image never lingers. Takes the transform's fields individually
-// (not the object) so a literal passed fresh on every render doesn't
-// re-trigger the sign call each time.
-function useSignedUrl(
-  path: string | null,
-  width?: number,
-  height?: number,
-  quality?: number,
-): string | null {
-  const [url, setUrl] = useState<string | null>(null);
-  useEffect(() => {
-    if (!path) {
-      setUrl(null);
-      return;
-    }
-    let cancelled = false;
-    setUrl(null);
-    const transform: SignedUrlTransform | undefined =
-      width || height || quality ? { width, height, quality, resize: 'cover' } : undefined;
-    void signedUrlFor(path, 600, transform).then((u) => {
-      if (!cancelled) setUrl(u);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [path, width, height, quality]);
-  return url;
-}
+// Every window option for the appointment list, always shown as
+// segmented tabs rather than tucked behind a picker someone has to
+// open first. Rolling windows (not calendar-boundary presets like
+// "this month") so the count next to each tab means the same thing
+// no matter what day of the month it is.
+type RangeId = '7' | '30' | '90' | 'all';
+const RANGE_OPTIONS: { value: RangeId; label: string }[] = [
+  { value: '7', label: 'Last 7 days' },
+  { value: '30', label: 'Last 30 days' },
+  { value: '90', label: 'Last 90 days' },
+  { value: 'all', label: 'All time' },
+];
+const RANGE_LABEL: Record<RangeId, string> = Object.fromEntries(
+  RANGE_OPTIONS.map((o) => [o.value, o.label]),
+) as Record<RangeId, string>;
+const DEFAULT_RANGE: RangeId = '30';
 
-// Thumbnail dimensions requested from Storage, 2x the rendered size
-// for retina screens. Kept well under the multi-megabyte originals
-// these photos come in at off a phone camera.
-const THUMB_TRANSFORM = { width: CARD_W * 2, height: THUMB_H * 2, quality: 70 };
-const HERO_TRANSFORM = { width: 960, height: 640, quality: 75 };
-// The lightbox is a full-screen viewer, so it gets a larger cap, but
-// still far short of a 2000px-wide camera original.
-const LIGHTBOX_TRANSFORM = { width: 1800, height: 1800, quality: 85 };
+// The earliest instant an appointment's startAt must fall on or after
+// to count as "within" this range. null means no lower bound (All time).
+function rangeFloorMs(id: RangeId): number | null {
+  if (id === 'all') return null;
+  return Date.now() - Number(id) * 24 * 60 * 60 * 1000;
+}
 
 function kindChipStyle(kind: MarketingKind): CSSProperties {
   const base: CSSProperties = {
@@ -102,7 +80,7 @@ function PhotoCard({
   photo: MarketingPhoto;
   onOpen: () => void;
 }) {
-  const url = useSignedUrl(photo.filePath, THUMB_TRANSFORM.width, THUMB_TRANSFORM.height, THUMB_TRANSFORM.quality);
+  const { url, failed, onImgError } = useSignedPhotoUrl(photo.thumbnailPath ?? photo.filePath);
   return (
     <button
       type="button"
@@ -139,10 +117,13 @@ function PhotoCard({
             src={url}
             alt={photo.fileName}
             loading="lazy"
+            onError={onImgError}
             style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
           />
-        ) : (
+        ) : failed ? (
           <ImageOff size={22} color={theme.color.inkSubtle} aria-hidden />
+        ) : (
+          <Skeleton height="100%" radius={0} />
         )}
         <span style={{ position: 'absolute', top: theme.space[2], left: theme.space[2] }}>
           <KindChip kind={photo.kind} />
@@ -261,9 +242,7 @@ function AppointmentRow({ appt }: { appt: MarketingAppointment }) {
   // the gallery doesn't sign everything up front.
   const openLightbox = async (index: number) => {
     setLightboxIndex(index);
-    const urls = await Promise.all(
-      appt.photos.map((p) => signedUrlFor(p.filePath, 600, LIGHTBOX_TRANSFORM)),
-    );
+    const urls = await Promise.all(appt.photos.map((p) => signedUrlFor(p.filePath, 600)));
     setLightboxUrls(urls);
   };
 
@@ -383,11 +362,8 @@ function HeroFeatured({
   totalAppointments: number;
   isMobile: boolean;
 }) {
-  const url = useSignedUrl(
-    featured ? featured.photo.filePath : null,
-    HERO_TRANSFORM.width,
-    HERO_TRANSFORM.height,
-    HERO_TRANSFORM.quality,
+  const { url, failed, onImgError } = useSignedPhotoUrl(
+    featured ? (featured.photo.thumbnailPath ?? featured.photo.filePath) : null,
   );
   if (!featured) return null;
   return (
@@ -409,10 +385,13 @@ function HeroFeatured({
             <img
               src={url}
               alt={featured.photo.fileName}
+              onError={onImgError}
               style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
             />
-          ) : (
+          ) : failed ? (
             <ImageOff size={26} color={theme.color.inkSubtle} aria-hidden />
+          ) : (
+            <Skeleton height="100%" radius={0} />
           )}
           <span style={{ position: 'absolute', top: theme.space[3], left: theme.space[3] }}>
             <KindChip kind={featured.photo.kind} />
@@ -465,25 +444,19 @@ function HeroFeatured({
 export function MarketingContent() {
   const isMobile = useIsMobile(640);
   const { data, loading, error } = useMarketingContent();
-  const [range, setRange] = useState<DateRange | null>(() => defaultDateRange());
+  const [rangeId, setRangeId] = useState<RangeId>(DEFAULT_RANGE);
 
   // The gallery keeps every photo ever captured, so the list of
   // appointments only grows. Scope the browsable list to the selected
-  // range (by appointment date, not upload date) so a clinic running
+  // window (by appointment date, not upload date) so a clinic running
   // for years doesn't turn this into an endless scroll. Defaults to
-  // the last 30 days; "All time" (range === null) removes the filter.
+  // the last 30 days; "All time" removes the filter.
   const filteredAppointments = useMemo(() => {
     if (!data) return [];
-    if (!range) return data.appointments;
-    const { fromIso, toIso } = dateRangeToUtcBounds(range);
-    const from = new Date(fromIso).getTime();
-    const to = new Date(toIso).getTime();
-    return data.appointments.filter((a) => {
-      if (!a.startAt) return false;
-      const t = new Date(a.startAt).getTime();
-      return t >= from && t <= to;
-    });
-  }, [data, range]);
+    const floor = rangeFloorMs(rangeId);
+    if (floor === null) return data.appointments;
+    return data.appointments.filter((a) => a.startAt !== null && new Date(a.startAt).getTime() >= floor);
+  }, [data, rangeId]);
 
   return (
     <main
@@ -598,28 +571,33 @@ export function MarketingContent() {
                   >
                     {filteredAppointments.length}{' '}
                     {filteredAppointments.length === 1 ? 'appointment' : 'appointments'} ·{' '}
-                    {range ? dateRangeLabel(range) : 'All time'}
+                    {RANGE_LABEL[rangeId]}
                   </p>
                 </div>
-                <DateRangePicker
-                  value={range}
-                  onChange={setRange}
-                  onClear={() => setRange(null)}
-                  placeholder="All time"
+                {/* Every option sits on the page already, tap to switch.
+                    Nothing to open, nothing hidden behind a trigger. */}
+                <SegmentedControl
+                  ariaLabel="Filter appointments by date"
+                  options={RANGE_OPTIONS}
+                  value={rangeId}
+                  onChange={setRangeId}
                   size={isMobile ? 'sm' : 'md'}
+                  scrollable={isMobile}
                 />
               </div>
               {filteredAppointments.length === 0 ? (
                 <EmptyState
                   icon={<CalendarSearch size={20} />}
                   title="No appointments in this range"
-                  description={`No before and after or marketing photos were captured in ${
-                    range ? dateRangeLabel(range).toLowerCase() : 'this range'
-                  }. Widen the date range to see older appointments.`}
+                  description={`No before and after or marketing photos were captured in ${RANGE_LABEL[
+                    rangeId
+                  ].toLowerCase()}. Widen the range to see older appointments.`}
                   action={
-                    <Button variant="secondary" size="sm" onClick={() => setRange(null)}>
-                      Show all time
-                    </Button>
+                    rangeId !== 'all' ? (
+                      <Button variant="secondary" size="sm" onClick={() => setRangeId('all')}>
+                        Show all time
+                      </Button>
+                    ) : undefined
                   }
                 />
               ) : (
