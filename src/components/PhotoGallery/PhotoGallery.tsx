@@ -17,7 +17,20 @@ import { Toast } from '../Toast/Toast.tsx';
 import { theme } from '../../theme/index.ts';
 import { fmtTzAbbr } from '../../lib/dateFormat.ts';
 import { useScrollLock } from '../../lib/useScrollLock.ts';
-import { setPatientFileLabel, signedUrlFor, uploadPatientFile } from '../../lib/queries/patientFiles.ts';
+import {
+  setPatientFileLabel,
+  signedUrlFor,
+  uploadPatientFile,
+  type SignedUrlTransform,
+} from '../../lib/queries/patientFiles.ts';
+
+// Case-file photos come straight off a phone camera, often 1.5-2MB
+// apiece. Signing and serving that untouched for a small grid tile or
+// even the lightbox is needless weight, so both request a downscaled
+// render from Storage. See signedUrlFor's docstring for the fallback
+// when transformation isn't enabled on the project's plan.
+const TILE_TRANSFORM: SignedUrlTransform = { width: 480, height: 480, quality: 70, resize: 'cover' };
+const LIGHTBOX_TRANSFORM: SignedUrlTransform = { width: 1800, height: 1800, quality: 85 };
 import {
   type PatientFileEntry,
 } from '../../lib/queries/patientProfile.ts';
@@ -480,7 +493,7 @@ function PhotoTile({
     setUrl(null);
     setFailed(false);
     (async () => {
-      const signed = await signedUrlFor(item.file_url, 300);
+      const signed = await signedUrlFor(item.file_url, 300, TILE_TRANSFORM);
       if (cancelled) return;
       if (!signed) {
         setFailed(true);
@@ -673,7 +686,7 @@ function PhotoLightbox({
     }
     let cancelled = false;
     (async () => {
-      const signed = await signedUrlFor(current.file_url, 300);
+      const signed = await signedUrlFor(current.file_url, 300, LIGHTBOX_TRANSFORM);
       if (cancelled) return;
       setUrl(signed);
     })();

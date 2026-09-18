@@ -7,7 +7,7 @@ import { KIOSK_STATUS_BAR_HEIGHT } from '../../components/KioskStatusBar/KioskSt
 import { theme } from '../../theme/index.ts';
 import { useIsMobile } from '../../lib/useIsMobile.ts';
 import { formatDateLongOrdinal } from '../../lib/dateFormat.ts';
-import { signedUrlFor } from '../../lib/queries/patientFiles.ts';
+import { signedUrlFor, type SignedUrlTransform } from '../../lib/queries/patientFiles.ts';
 import {
   type MarketingAppointment,
   type MarketingKind,
@@ -20,8 +20,16 @@ const CARD_W = 230;
 const THUMB_H = 168;
 
 // Sign a storage path on demand (never stored). Re-signs when the path
-// changes; clears while a new one loads so a stale image never lingers.
-function useSignedUrl(path: string | null): string | null {
+// or the requested size changes; clears while a new one loads so a
+// stale image never lingers. Takes the transform's fields individually
+// (not the object) so a literal passed fresh on every render doesn't
+// re-trigger the sign call each time.
+function useSignedUrl(
+  path: string | null,
+  width?: number,
+  height?: number,
+  quality?: number,
+): string | null {
   const [url, setUrl] = useState<string | null>(null);
   useEffect(() => {
     if (!path) {
@@ -30,15 +38,26 @@ function useSignedUrl(path: string | null): string | null {
     }
     let cancelled = false;
     setUrl(null);
-    void signedUrlFor(path, 600).then((u) => {
+    const transform: SignedUrlTransform | undefined =
+      width || height || quality ? { width, height, quality, resize: 'cover' } : undefined;
+    void signedUrlFor(path, 600, transform).then((u) => {
       if (!cancelled) setUrl(u);
     });
     return () => {
       cancelled = true;
     };
-  }, [path]);
+  }, [path, width, height, quality]);
   return url;
 }
+
+// Thumbnail dimensions requested from Storage, 2x the rendered size
+// for retina screens. Kept well under the multi-megabyte originals
+// these photos come in at off a phone camera.
+const THUMB_TRANSFORM = { width: CARD_W * 2, height: THUMB_H * 2, quality: 70 };
+const HERO_TRANSFORM = { width: 960, height: 640, quality: 75 };
+// The lightbox is a full-screen viewer, so it gets a larger cap, but
+// still far short of a 2000px-wide camera original.
+const LIGHTBOX_TRANSFORM = { width: 1800, height: 1800, quality: 85 };
 
 function kindChipStyle(kind: MarketingKind): CSSProperties {
   const base: CSSProperties = {
@@ -77,7 +96,7 @@ function PhotoCard({
   photo: MarketingPhoto;
   onOpen: () => void;
 }) {
-  const url = useSignedUrl(photo.filePath);
+  const url = useSignedUrl(photo.filePath, THUMB_TRANSFORM.width, THUMB_TRANSFORM.height, THUMB_TRANSFORM.quality);
   return (
     <button
       type="button"
@@ -236,7 +255,9 @@ function AppointmentRow({ appt }: { appt: MarketingAppointment }) {
   // the gallery doesn't sign everything up front.
   const openLightbox = async (index: number) => {
     setLightboxIndex(index);
-    const urls = await Promise.all(appt.photos.map((p) => signedUrlFor(p.filePath, 600)));
+    const urls = await Promise.all(
+      appt.photos.map((p) => signedUrlFor(p.filePath, 600, LIGHTBOX_TRANSFORM)),
+    );
     setLightboxUrls(urls);
   };
 
@@ -354,7 +375,12 @@ function HeroFeatured({
   totalAppointments: number;
   isMobile: boolean;
 }) {
-  const url = useSignedUrl(featured ? featured.photo.filePath : null);
+  const url = useSignedUrl(
+    featured ? featured.photo.filePath : null,
+    HERO_TRANSFORM.width,
+    HERO_TRANSFORM.height,
+    HERO_TRANSFORM.quality,
+  );
   if (!featured) return null;
   return (
     <Card padding="none" elevation="raised">

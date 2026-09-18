@@ -273,9 +273,45 @@ export async function uploadPatientFile(args: {
   return row as PatientFileRow;
 }
 
-export async function signedUrlFor(filePath: string, ttlSeconds = 300): Promise<string | null> {
-  const { data, error } = await supabase.storage.from('case-files').createSignedUrl(filePath, ttlSeconds);
-  if (error || !data) return null;
+export interface SignedUrlTransform {
+  width?: number;
+  height?: number;
+  quality?: number;
+  resize?: 'cover' | 'contain' | 'fill';
+}
+
+// Signs a storage path, optionally asking Storage to downscale the
+// image server-side first (via Supabase's image transformation).
+//
+// Case-file photos come straight off a phone camera, typically
+// 1.5-2MB apiece. Signing and serving that untouched for a 230x168
+// thumbnail strip is the entire cost of an otherwise-instant page: the
+// browser downloads megabytes to display a few hundred pixels, and on
+// a slow connection some requests stall out and never resolve at all.
+//
+// If transformation isn't enabled on this project's plan, Storage
+// rejects the transform option rather than silently ignoring it, so
+// on that specific failure we retry once at full resolution. A slow
+// image beats a broken one; the retry is logged so the gap doesn't
+// stay invisible.
+export async function signedUrlFor(
+  filePath: string,
+  ttlSeconds = 300,
+  transform?: SignedUrlTransform,
+): Promise<string | null> {
+  const { data, error } = await supabase.storage
+    .from('case-files')
+    .createSignedUrl(filePath, ttlSeconds, transform ? { transform } : undefined);
+  if (error || !data) {
+    await logFailure({
+      source: 'patient_files.signedUrlFor',
+      severity: 'warning',
+      message: `Could not sign storage path "${filePath}": ${error?.message ?? 'no data returned'}`,
+      context: { filePath, ttlSeconds, transform: transform ?? null },
+    });
+    if (transform) return signedUrlFor(filePath, ttlSeconds);
+    return null;
+  }
   return data.signedUrl;
 }
 
