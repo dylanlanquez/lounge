@@ -1,5 +1,5 @@
 import { type CSSProperties, useEffect, useMemo, useRef, useState } from 'react';
-import { CalendarSearch, ChevronDown, ChevronLeft, ChevronRight, ImageOff, Megaphone } from 'lucide-react';
+import { CalendarSearch, ChevronLeft, ChevronRight, ImageOff, Megaphone } from 'lucide-react';
 import { Button, Card, EmptyState, SegmentedControl, Skeleton, StatCard } from '../../components/index.ts';
 import { PhotoLightbox, type LightboxPhoto } from '../../components/PhotoLightbox/PhotoLightbox.tsx';
 import { BOTTOM_NAV_HEIGHT } from '../../components/BottomNav/BottomNav.tsx';
@@ -234,7 +234,6 @@ function kindCounts(photos: MarketingPhoto[]): { kind: MarketingKind; count: num
 }
 
 function AppointmentRow({ appt }: { appt: MarketingAppointment }) {
-  const [open, setOpen] = useState(false);
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const [lightboxUrls, setLightboxUrls] = useState<(string | null)[]>([]);
 
@@ -261,71 +260,34 @@ function AppointmentRow({ appt }: { appt: MarketingAppointment }) {
 
   return (
     <div style={{ borderTop: `1px solid ${theme.color.border}` }}>
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        aria-expanded={open}
-        style={{
-          display: 'flex',
-          flexDirection: 'column',
-          gap: theme.space[2],
-          padding: `${theme.space[3]}px 0`,
-          width: '100%',
-          background: 'none',
-          border: 'none',
-          cursor: 'pointer',
-          textAlign: 'left',
-          color: 'inherit',
-          fontFamily: 'inherit',
-        }}
-      >
-        {/* Name + chevron share a row, chips get their own row below.
-            An appointment with three chips (before/after/marketing) on
-            a phone-width screen used to share the name's row, and the
-            name column would collapse to nothing rather than truncate.
-            Splitting the rows means the chip count can never push the
-            patient's name off the card. */}
-        <div style={{ display: 'flex', alignItems: 'flex-start', gap: theme.space[3] }}>
-          <div style={{ flex: '1 1 auto', minWidth: 0 }}>
+      {/* Every appointment's photos sit on the page already, nothing
+          to click to reveal them. Name + chips are their own rows so
+          neither can push the other around at any width (see the
+          PhotoCard comment below for why the strip itself is cheap
+          enough now to always render for all appointments at once). */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[2], padding: `${theme.space[3]}px 0` }}>
+        <div>
+          <p
+            style={{
+              margin: 0,
+              fontSize: theme.type.size.base,
+              fontWeight: theme.type.weight.medium,
+              color: theme.color.ink,
+            }}
+          >
+            {appt.patientName}
+          </p>
+          {meta && (
             <p
               style={{
-                margin: 0,
-                fontSize: theme.type.size.base,
-                fontWeight: theme.type.weight.medium,
-                color: theme.color.ink,
-                whiteSpace: 'nowrap',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
+                margin: '2px 0 0',
+                fontSize: theme.type.size.sm,
+                color: theme.color.inkMuted,
               }}
             >
-              {appt.patientName}
+              {meta}
             </p>
-            {meta && (
-              <p
-                style={{
-                  margin: '2px 0 0',
-                  fontSize: theme.type.size.sm,
-                  color: theme.color.inkMuted,
-                  whiteSpace: 'nowrap',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                }}
-              >
-                {meta}
-              </p>
-            )}
-          </div>
-          <ChevronDown
-            size={18}
-            aria-hidden
-            style={{
-              flexShrink: 0,
-              marginTop: 2,
-              color: theme.color.inkSubtle,
-              transition: `transform ${theme.motion.duration.fast}ms ${theme.motion.easing.standard}`,
-              transform: open ? 'rotate(180deg)' : 'none',
-            }}
-          />
+          )}
         </div>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: theme.space[2] }}>
           {kindCounts(appt.photos).map(({ kind, count }) => (
@@ -334,17 +296,12 @@ function AppointmentRow({ appt }: { appt: MarketingAppointment }) {
             </span>
           ))}
         </div>
-      </button>
-
-      {open && (
-        <div style={{ paddingBottom: theme.space[2] }}>
-          <PhotoStrip>
-            {appt.photos.map((photo, i) => (
-              <PhotoCard key={photo.id} photo={photo} onOpen={() => void openLightbox(i)} />
-            ))}
-          </PhotoStrip>
-        </div>
-      )}
+        <PhotoStrip>
+          {appt.photos.map((photo, i) => (
+            <PhotoCard key={photo.id} photo={photo} onOpen={() => void openLightbox(i)} />
+          ))}
+        </PhotoStrip>
+      </div>
 
       <PhotoLightbox photos={lightboxPhotos} index={lightboxIndex} onChange={setLightboxIndex} />
     </div>
@@ -493,7 +450,7 @@ export function MarketingContent() {
             }}
           >
             Before and after shots and finished-result photos captured at appointments, ready for
-            the marketing team. Tap an appointment to flick through its photos.
+            the marketing team. Tap a photo to view it full-size.
           </p>
         </div>
 
