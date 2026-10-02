@@ -63,3 +63,46 @@
 
 - The `joined` status branch in `availableActions()` is untouched for voice calls — Twilio, when it lands, is what will make a call reach `joined` before `complete`/`no_show`.
 - Per-agent call assignment and the dedicated voice-call visit page remain the next slices, as recorded in `docs/slices/voice-calls.md`.
+
+---
+
+## Follow-up — phantom live calls (2 October 2026)
+
+A finished call kept showing on the schedule as live, with a working
+Listen in button, for up to two hours. Three separate faults:
+
+1. **Nothing closed a session when a call simply ended.** Every closer
+   needed a human action: `lng_close_voice_call_session` on logging an
+   outcome that names the session, `lng_close_stale_voice_call_sessions`
+   on a redial or any outcome, and Twilio's `completed` callback, which
+   matches on CallSid and so can never close a row that hung before the
+   SID was written. LAP-01235 was dialled a second time after its
+   outcome had already been logged, so the agent had no reason to log
+   again and the row stayed open. `LiveCallsPanel`'s two-hour cutoff
+   hid it; hiding is not closing.
+   Fixed by `20261002000002_lng_sweep_stale_voice_call_sessions.sql`:
+   `lng_sweep_stale_voice_call_sessions()`, scheduled every 5 minutes,
+   closes unanswered states after 10 minutes and `in-progress` after 45.
+
+2. **`lng_close_stale_voice_call_sessions` was never applied to
+   Meridian.** Migration `20260917000001` sat unapplied for two weeks.
+   Applied 2 October.
+
+3. **Both closers were bare awaits.** A missing function returned
+   PGRST202 to nobody, so fault 2 was invisible. Both call sites in
+   `voiceCallLog.ts` and the one in `activeCall.tsx` now check the error
+   and write a `lng_system_failures` row. A closer failing must not
+   unwind a correctly logged outcome, so it is logged, not thrown.
+
+Also shipped the already-in-tree `activeCall` / `listenIn` fix removing
+`device.register()`, which could leave `device.connect()` awaiting
+forever and the freshly inserted session row open.
+
+### Migration filename collision, worth knowing
+
+The `YYYYMMDD_NN_` convention in CLAUDE.md **breaks `supabase db push`**.
+The CLI takes the leading digits before the first underscore as the
+version, so `20261002_01_...` and `20261002_02_...` are both version
+`20261002`, and the second is treated as already applied. This sweep was
+named `20261002000002_...` for that reason. Prefer the 14-digit form the
+rest of the repo uses.
