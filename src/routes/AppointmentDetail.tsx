@@ -44,6 +44,7 @@ import {
   RescheduleSheet,
   ReturnsSendSheet,
   Section,
+  ShopifyOrderPicker,
   Skeleton,
   SmilePhotosCard,
   Toast,
@@ -96,6 +97,12 @@ import {
   relativeDay,
 } from '../lib/dateFormat.ts';
 import { formatPence } from '../lib/queries/carts.ts';
+import {
+  linkShopifyOrdersToAppointment,
+  unlinkShopifyOrderFromAppointment,
+  useAppointmentShopifyOrderLinks,
+  type ShopifyOrderToLink,
+} from '../lib/queries/appointmentShopifyOrderLinks.ts';
 import { useAppointmentLivePhases } from '../lib/queries/appointmentLivePhases.ts';
 import { createMeetSpaceForAppointment, fetchMeetAttendance, useMeetHosts } from '../lib/queries/meetHosts.ts';
 import { humaniseCancelReason, logVirtualMeetingRejoin, markNoShow, markVirtualComplete, markVirtualMeetingJoined, NO_SHOW_REASONS, reverseNoShow } from '../lib/queries/visits.ts';
@@ -867,6 +874,7 @@ function Loaded({
             }
           />
         ) : null}
+        <LinkedOrdersCard appt={appt} />
         {/* NotesCard was previously rendered here. Lifted above the
             section so the customer-service note sits in a hero
             position right after the patient Hero, where the clinic
@@ -2540,6 +2548,189 @@ function OnlineOrderCreditCard({
           View order {orderName} in Shopify
         </a>
       ) : null}
+    </Card>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Orders this appointment is about — reference links, not credits.
+//
+// Voice calls get this card so the receptionist can say which of the
+// patient's Shopify orders the call concerns, and change the picks
+// afterwards. It also renders on any other appointment that already
+// carries links, so a link can never become invisible (and so
+// unreachable to remove) if the service is later something else.
+//
+// Deliberately separate from OnlineOrderCreditCard above: that card is
+// the single order whose total credits against the bill. These links
+// never touch money.
+// ─────────────────────────────────────────────────────────────────────
+function LinkedOrdersCard({ appt }: { appt: AppointmentDetailRow }) {
+  const { data: links, loading, refresh } = useAppointmentShopifyOrderLinks(appt.id);
+  const [adding, setAdding] = useState(false);
+  const [picked, setPicked] = useState<ShopifyOrderToLink[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const voiceCall = isVoiceCall(appt);
+  if (!voiceCall && links.length === 0) return null;
+  if (loading && links.length === 0) return null;
+
+  const save = async () => {
+    if (picked.length === 0) {
+      setAdding(false);
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      await linkShopifyOrdersToAppointment({
+        appointmentId: appt.id,
+        patientId: appt.patient_id,
+        orders: picked,
+      });
+      setPicked([]);
+      setAdding(false);
+      refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not attach the orders.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const remove = async (link: (typeof links)[number]) => {
+    setBusy(true);
+    setError(null);
+    try {
+      await unlinkShopifyOrderFromAppointment({
+        linkId: link.id,
+        appointmentId: appt.id,
+        patientId: appt.patient_id,
+        shopifyOrderId: link.shopify_order_id,
+        shopifyOrderName: link.shopify_order_name,
+      });
+      refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not remove the order.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Card padding="lg">
+      <DetailSectionHeader
+        icon={<PackageCheck size={15} aria-hidden />}
+        title={voiceCall ? 'Orders this call is about' : 'Related orders'}
+      />
+      <p
+        style={{
+          margin: `${theme.space[1]}px 0 ${theme.space[3]}px`,
+          fontSize: theme.type.size.sm,
+          color: theme.color.inkMuted,
+          lineHeight: theme.type.leading.snug,
+        }}
+      >
+        Reference only. Nothing here is charged, credited or refunded.
+      </p>
+
+      {links.length === 0 ? (
+        <p style={{ margin: 0, fontSize: theme.type.size.sm, color: theme.color.inkSubtle }}>
+          No orders attached.
+        </p>
+      ) : (
+        <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: theme.space[2] }}>
+          {links.map((l) => (
+            <li
+              key={l.id}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: theme.space[3],
+                padding: theme.space[3],
+                border: `1px solid ${theme.color.border}`,
+                borderRadius: theme.radius.card,
+              }}
+            >
+              <span style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
+                <span
+                  style={{
+                    fontSize: theme.type.size.sm,
+                    fontWeight: theme.type.weight.semibold,
+                    color: theme.color.ink,
+                  }}
+                >
+                  {l.shopify_order_name}
+                  {l.total_price_pence != null ? ` · ${formatPence(l.total_price_pence)}` : ''}
+                </span>
+                <a
+                  href={`https://admin.shopify.com/store/venneir/orders/${l.shopify_order_id}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{
+                    fontSize: theme.type.size.xs,
+                    fontWeight: theme.type.weight.semibold,
+                    color: theme.color.accent,
+                    textDecoration: 'none',
+                  }}
+                >
+                  View in Shopify
+                </a>
+              </span>
+              <Button
+                variant="tertiary"
+                size="sm"
+                onClick={() => void remove(l)}
+                disabled={busy}
+              >
+                Remove
+              </Button>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {error ? (
+        <p role="alert" style={{ margin: `${theme.space[3]}px 0 0`, fontSize: theme.type.size.sm, color: theme.color.alert }}>
+          {error}
+        </p>
+      ) : null}
+
+      <div style={{ marginTop: theme.space[3] }}>
+        {adding ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space[3] }}>
+            <ShopifyOrderPicker
+              patientId={appt.patient_id}
+              selectedIds={picked.map((o) => o.id)}
+              onChange={(_ids, orders) => setPicked(orders)}
+              disabled={busy}
+              lockedIds={links.map((l) => l.shopify_order_id)}
+            />
+            <div style={{ display: 'flex', gap: theme.space[2] }}>
+              <Button onClick={() => void save()} disabled={busy} loading={busy}>
+                Attach {picked.length > 0 ? `${picked.length} order${picked.length === 1 ? '' : 's'}` : 'orders'}
+              </Button>
+              <Button
+                variant="tertiary"
+                onClick={() => {
+                  setAdding(false);
+                  setPicked([]);
+                  setError(null);
+                }}
+                disabled={busy}
+              >
+                Cancel
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <Button variant="secondary" size="sm" onClick={() => setAdding(true)} disabled={busy}>
+            Attach an order
+          </Button>
+        )}
+      </div>
     </Card>
   );
 }

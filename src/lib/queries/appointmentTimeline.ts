@@ -887,6 +887,23 @@ function mapEvent(
       };
     }
 
+    case 'appointment_shopify_order_linked':
+    case 'appointment_shopify_order_unlinked': {
+      // Reference links between the appointment and a Shopify order
+      // (lng_appointment_shopify_order_links). No money moves, so the
+      // tone stays neutral — this is context, not a payment.
+      const orderName = readString(row.payload, 'shopify_order_name');
+      const linked = row.event_type === 'appointment_shopify_order_linked';
+      return {
+        ...base,
+        type: 'patient_event',
+        title: linked ? 'Order attached' : 'Order removed',
+        detail: orderName ?? undefined,
+        hint: 'flag',
+        tone: 'neutral',
+      };
+    }
+
     case 'deposit_paid': {
       const pence = readNumber(row.payload, 'amount_pence') ?? readNumber(row.payload, 'pence');
       const provider = readString(row.payload, 'provider');

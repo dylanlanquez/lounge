@@ -25,6 +25,7 @@ export { ReturnsSendSheet } from './ReturnsSendSheet/ReturnsSendSheet.tsx';
 export type { ReturnsSendSheetProps } from './ReturnsSendSheet/ReturnsSendSheet.tsx';
 
 export { ShopifyImportSheet } from './ShopifyImportSheet/ShopifyImportSheet.tsx';
+export { ShopifyOrderPicker } from './ShopifyOrderPicker/ShopifyOrderPicker.tsx';
 export type { ShopifyImportSheetProps } from './ShopifyImportSheet/ShopifyImportSheet.tsx';
 
 export { DropdownSelect } from './DropdownSelect/DropdownSelect.tsx';

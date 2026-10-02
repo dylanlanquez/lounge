@@ -21,6 +21,7 @@ import {
   Input,
   ReturnSegmentHints,
   Section,
+  ShopifyOrderPicker,
   StatusBanner,
   TimePicker,
   Toast,
@@ -58,6 +59,10 @@ import { createAppointment } from '../../lib/queries/createAppointment.ts';
 import { useAvailableCliniciansForSlot, useClinicianAvailableDates, useVirtualClinicians } from '../../lib/queries/clinicianHours.ts';
 import { useCatalogueActive } from '../../lib/queries/catalogue.ts';
 import { lookupShopifyOrder, type ShopifyOrderLookup } from '../../lib/queries/shopifyOrderLookup.ts';
+import {
+  linkShopifyOrdersToAppointment,
+  type ShopifyOrderToLink,
+} from '../../lib/queries/appointmentShopifyOrderLinks.ts';
 import { formatPence } from '../../lib/queries/carts.ts';
 import {
   type PatientRow,
@@ -234,6 +239,11 @@ export function NewBookingSheet({
   const [shopifyOrder, setShopifyOrder] = useState<ShopifyOrderLookup | null>(null);
   const [shopifyLookupBusy, setShopifyLookupBusy] = useState<boolean>(false);
   const [shopifyLookupError, setShopifyLookupError] = useState<string | null>(null);
+  // Voice calls only: which of the patient's Shopify orders the call is
+  // about. Reference links, not a credit — see ShopifyOrderPicker and the
+  // lng_appointment_shopify_order_links migration. Optional; the picker
+  // renders nothing when the patient has no orders.
+  const [linkedOrders, setLinkedOrders] = useState<ShopifyOrderToLink[]>([]);
   const { rows: catalogueRows } = useCatalogueActive();
   // Default sendEmail to true, then re-derive once a patient is
   // picked (it stays on if they have an email, off if not). The
@@ -396,6 +406,13 @@ export function NewBookingSheet({
   useEffect(() => {
     if (!isShopifyService) setShopifyOrderApplies(false);
   }, [isShopifyService]);
+
+  // Order links belong to the patient who was picked when they were
+  // ticked. Switching patient (or away from a voice call) drops them
+  // rather than carrying another patient's orders onto the booking.
+  useEffect(() => {
+    setLinkedOrders([]);
+  }, [patient?.id, serviceType]);
 
   // Re-resolve the order whenever the input changes after a previous
   // resolve — the receptionist might tweak the number; we want stale
@@ -952,6 +969,36 @@ export function NewBookingSheet({
               }
             : null,
       });
+      // Shopify order links, written once the appointment row exists.
+      // The booking is already committed, so a failure here surfaces as
+      // a warning (and a failure-log row) rather than looking like the
+      // booking failed — the links can be re-added from the appointment
+      // page.
+      if (linkedOrders.length > 0) {
+        try {
+          await linkShopifyOrdersToAppointment({
+            appointmentId: result.appointmentId,
+            patientId: patient.id,
+            orders: linkedOrders,
+          });
+        } catch (e) {
+          await logFailure({
+            source: 'new_booking_sheet.shopify_order_links',
+            severity: 'error',
+            message: `Attaching Shopify orders failed: ${e instanceof Error ? e.message : String(e)}`,
+            context: {
+              appointmentId: result.appointmentId,
+              patientId: patient.id,
+              orderNames: linkedOrders.map((o) => o.name),
+            },
+          });
+          setToast({
+            tone: 'error',
+            title: 'Booking saved, but the orders were not attached. Add them from the appointment page.',
+          });
+        }
+      }
+
       // Attachments upload after the appointment exists, so every
       // file carries a source_appointment_id back-reference. The
       // booking is already committed at this point, so an upload
@@ -1206,6 +1253,21 @@ export function NewBookingSheet({
             }
             return renderAxis(row[0]!);
           })}
+
+          {/* Voice calls: which of the patient's orders is the call about.
+              Reference only — no credit, no bill. The picker renders
+              nothing when the patient has no orders, so a call about a
+              patient who never bought anything shows no section at all. */}
+          {serviceType === 'voice_call' && patient ? (
+            <ShopifyOrderPicker
+              title="Orders this call is about"
+              info="Tick the orders the call concerns so whoever takes it has the context. Reference only: nothing here is charged, credited or refunded. Leave everything unticked if the call is not about an order."
+              patientId={patient.id}
+              selectedIds={linkedOrders.map((o) => o.id)}
+              onChange={(_ids, orders) => setLinkedOrders(orders)}
+              disabled={saving}
+            />
+          ) : null}
 
           {isShopifyService ? (
             <Section
