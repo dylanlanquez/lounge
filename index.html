@@ -4,22 +4,30 @@
     <meta charset="UTF-8" />
     <!--
       Favicon URLs carry a ?v= cache buster. Vercel's CDN, browsers,
-      and iOS Add-to-Home-Screen all cache these aggressively by
-      URL — the legacy electric-blue mark was sticking around even
-      after the file was replaced. Bumping the version forces a
-      fresh fetch on next deploy. Bump again whenever the icon art
-      changes.
-
-      mask-icon is a monochrome glyph pinned by Safari for the
-      pinned-tab strip; we tint it ink (the same near-black the
-      brand mark uses) instead of the old accent green, since the
-      mark itself is now black.
+      and iOS Add-to-Home-Screen all cache these aggressively by URL.
+      Bump the version whenever the icon art changes. Every icon is
+      rendered from the vector mark (logos/lounge-favicon.ai) at its
+      own size, never scaled up from a bitmap.
     -->
-    <link rel="icon" type="image/png" href="/lounge-fav.png?v=4" />
-    <link rel="shortcut icon" type="image/png" href="/lounge-fav.png?v=4" />
-    <link rel="apple-touch-icon" sizes="180x180" href="/lounge-fav.png?v=4" />
-    <link rel="mask-icon" href="/lounge-fav.png?v=4" color="#0E1414" />
-    <link rel="manifest" href="/manifest.webmanifest?v=4" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=5" />
+    <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png?v=5" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png?v=5" />
+    <link rel="icon" type="image/png" sizes="48x48" href="/favicon-48x48.png?v=5" />
+    <link rel="icon" type="image/png" sizes="96x96" href="/favicon-96x96.png?v=5" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/favicon-192x192.png?v=5" />
+    <link rel="icon" href="/favicon.ico?v=5" sizes="any" />
+    <link rel="mask-icon" href="/safari-pinned-tab.svg?v=5" color="#000000" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png?v=5" />
+    <link rel="apple-touch-icon" sizes="120x120" href="/apple-touch-icon-120x120.png?v=5" />
+    <link rel="apple-touch-icon" sizes="152x152" href="/apple-touch-icon-152x152.png?v=5" />
+    <link rel="apple-touch-icon" sizes="167x167" href="/apple-touch-icon-167x167.png?v=5" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon-180x180.png?v=5" />
+    <link rel="apple-touch-icon" sizes="512x512" href="/apple-touch-icon-512x512.png?v=5" />
+    <link rel="apple-touch-icon" sizes="1024x1024" href="/apple-touch-icon-1024x1024.png?v=5" />
+    <link rel="manifest" href="/manifest.webmanifest?v=5" />
+    <meta name="msapplication-TileColor" content="#000000" />
+    <meta name="msapplication-TileImage" content="/mstile-150x150.png?v=5" />
+    <meta name="msapplication-config" content="/browserconfig.xml?v=5" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
     <meta name="theme-color" content="#F7F6F2" />
     <meta name="mobile-web-app-capable" content="yes" />
@@ -31,18 +39,20 @@
     <!--
       Open Graph / Twitter card. Without these, Vercel's deployment
       previews and link-share unfurls fall back to a generic Vercel
-      thumbnail. Pointing them at lounge-fav.png means the L mark is
-      what appears on the Vercel dashboard tile, in iMessage / Slack
-      previews, and on the deployment screenshots panel.
+      thumbnail. og-image.png is a 1200x630 card (the L mark and the
+      lounge wordmark) for iMessage, Slack and the Vercel dashboard.
     -->
     <meta property="og:type" content="website" />
     <meta property="og:title" content="Lounge" />
     <meta property="og:description" content="Walk-ins and appointments by Venneir." />
-    <meta property="og:image" content="/lounge-fav.png?v=4" />
-    <meta name="twitter:card" content="summary" />
+    <meta property="og:image" content="https://lounge.venneir.com/og-image.png?v=5" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="Lounge" />
+    <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content="Lounge" />
     <meta name="twitter:description" content="Walk-ins and appointments by Venneir." />
-    <meta name="twitter:image" content="/lounge-fav.png?v=4" />
+    <meta name="twitter:image" content="https://lounge.venneir.com/og-image.png?v=5" />
     <title>Lounge</title>
   </head>
   <body>
