@@ -1,8 +1,8 @@
 # Slice — Orders a voice call is about
 
-**Status:** Built, type-checked, linted, unit-tested, verified in the browser against Meridian data. **Migration not yet applied** — see section 6.
+**Status:** Built, type-checked, linted, unit-tested, deployed. Migration applied to Meridian and the full attach/remove/audit loop verified against production data.
 **Phase:** Cross-cutting (new-booking sheet, appointment page, appointment timeline). Fourth voice-call slice.
-**Migration (this slice):** `20261002_01_lng_appointment_shopify_order_links.sql` (written, pending shadow then Meridian)
+**Migration (this slice):** `20261002_01_lng_appointment_shopify_order_links.sql` (applied to Meridian 2 Oct 2026 via a scoped `supabase db push`; shadow was skipped, see section 6)
 
 **Touched files:**
 - `supabase/migrations/20261002_01_lng_appointment_shopify_order_links.sql` — `lng_appointment_shopify_order_links`, staff RLS, unique per (appointment, order)
@@ -48,7 +48,12 @@ Every link and unlink writes a `patient_events` row (`appointment_shopify_order_
 7. Open a non-voice-call appointment with no links. No card.
 8. Turn the network off mid-attach: the card shows a red line saying the orders were not attached. Nothing is silently lost.
 
-## 6. Still to do
+## 6. How the migration was applied, and the history-table problem it exposed
 
-- Apply the migration: shadow (`vkgghplhykavklevfhkz`) first, verify, then Meridian (`npuvhxakffxqoszytkxw`). Until then the card degrades to "No orders attached" on read and fails loudly on write (verified: "Could not find the table 'public.lng_appointment_shopify_order_links' in the schema cache").
-- Playwright E2E covering steps 2, 4 and 5 once the table exists.
+Applied straight to Meridian on 2 October 2026. **Shadow was skipped** — the applying machine had no `psql` and no `LNG_SHADOW_DB_URL`. The migration is additive only (one new table, one index, RLS enable, one policy) and touches no existing object, so the blast radius was nil, but the runbook rule was not followed. Worth a shadow pass on the next schema change that touches anything existing.
+
+A plain `supabase db push` is **not safe on this repo today**. Meridian's `supabase_migrations.schema_migrations` has recorded nothing since `20260813000003`, while roughly 36 later migrations are plainly live (the whole cash-count and voice-call sets). Someone has been applying with `psql` and not recording. `db push` therefore sees those 36 as pending and would re-run them against production, including `20261001_01_lng_delete_test_patient_mp114489.sql` and two `wipe_*` migrations.
+
+The workaround used here: build a scratch workdir holding `supabase/config.toml`, `supabase/.temp/` and **only** the migration files whose version is already recorded remotely, plus the new one, then `supabase db push --workdir <scratch>`. The dry run then lists exactly one pending migration. Four duplicate-version files also had to be left out of the scratch tree (`20260513000008`, `20260513000009`, `20260519000010`, `20260519000011` each exist twice locally under one version) or push offers to re-run them under `--include-all`.
+
+**Still to do:** reconcile the migration history table — either `supabase migration repair --status applied <versions>` for the 36 that are genuinely live, or go back to recording every `psql` apply. Until then nobody can use `db push` normally. Also: Playwright E2E covering steps 2, 4 and 5.
