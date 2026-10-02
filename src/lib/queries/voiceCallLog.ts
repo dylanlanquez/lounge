@@ -446,10 +446,18 @@ export async function logVoiceCallOutcome(args: {
   // Admin -> Calls with a "Listen in" button that joins a conference
   // nobody is actually on.
   if (args.sessionId) {
-    await supabase.rpc('lng_close_voice_call_session', {
+    const { error: closeErr } = await supabase.rpc('lng_close_voice_call_session', {
       p_session_id: args.sessionId,
       p_status: SESSION_CLOSE_STATUS[args.outcome],
     });
+    if (closeErr) {
+      await logFailure({
+        source: 'voiceCallLog.closeVoiceCallSession',
+        severity: 'error',
+        message: `lng_close_voice_call_session failed: ${closeErr.message}`,
+        context: { appointmentId: args.appointmentId, sessionId: args.sessionId },
+      });
+    }
   }
   // Belt and braces: an outcome logged manually (no sessionId, the
   // "Log this call" flow off the appointment page rather than fresh
@@ -458,10 +466,28 @@ export async function logVoiceCallOutcome(args: {
   // Logging any outcome means the whole call effort for this
   // appointment is done, so every other still-open session for it
   // gets closed here too, not just the one this outcome names.
-  await supabase.rpc('lng_close_stale_voice_call_sessions', {
+  //
+  // Both closers are error-checked. They used to be bare awaits, which
+  // meant a missing function (PGRST202 — this RPC shipped in migration
+  // 20260917000001, which sat unapplied on Meridian for two weeks)
+  // returned an error object nobody read. The outcome logged fine, the
+  // superseded session stayed open, and the schedule kept showing a
+  // live call with a Listen in button hours after the agent had hung
+  // up, with nothing in lng_system_failures to explain it. A failure
+  // here must not unwind a correctly logged outcome, so it is logged
+  // loudly rather than thrown.
+  const { error: staleErr } = await supabase.rpc('lng_close_stale_voice_call_sessions', {
     p_appointment_id: args.appointmentId,
     p_except_session_id: args.sessionId ?? null,
   });
+  if (staleErr) {
+    await logFailure({
+      source: 'voiceCallLog.closeStaleVoiceCallSessions',
+      severity: 'error',
+      message: `lng_close_stale_voice_call_sessions failed: ${staleErr.message}`,
+      context: { appointmentId: args.appointmentId, sessionId: args.sessionId ?? null },
+    });
+  }
 
   return { status, logWriteFailed };
 }

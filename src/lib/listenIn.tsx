@@ -33,9 +33,9 @@ interface TwilioCall {
   disconnect: () => void;
 }
 interface TwilioDevice {
-  register: () => Promise<void>;
   destroy: () => void;
   connect: (opts: { params: Record<string, string> }) => Promise<TwilioCall>;
+  on: (event: 'error', cb: (arg?: DeviceError) => void) => void;
 }
 
 export function ListenInProvider({ children }: { children: ReactNode }) {
@@ -75,8 +75,27 @@ export function ListenInProvider({ children }: { children: ReactNode }) {
         const { Device } = await import('@twilio/voice-sdk');
         const device = new Device(result.body.token, { logLevel: 'error' }) as unknown as TwilioDevice;
         deviceRef.current = device;
-        await device.register();
-        const call = await device.connect({ params: { sessionId: args.sessionId, listen: '1' } });
+        // Same two reasons as src/lib/activeCall.tsx: no
+        // device.register() (the listen-in token grants no incoming
+        // voice either, and a rejected registration never settles its
+        // promise), and a Device-level 'error' listener, which this
+        // provider was missing entirely. device.connect() rejects
+        // with undefined on a signaling failure, so without this the
+        // catch below could only ever say "Could not join this call",
+        // and an error arriving outside connect() would be emitted on
+        // an EventEmitter with no 'error' listener, which throws.
+        let lastDeviceError: DeviceError | undefined;
+        device.on('error', (err) => {
+          lastDeviceError = err;
+        });
+        let call: TwilioCall;
+        try {
+          call = await device.connect({ params: { sessionId: args.sessionId, listen: '1' } });
+        } catch (e) {
+          throw e instanceof Error && !lastDeviceError
+            ? e
+            : new Error(lastDeviceError?.message ?? 'Could not join this call');
+        }
         callRef.current = call;
         call.on('accept', () => setState('listening'));
         call.on('disconnect', () => {

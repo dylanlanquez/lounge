@@ -136,7 +136,6 @@ async function ensureMicrophoneAccess(): Promise<void> {
 }
 
 interface TwilioDevice {
-  register: () => Promise<void>;
   destroy: () => void;
   updateToken: (token: string) => void;
   connect: (opts: { params: Record<string, string> }) => Promise<TwilioCall>;
@@ -208,10 +207,21 @@ export function ActiveCallProvider({ children }: { children: ReactNode }) {
         // appointment before starting a new one keeps Admin -> Calls'
         // "Live now" panel from showing a superseded attempt as
         // though it were still happening.
-        await supabase.rpc('lng_close_stale_voice_call_sessions', {
+        // Error-checked, not a bare await: this RPC shipped in
+        // migration 20260917000001, which sat unapplied on Meridian,
+        // so every call to it returned PGRST202 to nobody.
+        const { error: staleErr } = await supabase.rpc('lng_close_stale_voice_call_sessions', {
           p_appointment_id: args.appointmentId,
           p_except_session_id: null,
         });
+        if (staleErr) {
+          await logFailure({
+            source: 'activeCall.closeStaleVoiceCallSessions',
+            severity: 'error',
+            message: `lng_close_stale_voice_call_sessions failed: ${staleErr.message}`,
+            context: { appointmentId: args.appointmentId },
+          });
+        }
 
         const { data: session, error: sessionErr } = await supabase
           .from('lng_voice_call_sessions')
@@ -245,11 +255,22 @@ export function ActiveCallProvider({ children }: { children: ReactNode }) {
         device.on('error', (err) => {
           lastDeviceError = err;
         });
-        try {
-          await device.register();
-        } catch (e) {
-          throw e instanceof Error && !lastDeviceError ? e : new Error(friendlyCallErrorMessage(lastDeviceError));
-        }
+        // No device.register() here, deliberately. register() exists
+        // only to receive INCOMING calls, and the token minted by
+        // twilio-voice-token grants voice.incoming.allow = false,
+        // because nothing ever calls a staff browser. Calling it
+        // anyway sent a `register` message the signaling server
+        // answered with an error, which is where the 53000
+        // ConnectionError on /appointment/:id came from. Worse than
+        // the noise: register() resolves on the Device's `registered`
+        // event and rejects on `unregistered`, and a signaling error
+        // emits neither, so a failed registration left the await
+        // below pending forever. The button sat on "Connecting...",
+        // no catch ran, nothing reached lng_system_failures, and the
+        // lng_voice_call_sessions row inserted seconds earlier stayed
+        // open until the next attempt closed it. device.connect()
+        // sets up its own signaling stream and has never needed a
+        // registered Device.
         device.on('tokenWillExpire', () => {
           mintToken()
             .then((fresh) => device.updateToken(fresh))
