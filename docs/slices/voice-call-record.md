@@ -82,7 +82,8 @@ Listen in button, for up to two hours. Three separate faults:
    hid it; hiding is not closing.
    Fixed by `20261002000002_lng_sweep_stale_voice_call_sessions.sql`:
    `lng_sweep_stale_voice_call_sessions()`, scheduled every 5 minutes,
-   closes unanswered states after 10 minutes and `in-progress` after 45.
+   closes unanswered states after 10 minutes and `in-progress` after 20
+   (`20261002000003`, against a 15-minute booked voice call phase).
 
 2. **`lng_close_stale_voice_call_sessions` was never applied to
    Meridian.** Migration `20260917000001` sat unapplied for two weeks.
